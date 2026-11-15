@@ -2101,6 +2101,25 @@ function PaymentPanel(props: {
   const [lines, setLines] = useState<readonly TenderLine[]>([]);
   const nextLineId = useRef(1);
   /**
+   * T239 (Pete, asked whether the Cart screen should start on account
+   * credit when the balance covers the sale, as the roster's pay dialog
+   * does: "yes"). The id of the ONE account-credit line this screen put
+   * on the ticket by itself, or null. It is an ordinary tender line in
+   * every way the charge can see (T82: credit is a tender, not a rule);
+   * the id only says the teacher did not choose it, so it may follow the
+   * total, come off by itself, and give way to the first other source
+   * tapped. `tenderTouched` is the teacher having made ANY tender gesture
+   * on this ticket (a tile, a line's amount or X, a modal, Finalize),
+   * after which nothing is chosen for them again until the tender starts
+   * over (`resetTender`: a new client, an emptied ticket, a sale done).
+   */
+  const [autoLineId, setAutoLineId] = useState<number | null>(null);
+  const [tenderTouched, setTenderTouched] = useState(false);
+  const touchTender = () => {
+    setTenderTouched(true);
+    setAutoLineId(null);
+  };
+  /**
    * T203: the customer's approval, when the studio has asked for one.
    *
    * T209 lifted the whole of it into `useSaleApproval`, because
@@ -2589,6 +2608,9 @@ function PaymentPanel(props: {
    *  completed sale. */
   const resetTender = useCallback(() => {
     setLines([]);
+    /* T239: a tender started over is judged afresh. */
+    setAutoLineId(null);
+    setTenderTouched(false);
     setComp(null);
     setCompCleared(false);
     dismissPad();
@@ -2906,6 +2928,85 @@ function PaymentPanel(props: {
     );
   }, [creditVisible]);
 
+  /**
+   * T239: the automatic account-credit line. It is put on the ticket
+   * only when ALL of these hold, and taken off again by this same effect
+   * when any of them stops holding while the teacher has still not
+   * touched a tender:
+   *
+   *  - a real client is attached (an anonymous sale rides the house
+   *    client, whose account is nobody's to spend), with no line bought
+   *    for someone else and nothing else `creditReason` refuses;
+   *  - no discount or comp is armed (a comp takes no tender at all);
+   *  - Mindbody has priced the ticket, above zero;
+   *  - the balance covers ALL of it. Only `freshBalance` and the profile
+   *    lookup for this client count, never the roster row's snapshot: a
+   *    figure nobody has read back for this ticket does not choose a
+   *    tender. The server re-reads the balance at the charge and refuses
+   *    a credit line above it, exactly as for a line a teacher added.
+   *
+   * While it stands it follows the ticket: a new total moves its amount
+   * (a cart edit clears every line and it comes back for the new total).
+   *
+   * And NOTHING here runs while a charge is in flight, while a customer
+   * approval is outstanding, or once a sale is done, part-sold,
+   * sold-nothing or of unknown outcome: the tender a customer approved,
+   * or a teacher tapped Finalize on, is the one charged, and a ticket
+   * whose money may have moved is not one to choose a payment for.
+   * Finalize is itself a touch (`onPrimaryTap`), so the window between
+   * the tap and the approval appearing is covered too.
+   */
+  const autoBalance = freshBalance ?? lookedUpBalance;
+  const autoBalanceCents =
+    autoBalance === null ? null : Math.round(autoBalance * 100);
+  const autoLine =
+    autoLineId === null ? undefined : lines.find((l) => l.id === autoLineId);
+  const autoFrozen =
+    tenderTouched ||
+    charging ||
+    approval !== null ||
+    waitingForScreen ||
+    partialLock !== null ||
+    (result !== null && result.kind !== "error" && result.kind !== "suppressed");
+  const autoTarget =
+    client !== null &&
+    comp === null &&
+    creditReason === null &&
+    totalCents !== null &&
+    totalCents > 0 &&
+    autoBalanceCents !== null &&
+    autoBalanceCents > 0 &&
+    autoBalanceCents >= totalCents
+      ? totalCents
+      : null;
+  const autoLineIdNow = autoLine?.id ?? null;
+  const autoLineCents = autoLine?.cents ?? null;
+  useEffect(() => {
+    if (autoFrozen || inFlight.current) return;
+    if (autoTarget === null) {
+      if (autoLineIdNow === null) return;
+      setLines((cur) => cur.filter((l) => l.id !== autoLineIdNow));
+      setAutoLineId(null);
+      return;
+    }
+    if (autoLineIdNow === null) {
+      /* Only onto an EMPTY tender. Untouched, nothing else can be on it,
+       * and if something somehow is, it is not this effect's to move. */
+      if (lines.length > 0) return;
+      const id = nextLineId.current++;
+      setAutoLineId(id);
+      setLines([{ id, source: "credit", cents: autoTarget }]);
+      return;
+    }
+    if (autoLineCents !== autoTarget) {
+      setLines((cur) =>
+        cur.map((l) =>
+          l.id === autoLineIdNow ? { ...l, cents: autoTarget } : l,
+        ),
+      );
+    }
+  }, [autoFrozen, autoTarget, autoLineIdNow, autoLineCents, lines.length]);
+
   /* T94: an authorized overdraft belongs to a LINE and to an AMOUNT.
    * Whatever removed that line or changed that figure -- its x, Cancel,
    * a second trip through the keypad, a cart edit, a client change, a
@@ -3035,18 +3136,37 @@ function PaymentPanel(props: {
 
   const usedSources = new Set(lines.map((l) => l.source));
 
+  /**
+   * T239: whether a tap on `source` REPLACES the automatic credit line
+   * rather than joining it. The line is a suggestion nobody made, so the
+   * first other source a teacher picks takes its place, the way the
+   * roster dialog's "Use the card instead" does, instead of meeting
+   * "Nothing left to cover" and having to find the X first. Account
+   * itself is "Already in the payment" and opens the line's keypad.
+   */
+  const replacesAuto = (source: TenderSource): boolean =>
+    autoLine !== undefined && source !== "credit";
+
   /** Why this source cannot ADD a line right now, or null. */
   const addReason = (source: TenderSource): string | null => {
-    if (usedSources.has(source)) return "Already in the payment";
+    /* T239: judged as though the automatic line were not there, since a
+     * tap would take it off (`replacesAuto`). */
+    const replacing = replacesAuto(source);
+    const used: ReadonlySet<TenderSource> = replacing
+      ? new Set<TenderSource>()
+      : usedSources;
+    const lineCount = replacing ? 0 : lines.length;
+    const due = replacing ? totalCents : dueCents;
+    if (used.has(source)) return "Already in the payment";
     /* Two lines is the maximum because /api/checkout accepts one method
      * or exactly two legs. Greyed WITH that reason, never hidden. */
-    if (lines.length >= 2) return "Two parts is the maximum";
+    if (lineCount >= 2) return "Two parts is the maximum";
     /* T90 review: a split cannot pay a ticket holding a line for
      * another client, and the route refuses one (a split's two legs sum
      * to ONE total, and there is no matrix of legs against carts). The
      * tile says so instead of letting a teacher build a tender that is
      * certain to be refused at the tap. */
-    if (hasOtherClient && lines.length >= 1) {
+    if (hasOtherClient && lineCount >= 1) {
       return "One tender only while a line is for another client";
     }
     /* T95: a gift card is a bearer instrument being SOLD, and each card
@@ -3059,7 +3179,7 @@ function PaymentPanel(props: {
        * credit for gift cards should be allowed."). It falls through to
        * `creditReason` below, which carries the one thing still refused:
        * a balance that does not reach the whole ticket. */
-      if (lines.length >= 1) {
+      if (lineCount >= 1) {
         return "One tender only while a gift card is on the ticket";
       }
       if (source === "storedcard" && giftEmptyPart !== undefined) {
@@ -3074,7 +3194,7 @@ function PaymentPanel(props: {
     if (total === null) {
       return pricing ? "Pricing with Mindbody..." : "No total to pay yet";
     }
-    if (dueCents !== null && dueCents <= 0) return "Nothing left to cover";
+    if (due !== null && due <= 0) return "Nothing left to cover";
     if (source === "credit") return creditReason;
     /* T93 review (Pete, 2026-09-14: "Allow two charges."): a ticket
      * holding a line for another client is one Mindbody sale PER
@@ -3085,13 +3205,13 @@ function PaymentPanel(props: {
     /* T93: one card leg at a time. A stored card and a typed card in the
      * same payment would be two card charges in one sale, which nobody
      * asked for; greyed WITH the reason, as every other refusal here is. */
-    if (source === "typedcard" && usedSources.has("storedcard")) {
+    if (source === "typedcard" && used.has("storedcard")) {
       return "Already paying by card";
     }
     /* T83: a gift card needs no client and no card on file; what it
      * needs is a number, which the modal asks for. */
     if (source === "storedcard") {
-      if (usedSources.has("typedcard")) return "Already paying by card";
+      if (used.has("typedcard")) return "Already paying by card";
       if (cardReason !== null) return cardReason;
     }
     return null;
@@ -4003,19 +4123,49 @@ function PaymentPanel(props: {
    * busy screen and the rule that the charge follows the customer's own
    * tap are unchanged; they are simply somewhere both charge screens
    * can reach them. */
-  const onPrimaryTap = approvalFlow.begin;
+  const onPrimaryTap = () => {
+    /* T239: Finalize is the teacher accepting the tender on screen, so
+     * nothing automatic moves it from here on, including in the moment
+     * before an approval's request id comes back. */
+    touchTender();
+    approvalFlow.begin();
+  };
 
   /** Retire a stale warning when the teacher changes the tender; a paid
    *  receipt stays until Done. */
   const clearStaleResult = () =>
     setResult((r) => (r && r.kind !== "paid" ? r : null));
 
+  /**
+   * T239: a modal source (gift card, typed card) opening over the
+   * automatic credit line takes that line off as it opens, so the modal
+   * works against the whole total exactly as on an empty tender. The
+   * open is the teacher's choice either way: Cancel leaves no tender
+   * rather than putting the suggestion back. False when there is nothing
+   * to cover, which is the open's own old guard.
+   */
+  const takeAutoFor = (source: TenderSource): boolean => {
+    const replacing = replacesAuto(source);
+    const due = replacing ? totalCents : dueCents;
+    if (due === null || due <= 0) return false;
+    const auto = replacing ? autoLine : undefined;
+    if (auto !== undefined) {
+      setLines((cur) => cur.filter((l) => l.id !== auto.id));
+    }
+    touchTender();
+    return true;
+  };
+
   /** Tapping a source ADDS a line for the whole remaining due, clamped by
    *  that source's rule: one tap, no typing, for the ordinary whole-sale
    *  case. */
   const addLine = (source: TenderSource) => {
     if (addReason(source) !== null || charging) return;
-    if (dueCents === null || dueCents <= 0) return;
+    /* T239: a tap that replaces the automatic line pays what that line
+     * was paying, the whole total. */
+    const replacing = replacesAuto(source);
+    const due = replacing ? totalCents : dueCents;
+    if (due === null || due <= 0) return;
     /* T83: a gift card line comes from the modal (openGift), which has
      * the number and the balance the line needs. A bare tap could only
      * ever make a line with no card behind it. */
@@ -4026,8 +4176,8 @@ function PaymentPanel(props: {
     if (source === "typedcard") return;
     const cents =
       source === "credit"
-        ? Math.min(dueCents, balanceCents ?? 0)
-        : dueCents;
+        ? Math.min(due, balanceCents ?? 0)
+        : due;
     /* T94: an account with nothing on it still takes a line, at $0.00,
      * and the keypad opens on it straight away: that modal is where the
      * overdraft is authorized, and a tile that did nothing at all was
@@ -4043,7 +4193,12 @@ function PaymentPanel(props: {
      * leaves nothing due, so the guard above already returned and no
      * tender can reach an armed comp. */
     setCompCleared(false);
-    setLines((cur) => [...cur, { id, source, cents }]);
+    const auto = replacing ? autoLine : undefined;
+    setLines((cur) => [
+      ...(auto === undefined ? cur : cur.filter((l) => l.id !== auto.id)),
+      { id, source, cents },
+    ]);
+    touchTender();
     if (emptyAccount) openPad(id);
     else dismissPad();
     clearStaleResult();
@@ -4051,6 +4206,8 @@ function PaymentPanel(props: {
 
   const removeLine = (id: number) => {
     setLines((cur) => cur.filter((l) => l.id !== id));
+    /* T239: taking a line off, the automatic one included, is choosing. */
+    touchTender();
     if (padFor === id) dismissPad();
     setCompCleared(false);
     clearStaleResult();
@@ -4061,6 +4218,8 @@ function PaymentPanel(props: {
    *  rather than appending to it, and an empty entry on Done means the
    *  line keeps the amount it already had. */
   const openPad = (id: number) => {
+    /* T239: so is opening a line's amount, on the automatic line too. */
+    touchTender();
     setPadFor(id);
     setEntry("");
     /* T94 review: the modal always opens on its keypad. The PIN step
@@ -4089,7 +4248,7 @@ function PaymentPanel(props: {
    *  the tile is greyed, so a keyboard Enter cannot get past them. */
   const openGift = () => {
     if (addReason("giftcard") !== null || charging) return;
-    if (dueCents === null || dueCents <= 0) return;
+    if (!takeAutoFor("giftcard")) return;
     setGift({
       step: "number",
       number: "",
@@ -4118,7 +4277,7 @@ function PaymentPanel(props: {
    *  greyed, so a keyboard Enter cannot get past them. */
   const openCardEntry = () => {
     if (addReason("typedcard") !== null || charging) return;
-    if (dueCents === null || dueCents <= 0) return;
+    if (!takeAutoFor("typedcard")) return;
     setCardEntry(true);
     dismissPad();
     onModalChange(true);

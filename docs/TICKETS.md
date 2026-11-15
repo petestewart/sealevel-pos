@@ -21335,28 +21335,28 @@ adding a service charge for CC transactions under $10".
 
 ### To do
 
-- [ ] When the ticket's client holds an account balance that covers the
+- [x] When the ticket's client holds an account balance that covers the
       whole priced total, and the teacher has not chosen a tender yet, the
       payment surface starts with ONE account-credit line for the whole
       total, already on the ticket. This is T82's "credit is a tender, not a
       rule" kept intact: the teacher can take the line off with its X, or
       pick Card, Cash or any other tender, exactly as with a line they added
       themselves.
-- [ ] The automatic line follows the ticket while the teacher has not
+- [x] The automatic line follows the ticket while the teacher has not
       touched the tenders: it tracks the total as lines are added or
       removed, and it comes off by itself if the total grows past the
       balance or the client changes. Once the teacher touches any tender
       (adds, removes, edits an amount), nothing is chosen for them again on
       that ticket.
-- [ ] It is never added for the house client, for a client with no balance,
+- [x] It is never added for the house client, for a client with no balance,
       for a comp, or while a charge or a customer approval is in progress,
       and it never changes what an outstanding approval was presented for
       (the approval is over the cart, not the tender, but nothing may move
       under a sale that is being charged).
-- [ ] The balance it is judged against is the one the screen already reads
+- [x] The balance it is judged against is the one the screen already reads
       (`freshBalance`, then the looked-up balance); the server still re-reads
       the balance at the charge and refuses a credit line above it, as now.
-- [ ] Docs: record Pete's future rule beside T238 wherever the card minimum
+- [x] Docs: record Pete's future rule beside T238 wherever the card minimum
       is now described as retired (design doc "$10 card minimum" section,
       PLAN.md, CLAUDE.md's T238 note): **a service charge on card
       transactions under $10 is planned, not built; until it is, a card is
@@ -21365,7 +21365,74 @@ adding a service charge for CC transactions under $10".
       line or a fee, whether it applies to the reader, typed cards and the
       card on file alike, and how it is shown to the student before the
       tap). Nothing in this ticket builds it.
-- [ ] `tsc --noEmit` and `next build` clean; driven against the fake
+- [x] `tsc --noEmit` and `next build` clean; driven against the fake
       Mindbody in Chromium: a client whose balance covers a $25 ticket opens
       Finalize with the account line on it; X takes it off; Card then
       charges the card; a client whose balance does not cover gets no line.
+
+### Done (2026-11-15)
+
+**One automatic line, in `PaymentPanel`** (`src/app/SaleScreen.tsx`). An
+effect puts ONE account-credit line for the whole priced total on an empty
+tender when: a client is attached (an unattached sale is the house
+client's, and the browser deliberately never learns that id, T41), no
+discount or comp is armed, `creditReason` is clear (so no T90 line for
+someone else, and T108's gift card rule holds), Mindbody has priced the
+ticket above zero, and `freshBalance ?? lookedUpBalance` (never the
+roster row's snapshot) is above zero and covers it. The same effect takes
+it off when any condition stops holding, including while Mindbody reprices
+(a promotion code, say), and puts it back at the new total if the balance
+still covers it; a cart edit clears every line as before, and the line
+comes back the same way. It is
+an ordinary `credit` line: the charge sends `DebitAccount` exactly as for a
+line a teacher added, and nothing about `/api/checkout` moved.
+
+**Touched means touched.** `tenderTouched` is set by every tender gesture:
+a tile, a line's X, opening a line's amount (the automatic one included),
+opening the gift card or typed card modal, and Finalize itself. From then
+on nothing is chosen for the teacher on that ticket, until the tender
+starts over (`resetTender`: a client change, an emptied ticket, a sale
+done). The effect is also frozen while a charge is in flight, while a
+customer approval is outstanding or being waited for, on a part-sold or
+sold-nothing ticket, and on a paid or unknown-outcome result. Because
+Finalize is a touch, the moment between the tap and the approval's request
+id coming back is covered too.
+
+**One judgment call: another tile REPLACES the line.** With the automatic
+line alone on the ticket, Card, Cash, Gift card and the typed-card keypad
+are not greyed "Nothing left to cover" (what a line the teacher added
+themselves would do); a tap takes the automatic line off and pays the whole
+total that way, the Cart screen's version of the roster dialog's "Use the
+card instead". A modal (gift card, typed card) takes it off as it opens, so
+Cancel leaves no tender rather than putting the suggestion back. The X
+still works as the ticket asked. Account itself opens the line's keypad, as
+it always has for a line in the payment. Pete may prefer it strict (X
+first, then the other tile); that is deleting `replacesAuto`.
+
+**Docs.** Pete's planned service charge on card sales under $10 is recorded
+as planned and not built (until it is, a card is charged exactly the sale)
+in the design doc's "$10 card minimum" section, PLAN.md's 2.3 and a new
+P15 listing what is undecided, and CLAUDE.md's T238 note, which also
+describes this ticket. The training guide's "Account" line says the Pay
+screen may start with Account in the payment.
+
+**Verified** against a scratch copy of `scripts/training/fake-mindbody.mjs`
+giving Taylor Brooks $100.00 and Sam Okafor $10.00 on account, with a local
+Postgres, `next build` and `next start`, driven in Chromium with Playwright
+and read back from `/api/devlog`:
+
+- Taylor, Drop In $25.00, Pay: the screen opened with one line, "Account
+  $25.00" with its X, the Account tile marked "In the payment"; Card, Cash
+  and Gift card live. X took it off and 2.5 seconds later nothing had put
+  it back. Card added "Card $25.00"; Finalize: "Paid $25.00 by stored card
+  ...8210", one live `checkoutshoppingcart` on `StoredCard` $25.
+- Taylor again: Finalize straight on the automatic line, "Paid $25.00 by
+  account balance", one live checkout on `DebitAccount` $25.
+- Taylor, automatic line, then Cash: the line became "Cash $25.00" (the
+  replace). Back to items and one more Drop In: no line came back.
+- Taylor, untouched, back to items and one more Drop In: the line came
+  back as "Account $50.00".
+- Sam, Drop In $25.00 against $10.00: no line; the Account tile offered
+  with its $10.00 badge as before.
+
+`tsc --noEmit` and `next build` clean.

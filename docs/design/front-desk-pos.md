@@ -596,12 +596,19 @@ and only a card charge of nothing (zero or less) is refused. Rule 1 was
 already retired by T82 ("Credit should be an option, not forced"); what is
 left of it is a suggestion in the roster's "Pay and check in" dialog, which
 still defaults to a balance that covers the total but offers the card beside
-it. The Cart screen has never armed credit on its own since T82. PLAN's P4
+it, and since T239 on the Cart screen, which starts with one account-credit
+line for the whole total when the balance covers it, a line the teacher can
+take off or replace with any other tender. PLAN's P4
 (before or after tax) is moot and P10 (does it apply to the reader) is
 answered: no. The rest of this section is kept as the reasoning of record for
 why the floor existed and why `purchaseaccountcredit` was ever on a card path;
 `purchaseCredit` in `src/lib/sale.ts` stays, unreached, because Phase 4's gift
 card on the reader (PLAN T232) may want a credit-then-spend path again.
+
+**Planned, not built (Pete, 2026-11-15, T239): a service charge on card
+transactions under $10.** "we are eventually going to implement adding a
+service charge for CC transactions under $10." Until it is built, a card is
+charged exactly the sale. What is undecided is listed as PLAN's P15.
 
 The studio does not put a card through for less than $10. Under that, the card
 is charged $10 and the difference lands on the student's account as credit,

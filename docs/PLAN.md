@@ -30,6 +30,7 @@ path for the phase that carries them.
 | P12 | The statement descriptor | T237 | Ideally matching what Mindbody Payments shows |
 | P13 | Who reconciles, who refunds, and where do they hear about a mismatch off the counter? | T231, T235 | |
 | P14 | S700 or a second WisePOS E? | T237 | Recommended S700, so the two readers cannot be confused |
+| P15 | The service charge on card transactions under $10 (Pete, 2026-11-15, T239: "we are eventually going to implement adding a service charge for CC transactions under $10"). **Planned, not built; until it is, a card is charged exactly the sale.** Undecided: the amount; whether it is a Mindbody product line on the cart or a fee outside it; whether it applies to the reader, a typed card and the card on file alike; and how it is shown to the student before the tap | Nothing yet | Not the retired $10 floor: nothing is bought as credit. Stripe's own $0.50 minimum still meets the reader (T226) |
 
 ## Probes to run
 
@@ -162,7 +163,10 @@ offering a method: "account credit ($12)" greyed out beats a failure.
 an old policy! ... change it so any amount can be charged"): every card is
 charged what it pays in ONE checkout, no card sale buys account credit, and
 the roster's pay dialog defaults to a covering balance but offers the card
-beside it. What follows is the plan as it was built, kept for the record.
+beside it (and since T239 the Cart screen starts on it the same way). A
+service charge on card sales under $10 is planned and not built (P15); until
+it is, a card is charged exactly the sale. What follows is the plan as it was
+built, kept for the record.
 Not a refinement of 2.2, part of it.
 - Credit covers the total → paid entirely from credit, card not offered
 - Otherwise card, charged `max(total, 10)`, excess to credit

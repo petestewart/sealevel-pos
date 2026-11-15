@@ -47,9 +47,14 @@ charged exactly what they pay in ONE `checkoutshoppingcart`; no card sale
 buys account credit, and only a card charge of nothing is refused
 (`cardChargeable` in `src/lib/sale.ts`). The roster's pay dialog still
 defaults to a balance that covers the total, with the card offered beside
-it. `purchaseCredit` is kept, unreached, for Phase 4's gift card (PLAN
+it, and since T239 the Cart screen starts the same way: one account-credit
+line for the whole total, put there only while the teacher has touched no
+tender, removable with its X and replaced by the first other tender tapped.
+`purchaseCredit` is kept, unreached, for Phase 4's gift card (PLAN
 T232). The design doc's "$10 card minimum" section is reasoning of record
-only.
+only. **A service charge on card transactions under $10 is planned, not
+built** (Pete, 2026-11-15; PLAN P15): until it is, a card is charged
+exactly the sale.
 
 **Next (planned 2026-11-15, not started): Phase 4, the studio's own Stripe
 card reader**, so a student can pay by chip, tap, Apple Pay or Google Pay
