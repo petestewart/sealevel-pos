@@ -69,6 +69,21 @@ const G = globalThis as typeof globalThis & {
   __posDisplayCardSweep?: ReturnType<typeof setInterval>;
 };
 const cards: Map<string, HeldCard> = (G.__posDisplayCards ??= new Map());
+/** T241 third review: requests whose card a checkout SPENT. A later claim
+ *  on one answers `spent`, which the teacher's iPad reads as an UNKNOWN
+ *  outcome (the earlier attempt may have charged), never as "nothing was
+ *  charged, enter it again". Bounded; cleared for a request when a new
+ *  card is held on it. */
+const G3 = globalThis as typeof globalThis & { __posSpentCards?: Set<string> };
+const spentCards: Set<string> = (G3.__posSpentCards ??= new Set<string>());
+function markCardSpent(requestId: string): void {
+  spentCards.add(requestId);
+  while (spentCards.size > 200) {
+    const oldest = spentCards.values().next();
+    if (oldest.done) break;
+    spentCards.delete(oldest.value);
+  }
+}
 
 /** Drop every expired, unclaimed card. Run by the timer, on every hold
  *  and claim, and by the hub on every present. */
@@ -112,6 +127,7 @@ export function holdDisplayCard(input: {
     };
   }
   cards.delete(input.requestId);
+  spentCards.delete(input.requestId);
   /* Room for one more, never by evicting a card a checkout holds. */
   while (cards.size >= MAX_CARDS) {
     const oldest = [...cards.entries()].find(([, h]) => !h.claimed);
@@ -163,7 +179,13 @@ export function dropAllDisplayCards(why: string): void {
 /** Why a claim was refused. Every one but `charging` means the card on
  *  the teacher's line cannot be charged and the student should enter it
  *  again; `charging` means another checkout has it right now. */
-export type DisplayCardRefusal = "gone" | "elsewhere" | "mismatch" | "charging";
+export type DisplayCardRefusal =
+  | "gone"
+  | "elsewhere"
+  | "mismatch"
+  | "charging"
+  /* Third review: an earlier checkout spent it; its outcome decides. */
+  | "spent";
 
 const ELSEWHERE =
   "The customer's card was entered for a different sale. Ask them to " +
@@ -198,6 +220,15 @@ export function claimDisplayCard(
   | { ok: false; error: string; code: DisplayCardRefusal } {
   sweepDisplayCards(now);
   const held = cards.get(requestId);
+  if (held === undefined && spentCards.has(requestId)) {
+    return {
+      ok: false,
+      code: "spent",
+      error:
+        "The customer's card was already used for a charge whose outcome " +
+        "needs checking. Check the last charge before charging again.",
+    };
+  }
   if (held === undefined || held.withdrawn) {
     return { ok: false, error: DISPLAY_CARD_GONE, code: "gone" };
   }
@@ -240,6 +271,7 @@ export function settleDisplayCard(requestId: string, spend: boolean): void {
   if (held === undefined) return;
   if (spend || held.withdrawn) {
     cards.delete(requestId);
+    if (spend) markCardSpent(requestId);
     console.log(
       `[display-card] ${spend ? "spent" : "let go after its checkout"} for request ${requestId}`,
     );

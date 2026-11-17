@@ -138,6 +138,15 @@ export interface DisplayRequest {
    *  as an approve ticket (a pick answered), which is when an Approve
    *  that names no version can no longer be trusted to be for it. */
   approveReplaced?: boolean;
+  /** T241 third review: a checkout has claimed the student's card on
+   *  this ticket, so no pick and no new card are taken until the
+   *  teacher's iPad presents it again WITH an offer, which it does only
+   *  once the charge's result is settled and dismissed. */
+  offerClosed?: boolean;
+  /** T241 third review: when the teacher's iPad last asked how this
+   *  approval is going (its 1 second poll). An approval nobody has asked
+   *  about for a while is an orphan another tab may retire. */
+  polledAt?: number;
   /** T241 review: when this request was last presented, so a live
    *  ticket a closed tab left behind can be taken over by another iPad
    *  after a while rather than blocking its mirror for 30 minutes. */
@@ -931,6 +940,8 @@ export async function presentRequest(input: {
        *  words differently ("Someone is signing up on the customer
        *  screen") and offers Take over for. */
       holdingSignup?: boolean;
+      /** T241 third review: what holds it is another iPad's approval. */
+      foreignApproval?: boolean;
     }
 > {
   await ensureDisplayLoaded();
@@ -1021,6 +1032,16 @@ export async function presentRequest(input: {
       retire(held, now, "live ticket left by another iPad");
     } else if (
       input.kind === "ticket" &&
+      isApproveTicket(held.kind, held.payload) &&
+      !sameOwner &&
+      now - (held.polledAt ?? held.presentedAt ?? held.createdAt) >
+        APPROVAL_ORPHAN_MS
+    ) {
+      /* Third review: an approval nobody has asked about for a minute is
+       * an orphan (its tab closed, or came back without its id). */
+      retire(held, now, "approval nobody is waiting on");
+    } else if (
+      input.kind === "ticket" &&
       sameOwner &&
       (isLiveTicket(held.kind, held.payload) || replacingApproval)
     ) {
@@ -1041,6 +1062,14 @@ export async function presentRequest(input: {
         dropDisplayCard(held.id, "ticket changed");
       }
       held.pickOpen = true;
+      /* Third review: an offer the teacher's iPad sends again (only once
+       * a charge's result is settled) reopens a ticket a claim closed. */
+      if (
+        Array.isArray(input.payload.choices) &&
+        input.payload.choices.length > 0
+      ) {
+        held.offerClosed = false;
+      }
       held.version = (held.version ?? 1) + 1;
       if (replacingApproval) held.approveReplaced = true;
       held.presentedAt = now;
@@ -1065,11 +1094,18 @@ export async function presentRequest(input: {
   if (state.current !== null && state.current.status === "pending") {
     const held = state.current;
     const signupHolds = isSelfServeSignup(held);
+    /* Third review: another iPad's live approval says so, and Take over
+     * is not offered for it. */
+    const foreignApproval =
+      input.kind === "ticket" &&
+      isApproveTicket(held.kind, held.payload) &&
+      !sameTicketOwner(held, input);
     return {
       ok: false,
       status: 409,
       reason: "busy",
       holdingSignup: signupHolds,
+      ...(foreignApproval ? { foreignApproval: true } : {}),
       error: signupHolds
         ? "Someone is signing up on the customer screen."
         : "The customer display is already showing something.",
@@ -1323,6 +1359,11 @@ export async function refuseRequest(
 /** How long one pick holds the offer shut with no new present. */
 const PICK_HOLD_MS = 10_000;
 
+/** T241 third review: how long another iPad's APPROVAL must have gone
+ *  without its owner asking about it (the owner polls every second)
+ *  before a present from this one may retire it as an orphan. */
+const APPROVAL_ORPHAN_MS = 60 * 1000;
+
 /** T241 review: how long another iPad's live ticket must have gone
  *  without a present before this one may retire it. A Cart screen being
  *  used re-presents on every priced change; two minutes of nothing is a
@@ -1420,6 +1461,13 @@ function pickable(
   /* One offer, one pick, while the teacher's iPad answers it. A pick it
    * refused moves nothing and so presents nothing new; after a few
    * seconds the student may try again rather than be stuck. */
+  if (c.offerClosed === true) {
+    return {
+      ok: false,
+      status: 409,
+      error: "The front desk is finishing the sale.",
+    };
+  }
   if (c.pickOpen === false && c.pick != null && now - c.pick.at < PICK_HOLD_MS) {
     return {
       ok: false,
@@ -1534,6 +1582,39 @@ export async function chooseTypedCard(
     now,
   );
   return { ok: true };
+}
+
+/** T241: the studio switched "students can type a card" off. The ticket
+ *  on the screen stops offering "A different card" at once (the scene
+ *  is re-sent without it), rather than at its next present. */
+export function withdrawTypedCardOffer(): void {
+  const c = state.current;
+  if (c === null || c.status !== "pending" || c.kind !== "ticket") return;
+  const list = c.payload.choices;
+  if (!Array.isArray(list)) return;
+  const kept = list.filter(
+    (o) => (o as { choice?: unknown })?.choice !== "typedcard",
+  );
+  if (kept.length === list.length) return;
+  const { choices: _all, ...rest } = c.payload;
+  c.payload = kept.length > 0 ? { ...rest, choices: kept } : rest;
+  const scene = sceneFor(c);
+  emit("display", scene.event, scene.data);
+}
+
+/** T241 third review: a checkout claimed the student's card on
+ *  `requestId`; its ticket takes no pick and no card until the teacher's
+ *  iPad offers again. */
+export function closeTicketOffer(requestId: string): void {
+  const c = state.current;
+  if (c !== null && c.id === requestId) c.offerClosed = true;
+}
+
+/** T241 third review: the teacher's iPad asked how this approval is
+ *  going; it is not an orphan. */
+export function noteApprovalPolled(requestId: string, now = Date.now()): void {
+  const c = state.current;
+  if (c !== null && c.id === requestId) c.polledAt = now;
 }
 
 /** T241: the last pick on a request, for the approval poll. */

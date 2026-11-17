@@ -22055,3 +22055,128 @@ said):
   with the same results. No server log and no database dump holds the
   card number.
 
+
+### The typed-card setting (Pete, 2026-11-17)
+
+Pete, on the student typing their own card on the customer iPad: "i think
+we can keep that for now and remove it once we actually have stripe. the
+ipad lets them take a picture, so it's not as bad as it could be. but
+let's hide it behind a flag so i can turn it off if it becomes annoying."
+
+- [x] **"Students can type a card on the customer screen".**
+  `display_typed_card` in `app_settings`, DEFAULT ON, with
+  `POS_DISPLAY_TYPED_CARD` as the no-database fallback (only `false` or
+  `0` turn it off). It is read and stored exactly like T205's
+  `contract_requires_signature` (`displayTypedCardAllowed` in
+  `src/lib/approval.ts`, `PUT /api/admin/display-typed-card` behind the
+  device session, the devtools gate, a signed-in admin and a database).
+  The drawer's Settings tab shows a line for everyone and a 64px admin
+  control under T205's. The log names who moved it
+  (`[display-typed-card] on -> off by staff=<id>`).
+- [x] **Enforced on the server.**
+  - Off: `/api/display/present` strips `typedcard` from every offer it
+    stores, whatever the teacher's iPad sent.
+  - `/api/display/card` refuses ("Cards cannot be entered on this
+    screen. Please pay at the front desk.") with nothing validated or
+    held.
+  - Switching it off drops every held card and re-sends the ticket on the
+    screen without "A different card" at once. A teacher's line for a
+    dropped card meets "no longer held" at Finalize, as for any released
+    card.
+  - The teacher's own typed-card modal is unaffected.
+- [x] **To be removed with the feature once Phase 4's reader exists**:
+  noted on PLAN's Phase 4, with the files to delete.
+
+Driven: off, the display's list dropped "A different card" at once.
+A card posted anyway was refused 409. The card held before the switch was
+dropped (`[display-card] dropped ... (students may no longer type a
+card)`), and the teacher's Finalize on it read "no longer held ... Ask
+them to enter it again. Nothing was charged." On again, the list offered
+it again.
+
+#### Third review (2026-11-17)
+
+A third independent review of aeb7412 found six defects. Item 2 was half
+real; the rest were real in full, and all are fixed.
+
+1. **HIGH: Finalize stayed armed after an unknown outcome.** Fixed in
+   three parts:
+   - **(a)** `outcomeOpen` (an ambiguous result, or the hold a student's
+     card left) now takes `chargeable` false and locks every tender
+     control (`tenderHeld`), for EVERY tender, until that result's own
+     Understood. Finalize's title says why.
+   - **(b)** The fetch itself failing runs the same handling as any
+     other unknown outcome on a student's card (`holdForUncertain`):
+     the line comes off without a word, the pick sentence is cleared,
+     and the hold is set.
+   - **(c)** The server remembers a SPENT card per request, so a later
+     claim answers `card: "spent"`. The browser reads `spent` and
+     `charging` as UNKNOWN: it shows the route's sentence as an
+     ambiguous result and never "Nothing was charged, enter it again".
+     T113's in-flight 409 and a route throw (502) carry `ambiguous`, so
+     they were already classed as unknown and now also lock.
+2. **`clearStaleResult` and `resetTender`.** The first half was not
+   real: `clearStaleResult` reads `r && r.kind !== "paid" ? r : null`,
+   which KEEPS every non-paid result, so a tender edit never dismissed an
+   ambiguous one (the function's comment says the opposite of its code,
+   and I left that pre-existing mismatch alone). The second half was
+   real: `resetTender` cleared the hold. It no longer does. The hold
+   clears only when the result is dismissed, and the tender controls are
+   locked while it shows (1a).
+3. **The offer was only withdrawn best-effort.**
+   - A claim now CLOSES the ticket's offer on the server
+     (`closeTicketOffer`): no pick and no new card are taken until the
+     teacher's iPad presents again WITH an offer, which it does only once
+     the result is settled ("The front desk is finishing the sale.").
+   - A new hold clears the spent mark for its request.
+   - `useTenderPick` now releases a card on a pick it drops because this
+     tab no longer shows that ticket, as well as on one it refuses.
+4. **A PIN-approved checkout cancelled any pending approval.** Both
+   checkout bodies now name the presenter, and the checkout's cancel
+   goes through the owner-checked `cancelRequest`. Another iPad's
+   approval, and its student's card, are left alone.
+5. **An orphaned approval.**
+   - `useSaleApproval` cancels its own outstanding approval on pagehide,
+     as the mirror does.
+   - A present that meets ANOTHER iPad's approval answers busy with
+     `foreignApproval`. The teacher reads "The customer screen is
+     showing another sale's approval." with Wait and Approve sale, and
+     no Take over.
+   - The approval poll stamps `polledAt`. An approval nobody has polled
+     for a minute is an orphan, and the next present (Wait retries every
+     2 seconds) retires it.
+6. **A reload lost an unknown outcome.** It is kept in sessionStorage
+   (`pos_uncertain_charge`: the time and the display request id, no card
+   data). On the Cart screen's next open it shows again as an ambiguous
+   result, with the hold and the display's choices held, until
+   Understood.
+
+**Driven** (`tsc --noEmit` and `next build` clean, the fake, a paired
+display). Approval off:
+
+- A student's card charged for real while the browser lost the answer:
+  - one live `CreditCard` checkout went out;
+  - the screen showed "may or may not", no "enter it again", no pick
+    sentence and no line;
+  - Finalize was aria-disabled with "The last charge needs checking
+    first. Tap Understood when you have.";
+  - all four tiles were disabled and the display offered nothing.
+- A second claim on that card answered 409 `spent`, and a pick on the
+  ticket 409 "The front desk is finishing the sale."
+- After a reload and reopening the Cart screen, the unknown outcome was
+  shown again with Finalize locked and nothing offered. A tile tap did
+  not dismiss it. Understood unlocked Finalize, and the display offered
+  again.
+
+Approval on:
+
+- iPad B's PIN-approved sale charged, and iPad A's approval stayed on the
+  display.
+- B's Finalize met A's approval and read "The customer screen is showing
+  another sale's approval." with Cancel, Wait and Approve sale (no Take
+  over).
+- With A's polls and cancels blocked, B's Wait retired A's approval after
+  a minute and B's own approval went up.
+- A's tab closing took its own new approval off the display.
+
+The full T241 drive (off and on) reran with its earlier results.

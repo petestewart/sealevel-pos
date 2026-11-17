@@ -56,7 +56,13 @@ export type ApprovalState =
   /* T204: `signup` means a STUDENT is signing themselves up on that
    *  screen, which is the one case the wording names and Take over
    *  interrupts a person rather than a scene. */
-  | { stage: "busy"; signup?: boolean }
+  | {
+      stage: "busy";
+      signup?: boolean;
+      /** T241 third review: what holds the screen is ANOTHER iPad's
+       *  approval, which Take over may not take. */
+      foreignApproval?: boolean;
+    }
   | { stage: "offline" }
   /* T209 review: the server refused the present for a reason that is
    *  NOT the screen's state, and said why. Its own sentence is what the
@@ -323,6 +329,7 @@ export function useSaleApproval(input: {
         land({
           stage: "busy",
           ...(body?.holdingSignup === true ? { signup: true } : {}),
+          ...(body?.foreignApproval === true ? { foreignApproval: true } : {}),
         });
         return;
       }
@@ -593,6 +600,28 @@ export function useSaleApproval(input: {
   }, [setPresentingBoth]);
 
   const reset = useCallback(() => endWait(null), [endWait]);
+
+  /* T241 third review (5): a tab that goes away takes its own approval
+   * off the student's screen with it, as the live mirror does, so a tab
+   * reopened without its id does not sit behind its own orphan. Best
+   * effort, naming this tab and that request. */
+  useEffect(() => {
+    const leave = () => {
+      const held = approvalRef.current;
+      const rid =
+        held?.stage === "waiting"
+          ? held.requestId
+          : held?.stage === "pin"
+            ? held.resume?.requestId
+            : undefined;
+      if (rid === undefined) return;
+      void cancelOnDisplay({ requestId: rid, keepalive: true }).catch(
+        () => undefined,
+      );
+    };
+    window.addEventListener("pagehide", leave);
+    return () => window.removeEventListener("pagehide", leave);
+  }, []);
 
   const requestId = useCallback((): string | null => {
     const held = approvalRef.current;

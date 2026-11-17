@@ -339,6 +339,17 @@ settles them before T225 is called done, and both hosts must be allowed in
 the cloud environment before live Stripe work. T224's fake lets the build
 start without them.
 
+**When the reader works, remove the student-typed card (T241).** Pete,
+2026-11-17, on students typing their own card on the customer iPad: "i
+think we can keep that for now and remove it once we actually have
+stripe." It sits behind the `display_typed_card` setting (default on,
+`POS_DISPLAY_TYPED_CARD` without a database) so he can turn it off
+sooner. Once the reader is live, delete the feature with its setting:
+`src/app/display/CardForm.tsx`, `/api/display/card`,
+`src/lib/displaycard.ts`, the `typedcard` choice and checkout's
+`displayCard` path. "A different card" then becomes the reader's "tap
+your card".
+
 ### The money order
 
 Rehearse, hold, sell, take.

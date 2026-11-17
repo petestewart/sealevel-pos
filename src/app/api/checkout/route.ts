@@ -84,7 +84,7 @@ import {
   settleDisplayCard,
 } from "@/lib/displaycard";
 import { traceMindbody } from "@/lib/mbtrace";
-import { displayRequestClosed } from "@/lib/display";
+import { closeTicketOffer, displayRequestClosed } from "@/lib/display";
 import {
   parsePromotionCode,
   promotionRefusal,
@@ -589,6 +589,9 @@ export async function POST(request: Request) {
         ),
       );
     }
+    /* Third review: the ticket takes no pick and no new card while this
+     * charge runs, nor after it, until the teacher's iPad offers again. */
+    closeTicketOffer(displayCard.requestId);
     const { displayCard: _ref, ...rest } = payload;
     charged = { ...rest, typedCard: claim.card };
   }
@@ -1775,7 +1778,15 @@ async function runCheckout(
       held.status === "pending" &&
       isApproveTicket(held.kind, held.payload)
     ) {
-      await cancelRequest().catch(() => undefined);
+      /* T241 third review: owner-checked like every other teacher cancel.
+       * The approval this PIN stood in for is this tab's own; another
+       * iPad's approval (and the card its student typed) is left alone. */
+      await cancelRequest(Date.now(), {
+        teacher: {
+          presenter:
+            typeof payload?.presenter === "string" ? payload.presenter : null,
+        },
+      }).catch(() => undefined);
     }
   }
 
