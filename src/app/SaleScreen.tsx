@@ -10331,8 +10331,12 @@ export default function SaleScreen(props: {
     heldPass.current = null;
     heldForNewClient.current = false;
   }, []);
-  /** Non-null renders the refusal; the names are the lines to remove. */
-  const [detachBlock, setDetachBlock] = useState<string[] | null>(null);
+  /** Non-null renders the refusal: the names it reads out, and (T243)
+   *  the cart keys of exactly those lines, so "Remove the pass and
+   *  detach" removes what the teacher read about and nothing else. */
+  const [detachBlock, setDetachBlock] = useState<
+    { names: string[]; keys: string[] } | null
+  >(null);
   const closeDetachBlock = useCallback(() => setDetachBlock(null), []);
   useEffect(() => {
     if (detachBlock === null) return;
@@ -12376,7 +12380,10 @@ export default function SaleScreen(props: {
                      own; the teacher removes those lines or keeps the
                      client. */
                   if (selfPassLines.length > 0) {
-                    setDetachBlock(selfPassLines.map((l) => l.item.name));
+                    setDetachBlock({
+                      names: selfPassLines.map((l) => l.item.name),
+                      keys: selfPassLines.map((l) => l.key),
+                    });
                     return;
                   }
                   onDetachClient();
@@ -13870,13 +13877,35 @@ export default function SaleScreen(props: {
             </button>
             <p className="modal-title">The ticket holds a pass</p>
             <p className="modal-note">
-              {detachBlock.length === 1
-                ? `${detachBlock[0]} is on this client's account, and a pass cannot be sold to a walk-in.`
-                : `${detachBlock.length} passes are on this client's account, and a pass cannot be sold to a walk-in.`}{" "}
-              Remove {detachBlock.length === 1 ? "that line" : "those lines"} first,
-              or keep the client on this sale.
+              {detachBlock.names.length === 1
+                ? `${detachBlock.names[0]} is on this client's account, and a pass cannot be sold to a walk-in.`
+                : `${detachBlock.names.length} passes are on this client's account, and a pass cannot be sold to a walk-in.`}{" "}
+              Remove {detachBlock.names.length === 1 ? "the pass" : "the passes"} and
+              detach, or keep the client on this sale.
             </p>
             <div className="modal-actions">
+              {/* T243 (Pete: "there should be a button on the modal that
+                  will remove it for them"): the same removal the ticket's
+                  own X performs, for exactly the lines that refused the
+                  detach (a line already gone is skipped, and a line for
+                  someone else or a retail line is never touched), then
+                  the same detach the client's X would have run. */}
+              <button
+                className="modal-confirm"
+                disabled={charging}
+                onClick={() => {
+                  const present = new Set(cart.map((l) => l.key));
+                  for (const key of detachBlock.keys) {
+                    if (present.has(key)) removeLine(key);
+                  }
+                  closeDetachBlock();
+                  onDetachClient();
+                }}
+              >
+                {detachBlock.names.length === 1
+                  ? "Remove the pass and detach"
+                  : "Remove the passes and detach"}
+              </button>
               <button className="modal-confirm go" onClick={closeDetachBlock}>
                 Keep the client
               </button>

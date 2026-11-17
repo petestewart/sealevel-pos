@@ -22180,3 +22180,44 @@ Approval on:
 - A's tab closing took its own new approval off the display.
 
 The full T241 drive (off and on) reran with its earlier results.
+
+## T243. "The ticket holds a pass" removes the pass for you (Pete, 2026-11-17)
+
+Pete: "when there is a pass in the shopping cart and the teacher tries to
+remove the student (they changed their mind, or it was a mistake), a modal
+says they are not allowed to without removeing the pass from the cart.
+there should be a button on the modal that will remove it for them".
+
+T92's refusal (`detachBlock` in `src/app/SaleScreen.tsx`) stays: a pass
+cannot be sold to a walk-in, so detaching with the client's own pass lines
+on the ticket is still refused. What changes is the way out.
+
+### To do
+
+- [x] The modal gets a second 64px button beside "Keep the client":
+      "Remove the pass and detach" (or "Remove the passes and detach" for
+      more than one). It removes exactly the lines that blocked the detach
+      (the client's own pass lines, `selfPassLines`; never a line for
+      somebody else, never a retail line) through `removeLine`, the ONE
+      removal every other path uses, so tender lines, an armed discount,
+      a held card and the customer screen behave as they already do, then
+      detaches the client as the X would have.
+- [x] The modal keeps the line keys it was opened for, not just names, so
+      the button removes what the teacher read about even if the ticket
+      changed under it; a line already gone is skipped.
+- [x] Disabled while a charge is in flight, like the X.
+- [x] `tsc --noEmit` and `next build` clean; in Chromium against the fake:
+      a ticket with one pass and a water, X on the client, the new button:
+      the pass is gone, the water stays, the sale is a walk-in sale.
+
+**Done (2026-11-17).** `detachBlock` now holds the blocking lines' cart
+keys beside their names; the new 64px button removes exactly those
+through `removeLine` (a line already gone is skipped) and then runs the
+same `onDetachClient` as the client's X, disabled while charging.
+`tsc --noEmit` and `next build` clean. Driven in Chromium against the fake
+(Taylor Brooks, a Drop In and a Water Bottle): X on the client opened "The
+ticket holds a pass" with "Remove the pass and detach"; the tap left the
+Water Bottle alone on the ticket and the sale with no client, and the
+existing keep-or-empty question ("Start a new cart? This cart has 1 item.
+Keep them?") followed, exactly as the client's X asks after any detach
+with items left (Pete's earlier rule).
