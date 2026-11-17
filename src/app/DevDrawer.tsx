@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { DEFAULT_SETTINGS, type Settings, useSettings } from "./settings";
 import { readThemeChoice, setThemeChoice, type ThemeChoice } from "./theme";
 import { ProbeView, type ProbeResult, type Teacher } from "./StaffModal";
+import ResetDisplay from "./ResetDisplay";
 
 /**
  * A drawer that slides up from the bottom showing the Mindbody traffic this
@@ -610,6 +611,7 @@ function SettingsPanel({
       <DisplayPanel open={open} />
       <ConfirmSalePanel open={open} admin={mode?.targetAdmin === true} />
       <ContractSignaturePanel open={open} admin={mode?.targetAdmin === true} />
+      <DisplayTypedCardPanel open={open} admin={mode?.targetAdmin === true} />
       <SignupModePanel open={open} admin={mode?.targetAdmin === true} />
       <p className="muted">
         The rest is stored in this browser. Applies immediately, no restart.
@@ -867,6 +869,13 @@ function DisplayPanel({ open }: { open: boolean }) {
             </button>
           </div>
         )
+      ) : null}
+      {/* T244: the same reset the header's display mark offers. */}
+      {info?.paired ? (
+        <ResetDisplay
+          buttonClass="dev-target-btn"
+          confirmClass="dev-target-btn dev-target-go stop"
+        />
       ) : null}
     </>
   );
@@ -1195,6 +1204,169 @@ function ContractSignaturePanel({
               }}
             >
               {on ? "Turn off signatures" : "Turn on signatures"}
+            </button>
+          </div>
+        )
+      ) : null}
+    </>
+  );
+}
+
+/* --- Students can type a card on the customer screen (T241) ----------
+ *
+ * Pete: "keep that for now and remove it once we actually have stripe
+ * ... but let's hide it behind a flag so i can turn it off if it becomes
+ * annoying." Default on. Not a rail: off REMOVES a way to pay, on lets a
+ * student's card reach Mindbody only through the teacher's own checkout.
+ * Admin-edited and logged because it is a studio-wide policy. Remove it
+ * with the feature when Phase 4's reader exists.
+ */
+
+interface DisplayTypedCardInfo {
+  displayTypedCard: boolean;
+  displayTypedCardSource: string;
+  envVar: string;
+  configured: boolean;
+  available: boolean;
+}
+
+function DisplayTypedCardPanel({
+  open,
+  admin,
+}: {
+  open: boolean;
+  admin: boolean;
+}) {
+  const [info, setInfo] = useState<DisplayTypedCardInfo | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [asking, setAsking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      /* Everyone reads the line from /api/config; an admin reads the
+       * fuller answer, which says whether there is a store to write
+       * to. */
+      const res = await fetch(
+        admin ? "/api/admin/display-typed-card" : "/api/config",
+      );
+      if (!res.ok) return;
+      const body = await res.json();
+      setInfo({
+        displayTypedCard: body.displayTypedCard === true,
+        displayTypedCardSource: String(
+          body.displayTypedCardSource ?? "env",
+        ),
+        envVar: String(body.envVar ?? "POS_DISPLAY_TYPED_CARD"),
+        configured: body.configured !== false,
+        available: body.available !== false,
+      });
+    } catch {
+      /* The block stays quiet; nothing else depends on it. */
+    } finally {
+      setLoaded(true);
+    }
+  }, [admin]);
+
+  useEffect(() => {
+    if (!open) return;
+    void load();
+  }, [load, open]);
+
+  const setTo = async (next: boolean) => {
+    setBusy(true);
+    setError(null);
+    setDone(null);
+    try {
+      const res = await fetch("/api/admin/display-typed-card", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ on: next }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) {
+        setError(String(body?.error ?? `HTTP ${res.status}`));
+        return;
+      }
+      setAsking(false);
+      setDone(
+        next
+          ? "On. A student can choose \"A different card\" on the customer screen and type it there."
+          : "Off. The customer screen no longer offers a card to type, and any card a student had typed is let go.",
+      );
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!loaded || info === null) return null;
+  const on = info.displayTypedCard;
+  const stored = info.displayTypedCardSource === "setting";
+  return (
+    <>
+      <div className="dev-label">students can type a card on the customer screen</div>
+      <p className="muted">
+        {on ? "On" : "Off"}.{" "}
+        {stored
+          ? "Stored setting."
+          : `From ${info.envVar} in the server environment (unset means on).`}{" "}
+        {on
+          ? "\"A different card\" is offered on the customer screen: the student types their own card, it is held in server memory for one charge, and the teacher's Finalize charges it. To be removed once the card reader (Phase 4) is in."
+          : "The customer screen offers no card to type. The teacher's own card entry is unchanged."}
+      </p>
+      {done ? <p className="dev-changed">{done}</p> : null}
+      {error ? <p className="dev-target-error">{error}</p> : null}
+      {admin ? (
+        !info.configured || !info.available ? (
+          <p className="muted">
+            {info.configured
+              ? `The database is not answering, so ${info.envVar} in the server environment decides and this cannot be changed here.`
+              : `No database configured (DATABASE_URL unset), so ${info.envVar} in the server environment decides and this cannot be changed here.`}
+          </p>
+        ) : asking ? (
+          <div className="dev-target-ask">
+            <p className="dev-target-question">
+              {on
+                ? "Stop students typing a card on the customer screen? Any card already typed is let go."
+                : "Let students type a card on the customer screen?"}
+            </p>
+            <div className="dev-target-buttons">
+              <button
+                type="button"
+                className="dev-target-btn"
+                disabled={busy}
+                onClick={() => setAsking(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="dev-target-btn dev-target-go"
+                disabled={busy}
+                onClick={() => void setTo(!on)}
+              >
+                {busy ? "Saving" : on ? "Yes, turn it off" : "Yes, turn it on"}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="dev-target-buttons">
+            <button
+              type="button"
+              className="dev-target-btn"
+              disabled={busy}
+              onClick={() => {
+                setError(null);
+                setDone(null);
+                setAsking(true);
+              }}
+            >
+              {on ? "Turn off typed cards" : "Turn on typed cards"}
             </button>
           </div>
         )

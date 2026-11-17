@@ -33,7 +33,13 @@ import { createHash } from "node:crypto";
  *   T90 line bought for somebody else;
  * - every gift card line (T95/T96): its product id, its quantity and the
  *   chosen amount in cents when the product is the editable one;
- * - the whole-cart discount (T79), as its mode and value.
+ * - the whole-cart discount (T79), as its mode and value;
+ * - the promotion code (T220), trimmed, when the ticket carries one. A
+ *   code changes what Mindbody charges as surely as a discount does, so
+ *   a customer who approved $21.00 with a code must not be charged on an
+ *   approval of the same lines at $49.00 without it, or the reverse. The
+ *   line is appended ONLY when a code is present, so every ticket
+ *   without one hashes to exactly what it did before T220.
  *
  * WHAT IS DELIBERATELY NOT, and why:
  *
@@ -45,9 +51,24 @@ import { createHash } from "node:crypto";
  *   total -- the lines, the quantities, the unit prices, the discount and
  *   the client -- is in the hash, so a ticket that would price
  *   differently hashes differently.
- * - **The tender.** How the customer pays is not what they approved; they
- *   approved what is being sold and for how much. A teacher who switches
- *   from cash to a card after the tap must not have to ask again.
+ * - **The tender, unless the approval NAMED it** (T240). Until T240 the
+ *   approve scene showed what was sold and for how much and said nothing
+ *   about how it would be paid, so the tender was left out and a switch
+ *   from cash to a card after the tap needed no second ask. Since T240
+ *   the scene names the payment method ("Account balance", "Card", and
+ *   each leg's amount on a split), and what the student approved has to
+ *   be what is charged, tender included. So `{ tender: true }` appends
+ *   `tender|` lines: each leg's method, folded to the WORD the student
+ *   read (a stored and a typed card are both "Card"), with its amount in
+ *   cents on a split, sorted. /api/display/present hashes with it
+ *   exactly when the cart carries a tender (and then writes the scene's
+ *   tender words from that same tender, so what is hashed is what was
+ *   shown), records that on the request's private half, and
+ *   /api/checkout hashes its own body the same way. A request presented
+ *   without a tender (a page loaded before T240) hashes, and is checked,
+ *   exactly as before: it showed no tender, so it binds none. Card and
+ *   gift card numbers are never read; the method and the amount are all
+ *   that go in.
  * - **`taxExempt` and `taxRate`.** Catalog facts, identical on both
  *   sides, that no student reads off the screen.
  * - **Item names, receipt toggles, tokens and idempotency keys.** None of
@@ -129,14 +150,69 @@ function discountText(raw: unknown): string {
   return `discount|${mode}|${value}`;
 }
 
+/** T220: the promotion code's line, or none. Trimmed, case kept: the
+ *  code is sent to Mindbody as typed (src/lib/promocode.ts). */
+function promoLines(raw: unknown): string[] {
+  const code = textOf(raw);
+  return code === "" ? [] : [`promo|${code}`];
+}
+
+/** T240: the tender's lines, from `method` or `split.legs`. One word
+ *  per leg, folded the way the student reads it (tenderWord's folding,
+ *  repeated here so this file stays free of display imports): the
+ *  amount is in cents on a split, and empty on a single method, which
+ *  pays the whole total. Unreadable input yields a line that cannot
+ *  match a readable one, never a throw. */
+function tenderLines(body: Record<string, unknown>): string[] {
+  const word = (m: unknown): string =>
+    m === "storedcard" || m === "typedcard"
+      ? "card"
+      : m === "credit" || m === "cash" || m === "giftcard" || m === "comp"
+        ? m
+        : `?${textOf(m)}`;
+  const split = body["split"];
+  if (split !== undefined && split !== null) {
+    const legs = (split as { legs?: unknown })?.legs;
+    const list = Array.isArray(legs) ? legs : [];
+    return list
+      .map((leg) => {
+        const l =
+          leg !== null && typeof leg === "object"
+            ? (leg as Record<string, unknown>)
+            : {};
+        const amount = cents(l["amount"]);
+        return `tender|${word(l["method"])}|${amount === null ? "" : amount}`;
+      })
+      .sort();
+  }
+  return [`tender|${word(body["method"])}|`];
+}
+
+/** Whether a body carries a tender at all (T240): a `method` or a
+ *  `split`. What /api/display/present asks before binding one. */
+export function carriesTender(input: unknown): boolean {
+  if (input === null || typeof input !== "object" || Array.isArray(input)) {
+    return false;
+  }
+  const body = input as Record<string, unknown>;
+  return (
+    (body["split"] !== undefined && body["split"] !== null) ||
+    (typeof body["method"] === "string" && body["method"].trim() !== "")
+  );
+}
+
 /**
  * The canonical text a cart hashes to. Exported so a driver (and a
  * reader) can see exactly what went in without reversing a digest.
  *
  * `input` is the body both routes already receive: `items`, `giftCards`,
- * `discount` and `clientId` at its top level.
+ * `discount`, `promotionCode` and `clientId` at its top level, and since
+ * T240 `method` or `split`, read only with `{ tender: true }`.
  */
-export function canonicalCart(input: unknown): string {
+export function canonicalCart(
+  input: unknown,
+  opts: { tender?: boolean } = {},
+): string {
   const body =
     input !== null && typeof input === "object" && !Array.isArray(input)
       ? (input as Record<string, unknown>)
@@ -152,10 +228,20 @@ export function canonicalCart(input: unknown): string {
     `client|${textOf(body["clientId"])}`,
     ...lines,
     discountText(body["discount"]),
+    ...promoLines(body["promotionCode"]),
+    /* T240: appended LAST and only when asked, so a hash made without
+     * the tender is byte for byte the one made before T240. */
+    ...(opts.tender === true ? tenderLines(body) : []),
   ].join("\n");
 }
 
-/** The sha256 of that text, lowercase hex. */
-export function cartSha256(input: unknown): string {
-  return createHash("sha256").update(canonicalCart(input), "utf8").digest("hex");
+/** The sha256 of that text, lowercase hex. `tender` is T240's: whether
+ *  the approval named the tender, and so binds it. */
+export function cartSha256(
+  input: unknown,
+  opts: { tender?: boolean } = {},
+): string {
+  return createHash("sha256")
+    .update(canonicalCart(input, opts), "utf8")
+    .digest("hex");
 }

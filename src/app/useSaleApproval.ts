@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { TicketPayload } from "@/lib/displayticket";
 
+import { cancelOnDisplay, presenterId } from "./presenter";
+
 /**
  * T203's approval, in ONE place (T209).
  *
@@ -54,7 +56,13 @@ export type ApprovalState =
   /* T204: `signup` means a STUDENT is signing themselves up on that
    *  screen, which is the one case the wording names and Take over
    *  interrupts a person rather than a scene. */
-  | { stage: "busy"; signup?: boolean }
+  | {
+      stage: "busy";
+      signup?: boolean;
+      /** T241 third review: what holds the screen is ANOTHER iPad's
+       *  approval, which Take over may not take. */
+      foreignApproval?: boolean;
+    }
   | { stage: "offline" }
   /* T209 review: the server refused the present for a reason that is
    *  NOT the screen's state, and said why. Its own sentence is what the
@@ -92,6 +100,15 @@ export interface SaleApproval {
   /** Whether the teacher chose "Wait" on a busy screen, so the present
    *  is retried until it goes through. */
   waitingForScreen: boolean;
+  /**
+   * T240: whether an approval is outstanding IN ANY FORM, including the
+   * round trip between the primary tap and the present's request id
+   * coming back (and Take over's apology), when `approval` is still
+   * null. The approval names the tender, so a screen locks its tender
+   * controls on THIS, not on `approval`: T238's review found the roster
+   * dialog's "Use the card instead" live for exactly that round trip.
+   */
+  pending: boolean;
   /** The primary tap. With the setting off this is the charge and
    *  nothing else; with it on the ticket goes up and the charge follows
    *  the customer's own tap. */
@@ -123,6 +140,18 @@ export interface SaleApproval {
   /** Drop everything outstanding (a new ticket, a finished sale), and
    *  take the scene off the student's screen with it. */
   reset: () => void;
+  /**
+   * T241: the student picked another way to pay on the approval, and the
+   * tender has moved; ask them again with the new one. The approve
+   * ticket on the screen is REPLACED in place (same request id, the
+   * wait carries on), so the screen does not blink to idle. It NEVER
+   * charges, and it does nothing at all with the setting off or with no
+   * approval outstanding.
+   */
+  askAgain: () => void;
+  /** T241: the request id of the approval this screen is waiting on (or
+   *  that its PIN pad was opened over), or null. */
+  requestId: () => string | null;
 }
 
 export function useSaleApproval(input: {
@@ -143,10 +172,26 @@ export function useSaleApproval(input: {
    * not a screen gone, and it must read as one.
    */
   onStaffSessionEnded?: () => void;
+  /** T241: a pick the approval poll's answer carried, handed to the
+   *  screen's `useTenderPick`, which acts on each pick once. */
+  onPick?: (value: unknown) => void;
+  /** T241: a presented approval was taken back down (`requestId`), so a
+   *  card the student typed on it is let go of by the server and the
+   *  screen can say so. */
+  onSceneCancelled?: (requestId: string) => void;
 }): SaleApproval {
   const [approval, setApproval] = useState<ApprovalState | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [waitingForScreen, setWaitingForScreen] = useState(false);
+  /** T240: a present (or Take over's apology before one) is in flight,
+   *  so the approval is begun though `approval` is still null. The ref
+   *  is what a tap reads, synchronously; the state is what draws. */
+  const [presenting, setPresenting] = useState(false);
+  const presentingRef = useRef(false);
+  const setPresentingBoth = useCallback((on: boolean) => {
+    presentingRef.current = on;
+    setPresenting(on);
+  }, []);
 
   /* The three inputs are read through refs, updated in the render body,
    * for two separate reasons. The charge and the builder are rebuilt
@@ -162,6 +207,15 @@ export function useSaleApproval(input: {
   chargeRef.current = input.charge;
   const staffGoneRef = useRef(input.onStaffSessionEnded);
   staffGoneRef.current = input.onStaffSessionEnded;
+  const onPickRef = useRef(input.onPick);
+  onPickRef.current = input.onPick;
+  const sceneGoneRef = useRef(input.onSceneCancelled);
+  sceneGoneRef.current = input.onSceneCancelled;
+  /** T241: the cancel last sent for a scene this hook took down. A
+   *  present waits for it, so a cancel and the present after it cannot
+   *  arrive the other way round and leave the new ticket refused "busy"
+   *  behind the old one. */
+  const lastCancel = useRef<Promise<unknown> | null>(null);
   /**
    * T209 review: which attempt is the live one.
    *
@@ -192,22 +246,47 @@ export function useSaleApproval(input: {
    * them is a way past the setting, because the only two things that
    * satisfy it are the customer's own tap and a teacher's PIN.
    */
-  const present = useCallback(async (): Promise<void> => {
+  const present = useCallback(async (replaces?: string): Promise<void> => {
     const ticket = buildRef.current();
     if (ticket === null) {
       /* Nothing to ask about (no client, no line, no price yet). There
        * is no screen state that says so, and the teacher has not been
-       * told a lie: the primary tap simply did nothing. */
+       * told a lie: the primary tap simply did nothing. (Take over sets
+       * `presenting` before it gets here, so it is cleared here too.) */
+      setPresentingBoth(false);
       return;
     }
     const mine = gen.current;
     const payload = ticket.payload;
+    /* T240: begun, though not yet answered. Cleared below once this
+     * attempt resolves, if it is still the live one; an attempt that
+     * was ended under it was cleared by whatever ended it. */
+    setPresentingBoth(true);
+    const settle = () => {
+      if (gen.current === mine) setPresentingBoth(false);
+    };
+    /* T240 review: the approval lands in the ref in the same tick the
+     * presenting flag clears, so a tap in the gap before the next render
+     * cannot pass begin()'s guard and present the ticket a second time
+     * (which the hub would answer busy, over the teacher's own ticket). */
+    const land = (next: ApprovalState | null) => {
+      approvalRef.current = next;
+      setApproval(next);
+    };
     try {
+      if (lastCancel.current !== null) {
+        await lastCancel.current.catch(() => undefined);
+      }
       const res = await fetch("/api/display/present", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           kind: "ticket",
+          /* T241: an approval asked again after a pick replaces its own
+             ticket in place. */
+          ...(replaces !== undefined ? { replaces } : {}),
+          /* T241 review: this tab, which the hub binds the ticket to. */
+          presenter: presenterId(),
           payload,
           ...(payload.clientFirstName
             ? { clientFirstName: payload.clientFirstName }
@@ -225,17 +304,32 @@ export function useSaleApproval(input: {
              in flight, and the scene now EXISTS on the server. Take it
              back down rather than leaving a student holding a ticket
              nobody is waiting on. */
-          void fetch("/api/display/cancel", { method: "POST" });
+          void cancelOnDisplay();
           return;
         }
-        setApproval({ stage: "waiting", requestId: body.requestId });
+        settle();
+        land({ stage: "waiting", requestId: body.requestId });
         return;
       }
       if (gen.current !== mine) return;
+      settle();
+      /* T241 second review (E): an approval asked again in place had
+       * already ended (the student cancelled, or it went). Nothing is put
+       * up in its place; the teacher reads why and Finalizes again. */
+      if (body?.reason === "gone") {
+        land(null);
+        setNote(
+          typeof body?.error === "string"
+            ? body.error
+            : "The approval ended. Finalize again to ask the customer.",
+        );
+        return;
+      }
       if (body?.reason === "busy") {
-        setApproval({
+        land({
           stage: "busy",
           ...(body?.holdingSignup === true ? { signup: true } : {}),
+          ...(body?.foreignApproval === true ? { foreignApproval: true } : {}),
         });
         return;
       }
@@ -260,7 +354,7 @@ export function useSaleApproval(input: {
        *   teacher is never trapped by a refusal they cannot read.
        */
       if (res.status === 401 && body?.reason === "staff") {
-        setApproval(null);
+        land(null);
         setNote(null);
         staffGoneRef.current?.();
         return;
@@ -270,16 +364,19 @@ export function useSaleApproval(input: {
           ? body.error.trim()
           : null;
       if (res.status === 409 || res.status >= 500 || sentence === null) {
-        setApproval({ stage: "offline" });
+        land({ stage: "offline" });
         return;
       }
-      setApproval({ stage: "refused", error: sentence });
+      land({ stage: "refused", error: sentence });
     } catch {
       /* The request never reached the server, so nothing was presented
          and there is nothing to take down. */
-      if (gen.current === mine) setApproval({ stage: "offline" });
+      if (gen.current === mine) {
+        settle();
+        land({ stage: "offline" });
+      }
     }
-  }, []);
+  }, [setPresentingBoth]);
 
   /**
    * While the ticket is on the customer screen, ask how it went.
@@ -298,8 +395,13 @@ export function useSaleApproval(input: {
     let stopped = false;
     const finish = (line: string | null) => {
       stopped = true;
+      approvalRef.current = null;
       setApproval(null);
       setNote(line);
+      /* T241 review: the scene is over (the customer cancelled, or it
+       * went), and a card the student typed on it went with it on the
+       * server; the screen lets go of its line too. */
+      sceneGoneRef.current?.(requestId);
     };
     const tick = async () => {
       if (stopped) return;
@@ -309,6 +411,9 @@ export function useSaleApproval(input: {
         );
         const body = await res.json().catch(() => null);
         if (stopped || body === null) return;
+        /* T241: a pick rides the same answer, so a dropped stream does
+         * not lose the student's choice. Acted on once, by its id. */
+        if (body.pick && body.status === "pending") onPickRef.current?.(body.pick);
         if (body.status === "completed" && body.approved === true) {
           stopped = true;
           setApproval(null);
@@ -359,7 +464,7 @@ export function useSaleApproval(input: {
       chargeRef.current();
       return;
     }
-    if (approvalRef.current !== null) return;
+    if (approvalRef.current !== null || presentingRef.current) return;
     setNote(null);
     setWaitingForScreen(false);
     gen.current += 1;
@@ -379,16 +484,37 @@ export function useSaleApproval(input: {
    */
   const endWait = useCallback((line: string | null) => {
     const held = approvalRef.current;
-    if (held === null) return;
+    /* T240: a present still in flight is outstanding too. Bumping the
+     * generation is what makes it take its own scene back down when its
+     * answer arrives, so the student never holds a ticket for a tender
+     * the teacher has already changed. */
+    const inFlight = presentingRef.current;
+    if (held === null && !inFlight) return;
     gen.current += 1;
+    setPresentingBoth(false);
     setWaitingForScreen(false);
     setApproval(null);
+    /* Synchronously too: two effects in one commit can each end the
+     * wait (a cart edit and the tender it clears), and the second must
+     * find nothing outstanding rather than cancel twice and overwrite
+     * the first one's sentence. */
+    approvalRef.current = null;
     setNote(line);
+    if (held === null) return;
     const sceneUp =
       held.stage === "waiting" ||
       (held.stage === "pin" && held.resume !== undefined);
-    if (sceneUp) void fetch("/api/display/cancel", { method: "POST" });
-  }, []);
+    if (sceneUp) {
+      lastCancel.current = cancelOnDisplay();
+      const gone =
+        held.stage === "waiting"
+          ? held.requestId
+          : held.stage === "pin"
+            ? held.resume?.requestId
+            : undefined;
+      if (gone !== undefined) sceneGoneRef.current?.(gone);
+    }
+  }, [setPresentingBoth]);
 
   /* Handed straight to an onClick, so it takes no argument: a
      MouseEvent must never arrive where a note is expected. */
@@ -407,12 +533,10 @@ export function useSaleApproval(input: {
     setWaitingForScreen(false);
     gen.current += 1;
     const mine = gen.current;
+    /* T240: the apology is part of the ask; the tender stays locked. */
+    setPresentingBoth(true);
     void (async () => {
-      await fetch("/api/display/cancel", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ takenOver: true }),
-      }).catch(() => undefined);
+      await cancelOnDisplay({ takenOver: true }).catch(() => undefined);
       await new Promise((r) => setTimeout(r, 3_000));
       /* T209 review: Cancel during the apology means no ticket goes up.
          Three seconds is long enough to change your mind in, and a
@@ -421,7 +545,7 @@ export function useSaleApproval(input: {
       if (gen.current !== mine) return;
       await present();
     })();
-  }, [present]);
+  }, [present, setPresentingBoth]);
 
   const toPin = useCallback(() => {
     const held = approvalRef.current;
@@ -467,19 +591,78 @@ export function useSaleApproval(input: {
   }, []);
 
   const armed = useCallback((token: string) => {
+    setPresentingBoth(false);
     setApproval(null);
     setNote(null);
     /* The screen is no longer being waited on; the route cancels a
        pending approval of its own when it takes the PIN. */
     chargeRef.current({ token });
-  }, []);
+  }, [setPresentingBoth]);
 
   const reset = useCallback(() => endWait(null), [endWait]);
+
+  /* T241 third review (5): a tab that goes away takes its own approval
+   * off the student's screen with it, as the live mirror does, so a tab
+   * reopened without its id does not sit behind its own orphan. Best
+   * effort, naming this tab and that request. */
+  useEffect(() => {
+    const leave = () => {
+      const held = approvalRef.current;
+      const rid =
+        held?.stage === "waiting"
+          ? held.requestId
+          : held?.stage === "pin"
+            ? held.resume?.requestId
+            : undefined;
+      if (rid === undefined) return;
+      void cancelOnDisplay({ requestId: rid, keepalive: true }).catch(
+        () => undefined,
+      );
+    };
+    window.addEventListener("pagehide", leave);
+    return () => window.removeEventListener("pagehide", leave);
+  }, []);
+
+  const requestId = useCallback((): string | null => {
+    const held = approvalRef.current;
+    if (held?.stage === "waiting") return held.requestId;
+    if (held?.stage === "pin") return held.resume?.requestId ?? null;
+    return null;
+  }, []);
+
+  const askAgain = useCallback(() => {
+    /* Never a charge: `begin` charges with the setting off, this does
+       nothing at all. */
+    if (!onRef.current) return;
+    const held = approvalRef.current;
+    const replaces =
+      held?.stage === "waiting"
+        ? held.requestId
+        : held?.stage === "pin"
+          ? held.resume?.requestId
+          : undefined;
+    /* T241 review: only an OUTSTANDING approval is asked again. With
+     * the wait already over there is nothing to re-ask, and presenting
+     * from scratch here would put up an approval (and charge on its
+     * Approve) that no teacher tapped for. */
+    if (replaces === undefined) return;
+    /* The PIN pad, if it was open over the wait, closes: the ticket it
+       was about is being asked again. The wait stays on the same id. */
+    if (held?.stage === "pin") {
+      const next: ApprovalState = { stage: "waiting", requestId: replaces };
+      approvalRef.current = next;
+      setApproval(next);
+    }
+    setNote(null);
+    gen.current += 1;
+    void present(replaces);
+  }, [present]);
 
   return {
     approval,
     note,
     waitingForScreen,
+    pending: approval !== null || presenting,
     begin,
     cancel,
     abandon,
@@ -489,5 +672,7 @@ export function useSaleApproval(input: {
     closePin,
     armed,
     reset,
+    askAgain,
+    requestId,
   };
 }

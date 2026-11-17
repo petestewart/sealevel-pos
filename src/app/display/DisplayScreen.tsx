@@ -3,17 +3,27 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { plainText } from "@/lib/richtext";
+import {
+  latestVersion,
+  noteServerVersion,
+  useCheckOnReturn,
+  useUpdateReady,
+} from "../appversion";
+import { useVisualViewport } from "../viewport";
 import { readTicketPayload } from "@/lib/displayticket";
 import { readContractPayload } from "@/lib/displaycontract";
 import { readSignupPayload } from "@/lib/displaysignup";
 import { readWaiverPayload } from "@/lib/displaywaiver";
+import { readPassesPayload } from "@/lib/displaypasses";
 
 import ContractScene from "./ContractScene";
+import PassesScene from "./PassesScene";
 import SignupScene from "./SignupScene";
 import TicketScene from "./TicketScene";
 import WaiverScene from "./WaiverScene";
 
 import type { ContractPayload } from "@/lib/displaycontract";
+import type { PassesPayload } from "@/lib/displaypasses";
 import type { SignupPayload } from "@/lib/displaysignup";
 import type { TicketPayload } from "@/lib/displayticket";
 import type { WaiverPayload } from "@/lib/displaywaiver";
@@ -46,14 +56,22 @@ interface Config {
 type Scene =
   /* T203: the ticket carries its request id now, because the APPROVE
    *  mode is answered from this screen; live and summary ignore it. */
-  | { kind: "ticket"; requestId: string; payload: TicketPayload }
+  | {
+      kind: "ticket";
+      requestId: string;
+      payload: TicketPayload;
+      /** T241 review: the version the Approve names. */
+      version?: number;
+    }
   /* T202: the waiver carries its request id, because this is the first
    *  scene the STUDENT answers: completing and refusing both name it. */
   | { kind: "waiver"; requestId: string; payload: WaiverPayload }
   /* T204: the self-serve sign-up, the one scene the STUDENT puts up. */
   | { kind: "register"; requestId: string; payload: SignupPayload }
   /* T205: the membership contract, signed the way the waiver is. */
-  | { kind: "contract"; requestId: string; payload: ContractPayload };
+  | { kind: "contract"; requestId: string; payload: ContractPayload }
+  /* T242: the student's own passes for an unpaid visit. */
+  | { kind: "passes"; requestId: string; payload: PassesPayload };
 
 /** T202: how long "Thank you" stays after a signature, on this screen's
  *  own clock. The hub sends `idle` when the teacher's iPad finalises the
@@ -71,6 +89,41 @@ type Pairing =
   | { state: "loading" }
   | { state: "unpaired"; code: string; secret: string; error: string | null }
   | { state: "paired"; name: string | null; durable: boolean };
+
+/** T246: how long the idle screen must stay idle before a reload, so a
+ *  scene the teacher's iPad sends straight after a cancel is not cut off
+ *  half drawn (a reload lands on it anyway: the stream replays the
+ *  scene on connect). */
+const RELOAD_SETTLE_MS = 1_500;
+
+/** T246: a version this screen reloaded itself for, and when, so a
+ *  server answering two versions at once (old and new side by side for
+ *  a moment during a deploy) cannot make it reload over and over. */
+const RELOADED_KEY = "pos_display_reloaded";
+const RELOAD_LOOP_MS = 2 * 60_000;
+
+function reloadedRecently(version: string): boolean {
+  try {
+    const raw = sessionStorage.getItem(RELOADED_KEY);
+    if (!raw) return false;
+    const seen = JSON.parse(raw) as { version?: unknown; at?: unknown };
+    return (
+      seen.version === version &&
+      typeof seen.at === "number" &&
+      Date.now() - seen.at < RELOAD_LOOP_MS
+    );
+  } catch {
+    return false;
+  }
+}
+
+function markReloaded(version: string): void {
+  try {
+    sessionStorage.setItem(RELOADED_KEY, JSON.stringify({ version, at: Date.now() }));
+  } catch {
+    /* No storage: the guard is a convenience. */
+  }
+}
 
 /** A code reads as three and three: it is read aloud across a counter. */
 function spaced(code: string): string {
@@ -92,10 +145,39 @@ export default function DisplayScreen() {
   /** T203: the line a "Take over" leaves on the screen for a few seconds
    *  before the next scene, so a student is not simply interrupted. */
   const [notice, setNotice] = useState<string | null>(null);
+  /** T241: the student picked another way to pay. When the teacher's
+   *  iPad has to take the approval down to do it (cash, a gift card),
+   *  this is what stands on the screen instead of a blink to Ready. */
+  const [pickNotice, setPickNotice] = useState<string | null>(null);
+  /* T241: the card form keeps the OS keyboard (Apple's "Scan Credit
+   * Card"), so this screen publishes the visible band the way the
+   * teacher's iPad does (T98). */
+  useVisualViewport();
   /** T204: the self-serve sign-up's own tap, and what to say when the
    *  server will not have it (the front desk is using the screen). */
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
+  /** T246: a newer build is up on the server than this page loaded. */
+  const updateReady = useUpdateReady();
+  /** T246: the teacher asked for a reload ("Reload customer screen"). */
+  const [reloadAsked, setReloadAsked] = useState(false);
+
+  /* T246: which build the server runs. Read on load, every minute, when
+   * the screen comes back into view, and on every stream (re)connect
+   * (the stream's own `version` event, below). Needs no cookie, so an
+   * unpaired screen reads it too; only a paired one acts on it. */
+  const readVersion = useCallback(() => {
+    fetch("/api/display/version", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((body) => noteServerVersion(body?.version))
+      .catch(() => undefined);
+  }, []);
+  useEffect(() => {
+    readVersion();
+    const timer = setInterval(readVersion, 60_000);
+    return () => clearInterval(timer);
+  }, [readVersion]);
+  useCheckOnReturn(readVersion);
 
   const startSignup = useCallback(async () => {
     setStartError(null);
@@ -285,11 +367,26 @@ export default function DisplayScreen() {
           return;
         }
       }
+      if (data?.kind === "passes") {
+        const passes = readPassesPayload(data.payload);
+        const requestId =
+          typeof (data as { requestId?: unknown }).requestId === "string"
+            ? String((data as { requestId?: unknown }).requestId)
+            : "";
+        if (passes.ok && requestId.length > 0) {
+          setThanks(null);
+          setNotice(null);
+          setPickNotice(null);
+          setScene({ kind: "passes", requestId, payload: passes.value });
+          return;
+        }
+      }
       if (data?.kind === "ticket") {
         const ticket = readTicketPayload(data.payload);
         if (ticket.ok) {
           setThanks(null);
           setNotice(null);
+          setPickNotice(null);
           setScene({
             kind: "ticket",
             requestId:
@@ -297,6 +394,9 @@ export default function DisplayScreen() {
                 ? String((data as { requestId?: unknown }).requestId)
                 : "",
             payload: ticket.value,
+            ...(typeof (data as { version?: unknown }).version === "number"
+              ? { version: (data as { version: number }).version }
+              : {}),
           });
           return;
         }
@@ -351,6 +451,22 @@ export default function DisplayScreen() {
         })
         .catch(() => undefined);
     };
+    /* T246: the build on the other end of the stream, sent on every
+     * connect, and the teacher's "Reload customer screen". Neither
+     * reloads here: the effect below waits for the idle screen. */
+    const onVersion = (ev: MessageEvent) => {
+      try {
+        const parsed: unknown = JSON.parse(ev.data);
+        if (parsed && typeof parsed === "object") {
+          noteServerVersion((parsed as Record<string, unknown>).version);
+        }
+      } catch {
+        /* An unreadable version is no version. */
+      }
+    };
+    const onReload = () => setReloadAsked(true);
+    source.addEventListener("version", onVersion);
+    source.addEventListener("reload", onReload);
     source.addEventListener("open", onOpen);
     source.addEventListener("error", onError);
     source.addEventListener("idle", onIdle);
@@ -358,6 +474,8 @@ export default function DisplayScreen() {
     source.addEventListener("cancel", onCancel);
     return () => {
       stopped = true;
+      source?.removeEventListener("version", onVersion);
+      source?.removeEventListener("reload", onReload);
       source?.removeEventListener("open", onOpen);
       source?.removeEventListener("error", onError);
       source?.removeEventListener("idle", onIdle);
@@ -366,6 +484,44 @@ export default function DisplayScreen() {
       source?.close();
     };
   }, [pairing.state]);
+
+  /* T246: reload for a new build, or because the teacher asked, but
+   * ONLY from the paired idle screen: never over a ticket, an approval, a
+   * waiver, a sign-up or a contract, never over the thank you or the
+   * take-over apology, and never mid-tap on "New here? Sign up". Any of
+   * those ending is a re-render of this effect, which is how "after the
+   * current scene ends" happens. The pairing is a cookie, so it survives.
+   * A version reload is skipped if this screen already reloaded for that
+   * same version in the last two minutes; a teacher's ask always goes. */
+  const idle =
+    pairing.state === "paired" &&
+    scene === null &&
+    thanks === null &&
+    notice === null &&
+    pickNotice === null &&
+    !starting;
+  useEffect(() => {
+    if (!idle) return;
+    if (!reloadAsked && !updateReady) return;
+    const timer = setTimeout(() => {
+      const version = latestVersion();
+      if (!reloadAsked) {
+        if (version === null || reloadedRecently(version)) return;
+        markReloaded(version);
+      }
+      window.location.reload();
+    }, RELOAD_SETTLE_MS);
+    return () => clearTimeout(timer);
+  }, [idle, reloadAsked, updateReady]);
+
+  /* T241: and the pick's "One moment", a little longer, because the
+   * teacher may be counting cash or scanning a gift card before the
+   * ticket comes back. */
+  useEffect(() => {
+    if (pickNotice === null) return;
+    const timer = setTimeout(() => setPickNotice(null), 20_000);
+    return () => clearTimeout(timer);
+  }, [pickNotice]);
 
   /* T203: and so does the take-over apology. */
   useEffect(() => {
@@ -403,13 +559,14 @@ export default function DisplayScreen() {
   /* T201: a scene owns the middle of the screen; the banner and the mode
    * mark stay where they are, because what this iPad is pointed at is as
    * true during a sale as it is at rest. */
-  if (pairing.state === "paired" && notice !== null && scene === null) {
+  const holding = notice ?? pickNotice;
+  if (pairing.state === "paired" && holding !== null && scene === null) {
     return (
       <main className="display">
         {banner.length > 0 ? <p className="display-banner">{banner}</p> : null}
         <div className="display-middle">
           <h1 className="display-greeting">One moment</h1>
-          <p className="display-notice">{notice}</p>
+          <p className="display-notice">{holding}</p>
         </div>
         {mark ? <p className="display-mark">{mark}</p> : null}
       </main>
@@ -460,10 +617,20 @@ export default function DisplayScreen() {
                 setThanks(who ?? "");
               }}
             />
+          ) : scene.kind === "passes" ? (
+            <PassesScene requestId={scene.requestId} payload={scene.payload} />
           ) : scene.kind === "ticket" ? (
             <TicketScene
               payload={scene.payload}
               requestId={scene.requestId}
+              {...(scene.version !== undefined ? { version: scene.version } : {})}
+              onPicked={(words) =>
+                setPickNotice(
+                  words === "your card"
+                    ? "Your card is with the front desk."
+                    : `The front desk is switching to ${words}.`,
+                )
+              }
               onAnswered={(approved) => {
                 /* The scene is done with the screen the moment the
                  * server has the answer; the hub's own idle (when the
@@ -471,6 +638,11 @@ export default function DisplayScreen() {
                  * in behind this. */
                 setScene(null);
                 if (approved) setThanks(plainText(scene.payload.clientFirstName ?? ""));
+              }}
+              onClosed={() => {
+                /* T244: the student's own Close; the hub's idle follows. */
+                setScene(null);
+                setPickNotice(null);
               }}
             />
           ) : (

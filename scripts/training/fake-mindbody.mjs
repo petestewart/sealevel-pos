@@ -69,6 +69,38 @@ const services = [
   { Id: "s7", ProductId: 1007, Name: "Towel Rental", Price: 3, OnlinePrice: 3, TaxRate: TAX, Count: 1, Type: "Series", RevenueCategory: "Towel and Mat" },
   { Id: "s8", ProductId: 1008, Name: "Mat Rental", Price: 3, OnlinePrice: 3, TaxRate: TAX, Count: 1, Type: "Series", RevenueCategory: "Towel and Mat" },
 ];
+/* T220: the Welcome Back pass and three promotion codes for it, only with
+ * FAKE_MB_PROMO=1. WB-GOOD takes $28 off 581 once (a real checkout spends
+ * it); WB-OLD has expired; anything else is unknown. The refusal words
+ * are invented: what Mindbody really says is the sandbox probe's job. */
+const PROMO = process.env.FAKE_MB_PROMO === "1";
+if (PROMO) {
+  services.push(
+    { Id: "000581", ProductId: 581, Name: "Welcome Back \u2013 2 Weeks Unlimited ($49)", Price: 49, OnlinePrice: 49, TaxRate: 0, Count: 99999, Type: "Unlimited", IsIntroOffer: true, IntroOfferType: "NewAndExistingClients", RevenueCategory: "Classes" },
+  );
+}
+/* T221: per-client refusals, the shapes site 471 answered live: an intro
+ * offer for a client who is not new, a once-per-client offer already
+ * used, a members-only pass. Jordan Kim (10110) and Taylor Brooks (10107)
+ * are returning students; everyone else is new. */
+const clientRefusals = PROMO
+  ? {
+      "10110:581": "Client has hit the purchase count for this intro series.",
+      "10110:1004": "Only new clients qualify for this intro series.",
+      "10107:1004": "Only new clients qualify for this intro series.",
+    }
+  : {};
+const promoCodes = { "WB-GOOD": { off: 28, item: "581", used: false }, "WB-OLD": { off: 28, item: "581", expired: true } };
+/** The refusal for a code on this cart, or null when it applies. */
+function promoRefusal(code, lines) {
+  const c = promoCodes[code];
+  if (!c) return "Invalid promotion code.";
+  if (c.expired) return "This promotion code has expired.";
+  if (c.used) return "This promotion code has reached its maximum number of uses.";
+  if (!lines.some((l) => String(l.found?.ProductId) === c.item)) return "The promotion code does not apply to any item in the cart.";
+  return null;
+}
+
 /* T219: a workshop sold as two passes, with a course to sign the buyer up
  * for. Only with FAKE_MB_WORKSHOP=1, so the training screenshots' shelf
  * does not change under them. */
@@ -319,7 +351,7 @@ const waitlist = {}; /* classId -> entries */
 
 function classRow(d) {
   const s = staff.find((x) => x.Id === d.teacher);
-  const booked = (visits[d.Id] ?? []).length;
+  const booked = (visits[d.Id] ?? []).filter((v) => !v.LateCancelled).length;
   return {
     Id: d.Id,
     ClassScheduleId: d.Id - 20000,
@@ -360,6 +392,12 @@ function priceCart(body) {
   for (const it of body.Items ?? []) {
     const d = Number(it?.DiscountAmount ?? 0);
     if (Number.isFinite(d)) disc += d;
+  }
+  /* T220: a promotion code's discount, on the line it is for. */
+  if (typeof body.PromotionCode === "string" && promoCodes[body.PromotionCode]) {
+    const c = promoCodes[body.PromotionCode];
+    const hit = lines.find((l) => String(l.found?.ProductId) === c.item);
+    if (hit) disc += Math.min(c.off, hit.found.Price * hit.qty);
   }
   /* Tax on the discounted amount, proportionally. */
   if (sub > 0 && disc > 0) tax = tax * ((sub - disc) / sub);
@@ -404,9 +442,40 @@ const server = http.createServer((req, res) => {
   });
 });
 
+/* T253: a driver can make the next N real (not Test) checkouts answer a
+ * 500, which the app reads as an unknown outcome, by POSTing
+ * /__fake/fail-checkout?n=1. Not part of any Mindbody API. */
+let failCheckouts = 0;
+/* And POST /__fake/delay-checkout?ms=20000&n=1 holds the next N real
+ * checkouts that long before answering (T253 review: a slow Mindbody). */
+let delayCheckouts = { n: 0, ms: 0 };
+/* T245: POST /__fake/refuse-execute?n=1 makes the next N updateclientvisit
+ * calls carrying `Execute` answer a 400, as Mindbody refusing a late
+ * cancel would. Not part of any Mindbody API. */
+let refuseExecutes = 0;
+/* And POST /__fake/delay-execute?ms=3000&n=1 holds the next N of them
+ * that long, so the row's spinner can be seen. */
+let delayExecutes = { n: 0, ms: 0 };
+
 function handle(method, path, q, body, res) {
   console.log(`[fake-mb] ${method} ${path}${q.size ? "?" + q.toString().slice(0, 120) : ""}`);
   switch (path) {
+    case "/__fake/fail-checkout": {
+      failCheckouts = Number(q.get("n") ?? 1) || 0;
+      return send(res, 200, { failCheckouts });
+    }
+    case "/__fake/refuse-execute": {
+      refuseExecutes = Number(q.get("n") ?? 1) || 0;
+      return send(res, 200, { refuseExecutes });
+    }
+    case "/__fake/delay-execute": {
+      delayExecutes = { n: Number(q.get("n") ?? 1) || 0, ms: Number(q.get("ms") ?? 3000) || 0 };
+      return send(res, 200, delayExecutes);
+    }
+    case "/__fake/delay-checkout": {
+      delayCheckouts = { n: Number(q.get("n") ?? 1) || 0, ms: Number(q.get("ms") ?? 20000) || 0 };
+      return send(res, 200, delayCheckouts);
+    }
     case "/usertoken/issue": {
       const u = String(body.Username ?? "").toLowerCase();
       if (logins[u] && body.Password) {
@@ -515,6 +584,42 @@ function handle(method, path, q, body, res) {
       for (const list of Object.values(visits)) {
         const v = list.find((x) => x.Id === Number(body.VisitId));
         if (v) {
+          /* T242: `Test: true` validates and commits nothing (client.yml
+           * UpdateClientVisitRequest), which is what the "Pay and check
+           * in" dialog's per-pass check relies on. */
+          if (body.Test === true) {
+            if (body.ClientServiceId && !clientServices.some((s) => s.Id === Number(body.ClientServiceId))) {
+              return send(res, 400, { Error: { Message: "Client service not found.", Code: "InvalidParameter" } });
+            }
+            return send(res, 200, { Visit: v });
+          }
+          /* T245: the execute codes (client.yml UpdateClientVisitRequest:
+           * Cancel, Latecancel, Unlatecancel). A late cancel MARKS the
+           * visit, as site 471's real one does: it stays on the class,
+           * signed out, its pass still attached. Unlatecancel takes the
+           * mark off. Cancel is not modelled. */
+          if (typeof body.Execute === "string") {
+            if (delayExecutes.n > 0 && !body.__delayed) {
+              delayExecutes.n -= 1;
+              const ms = delayExecutes.ms;
+              setTimeout(() => handle("POST", "/client/updateclientvisit", q, { ...body, __delayed: true }, res), ms);
+              return;
+            }
+            if (refuseExecutes > 0) {
+              refuseExecutes -= 1;
+              return send(res, 400, { Error: { Message: "Cancellation is outside allowed window.", Code: "InvalidParameter" } });
+            }
+            if (body.Execute === "Latecancel") {
+              v.LateCancelled = true;
+              v.SignedIn = false;
+            } else if (body.Execute === "Unlatecancel") {
+              v.LateCancelled = false;
+            } else {
+              return send(res, 400, { Error: { Message: `Execute ${body.Execute} is not supported by the fake.`, Code: "InvalidParameter" } });
+            }
+            console.log(`[fake-mb] visit ${v.Id} Execute=${body.Execute} keys=${Object.keys(body).filter((k) => k !== "__delayed").sort().join(",")}`);
+            return send(res, 200, { Visit: v });
+          }
           if (typeof body.SignedIn === "boolean") v.SignedIn = body.SignedIn;
           if (body.ClientServiceId) {
             const cs = clientServices.find((s) => s.Id === Number(body.ClientServiceId));
@@ -639,12 +744,31 @@ function handle(method, path, q, body, res) {
     case "/sale/giftcardbalance":
       return send(res, 200, { BarcodeId: one(q, "barcodeId"), RemainingBalance: 0 });
     case "/sale/checkoutshoppingcart": {
+      if (body.Test !== true && !body.__delayed && delayCheckouts.n > 0) {
+        delayCheckouts.n -= 1;
+        setTimeout(() => handle(method, path, q, { ...body, __delayed: true }, res), delayCheckouts.ms);
+        return;
+      }
+      if (body.Test !== true && failCheckouts > 0) {
+        failCheckouts -= 1;
+        return send(res, 500, { Error: { Message: "Internal error (fake)", Code: "InternalError" } });
+      }
       const p = priceCart(body);
+      for (const l of p.lines) {
+        const why = clientRefusals[`${body.ClientId}:${l.found?.ProductId}`];
+        if (why) return send(res, 400, { Error: { Message: `mb.Core.BLL.ShoppingCart failed validation ${why}`, Code: "InvalidParameter" } });
+      }
+      if (typeof body.PromotionCode === "string") {
+        const why = promoRefusal(body.PromotionCode, p.lines);
+        if (why) return send(res, 400, { Error: { Message: why, Code: "InvalidParameter" } });
+        if (body.Test !== true) promoCodes[body.PromotionCode].used = true;
+      }
       const purchased = p.lines.map((l) => ({
         Id: l.found?.ProductId ?? l.id,
         BarcodeId: l.found?.Id ?? null,
         Name: l.found?.Name ?? "Item",
-        IsService: l.found?._kind === "Service",
+        /* T254: live Mindbody says true for a retail product too (sale 428877). */
+        IsService: true,
         Quantity: l.qty,
         Price: l.found?.Price ?? 0,
       }));
@@ -659,6 +783,15 @@ function handle(method, path, q, body, res) {
       if (body.Test === true) return send(res, 200, { ShoppingCart: cart });
       const saleId = ++saleSeq;
       sales.push({ Id: saleId, ClientId: String(body.ClientId ?? ""), SaleDateTime: wall(new Date()), PurchasedItems: purchased, Payments: body.Payments ?? [] });
+      /* T250: an account payment comes off the account, below zero too,
+       * so an overdraft reads back as the negative balance it left. */
+      const payer = body.ClientId ? byId(body.ClientId) : null;
+      for (const pay of body.Payments ?? []) {
+        if (payer && pay?.Type === "DebitAccount") {
+          const amt = Number(pay?.Metadata?.Amount ?? 0);
+          payer.AccountBalance = Math.round(((payer.AccountBalance ?? 0) - amt) * 100) / 100;
+        }
+      }
       /* A pass sold becomes a ClientService the app re-reads. */
       for (const l of p.lines) {
         if (l.found?._kind === "Service" && body.ClientId) {

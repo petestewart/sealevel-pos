@@ -2,20 +2,26 @@ import { NextResponse } from "next/server";
 
 import { requireActor } from "@/lib/actor";
 import { requireSession } from "@/lib/auth";
+import { randomBytes } from "node:crypto";
+
 import {
+  PASSES_TTL_MS,
+  PASSES_WORKING_TTL_MS,
   PAYLOAD_LIMIT_BYTES,
   SUMMARY_TTL_MS,
   isDisplayRequestKind,
   presentRequest,
   readJsonObject,
 } from "@/lib/display";
-import { cartSha256 } from "@/lib/cartsha";
-import { readTicketPayload } from "@/lib/displayticket";
+import { cartSha256, carriesTender } from "@/lib/cartsha";
+import { readTicketPayload, tendersFromCharge } from "@/lib/displayticket";
 import { readContractPayload } from "@/lib/displaycontract";
 import { buildContractScene } from "@/lib/contractscene";
 import { readWaiverPayload } from "@/lib/displaywaiver";
+import { MAX_PASSES, readPassesPayload } from "@/lib/displaypasses";
 import { readClientFirstName } from "@/lib/clients";
 import { getWaiver } from "@/lib/waiver";
+import { displayTypedCardAllowed } from "@/lib/approval";
 
 export const dynamic = "force-dynamic";
 
@@ -57,7 +63,7 @@ export async function POST(request: Request) {
   const input = (body ?? {}) as Record<string, unknown>;
   if (!isDisplayRequestKind(input.kind)) {
     return NextResponse.json(
-      { error: "kind must be waiver, ticket, register or contract" },
+      { error: "kind must be waiver, ticket, register, contract or passes" },
       { status: 400 },
     );
   }
@@ -108,13 +114,161 @@ export async function POST(request: Request) {
         input.cart !== null && typeof input.cart === "object"
           ? (input.cart as Record<string, unknown>)
           : {};
+      /* T240: the approval names how the student is paying, so the
+       * tender the cart carries is BOUND: it goes into the hash, and the
+       * words the student reads are rebuilt HERE from that same tender
+       * rather than taken from the payload, so the scene cannot say
+       * "Card" over a hash of an account charge. A cart carrying no
+       * tender (a page loaded before T240) hashes exactly as it always
+       * did and the scene shows no tender, which is what it approved. */
+      const tenderBound = carriesTender(cart);
+      if (tenderBound) {
+        const words = tendersFromCharge(cart);
+        if (words === null) {
+          return NextResponse.json(
+            { error: "cart: the tender could not be read" },
+            { status: 400 },
+          );
+        }
+        scene = { ...ticket.value, tenders: words };
+      } else {
+        const { tenders: _dropped, ...rest } = ticket.value;
+        scene = rest;
+      }
       privateHalf = {
         clientId:
           typeof cart["clientId"] === "string" ? cart["clientId"].trim() : "",
-        cartSha256: cartSha256(cart),
+        cartSha256: cartSha256(cart, { tender: tenderBound }),
+        tenderBound,
+      };
+    } else if (ticket.value.mode === "live") {
+      /* T241: the client a live ticket is for, on the server-only half
+       * and nowhere the display can see, so a card the student types on
+       * it is bound to that client and let go of when the ticket moves
+       * to somebody else. */
+      privateHalf = {
+        clientId:
+          typeof input.clientId === "string" ? input.clientId.trim() : "",
       };
     }
   }
+  /* T241 (Pete: "hide it behind a flag so i can turn it off if it
+   * becomes annoying"): with the studio's setting off, "A different
+   * card" is never offered, whatever the teacher's iPad sent. Read only
+   * when the offer carries it, so an ordinary present costs no read. */
+  if (
+    input.kind === "ticket" &&
+    Array.isArray(scene.choices) &&
+    (scene.choices as { choice?: unknown }[]).some(
+      (c) => c?.choice === "typedcard",
+    ) &&
+    !(await displayTypedCardAllowed()).on
+  ) {
+    const kept = (scene.choices as { choice?: unknown }[]).filter(
+      (c) => c?.choice !== "typedcard",
+    );
+    const { choices: _all, ...rest } = scene;
+    scene = kept.length > 0 ? { ...rest, choices: kept } : rest;
+  }
+  /* T241 review: every ticket names the tab that presented it, on the
+   * server-only half, so the hub can keep two iPads' tickets apart: a
+   * present from another tab does not take over this one, a pick goes to
+   * the tab whose ticket it was made on, and a card the student types is
+   * claimable only by that tab's checkout (with the same teacher). */
+  if (input.kind === "ticket") {
+    const presenter =
+      typeof input.presenter === "string"
+        ? input.presenter.trim().slice(0, 64)
+        : "";
+    if (presenter.length > 0) {
+      privateHalf = { ...(privateHalf ?? {}), presenter };
+    }
+  }
+  /* T242: "Your passes". The browser sends the client, its tab, the mode
+   * and, for an offer, each pass as its ClientService id with the name,
+   * count and expiry the dialog is showing. The ids NEVER reach the
+   * display: each pass is offered under a random key made here, and the
+   * key -> id map is the request's server-only half (`private.offer`),
+   * which is what a student's pick is checked against and mapped back
+   * through. Nothing about this scene is a write: the teacher's iPad
+   * makes the two writes itself, through the routes that already exist.
+   * A pass's name and count come from the teacher's own read of
+   * Mindbody (/api/visit-passes) and are only ever shown. */
+  if (input.kind === "passes") {
+    const clientId =
+      typeof input.clientId === "string" ? input.clientId.trim() : "";
+    const presenter =
+      typeof input.presenter === "string"
+        ? input.presenter.trim().slice(0, 64)
+        : "";
+    if (clientId.length === 0 || presenter.length === 0) {
+      return NextResponse.json(
+        { error: "clientId and presenter are required for passes" },
+        { status: 400 },
+      );
+    }
+    const raw = payload.value;
+    const offer: Record<string, number> = {};
+    const lines: Record<string, unknown>[] = [];
+    if (raw.mode === "offer") {
+      const given = Array.isArray(input.passes) ? input.passes : [];
+      if (given.length === 0 || given.length > MAX_PASSES) {
+        return NextResponse.json(
+          { error: `passes: between 1 and ${MAX_PASSES} passes` },
+          { status: 400 },
+        );
+      }
+      for (const entry of given) {
+        const e =
+          entry !== null && typeof entry === "object" && !Array.isArray(entry)
+            ? (entry as Record<string, unknown>)
+            : {};
+        const id = e.clientServiceId;
+        if (typeof id !== "number" || !Number.isInteger(id) || id <= 0) {
+          return NextResponse.json(
+            { error: "passes: each needs a clientServiceId" },
+            { status: 400 },
+          );
+        }
+        const key = randomBytes(9).toString("base64url");
+        offer[key] = id;
+        lines.push({
+          key,
+          name: e.name,
+          remaining: e.remaining,
+          expires: e.expires,
+        });
+      }
+    }
+    const built = readPassesPayload({
+      mode: raw.mode,
+      clientFirstName: input.clientFirstName,
+      passes: lines,
+      passName: raw.passName,
+    });
+    if (!built.ok) {
+      return NextResponse.json(
+        { error: `payload: ${built.error}` },
+        { status: 400 },
+      );
+    }
+    scene = built.value as unknown as Record<string, unknown>;
+    privateHalf = {
+      clientId,
+      presenter,
+      ...(built.value.mode === "offer" ? { offer } : {}),
+    };
+    /* The offer stands five minutes; "One moment" a minute (a tab that
+     * died mid-write must not leave it up); Done and Please see the
+     * front desk the summary's few seconds, on the hub's own clock. */
+    ttlMs =
+      built.value.mode === "offer"
+        ? PASSES_TTL_MS
+        : built.value.mode === "working"
+          ? PASSES_WORKING_TTL_MS
+          : SUMMARY_TTL_MS;
+  }
+
   /* T202: a WAIVER's payload is built here, not forwarded. The browser
    * sends a client id and nothing that matters; the server fetches its
    * own copy of the waiver text (the same cache /api/waiver and
@@ -246,7 +400,8 @@ export async function POST(request: Request) {
        * from the browser does not get to overwrite it. */
       ...(clientFirstName === null ||
       input.kind === "waiver" ||
-      input.kind === "contract"
+      input.kind === "contract" ||
+      input.kind === "passes"
         ? {}
         : { clientFirstName }),
     },
@@ -254,6 +409,11 @@ export async function POST(request: Request) {
     initiator: "teacher",
     requestedByStaffId: String(actor.session.staffId),
     ...(ttlMs === undefined ? {} : { ttlMs }),
+    /* T241: an approval asked again after the student picked another
+     * way to pay replaces its own ticket in place. */
+    ...(input.kind === "ticket" && typeof input.replaces === "string"
+      ? { replaces: input.replaces }
+      : {}),
   });
   if (!presented.ok) {
     /* T201: `reason` is what lets the live mirror drop a refusal the
@@ -268,6 +428,8 @@ export async function POST(request: Request) {
          * own sign-up, because that is the one case the teacher's screen
          * words differently and offers Take over for. */
         ...(presented.holdingSignup === true ? { holdingSignup: true } : {}),
+        /* T241 third review: another iPad's approval holds it. */
+        ...(presented.foreignApproval === true ? { foreignApproval: true } : {}),
       },
       { status: presented.status },
     );

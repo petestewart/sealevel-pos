@@ -586,6 +586,33 @@ const MIGRATIONS: { version: number; sql: string }[] = [
         ON client_writes (client_id, at DESC);
     `,
   },
+  {
+    /* T253: a charge for a client that MAY have moved money (an
+     * ambiguous answer, a T103 sold-nothing, a T95/T90 partial) holds
+     * every new charge for that client until a teacher acknowledges it.
+     * Mindbody has no home for "our last charge for this client is
+     * unknown", so the T29 charter allows it. Ids, the outcome's kind,
+     * the route's sentence (long digit runs struck), the sale id when
+     * known, who and when. NO card data, never. */
+    version: 19,
+    sql: `
+      CREATE TABLE IF NOT EXISTS charge_holds (
+        id               text PRIMARY KEY,
+        site             text NOT NULL,
+        client_id        text NOT NULL,
+        kind             text NOT NULL,
+        message          text,
+        sale_id          text,
+        staff_id         text,
+        route            text NOT NULL,
+        created_at       timestamptz NOT NULL DEFAULT now(),
+        acknowledged_at  timestamptz,
+        acknowledged_by  text
+      );
+      CREATE INDEX IF NOT EXISTS charge_holds_open_idx
+        ON charge_holds (site, client_id) WHERE acknowledged_at IS NULL;
+    `,
+  },
 ];
 
 let migrated: Promise<boolean> | null = null;
@@ -2077,5 +2104,127 @@ export async function findDisplayRequestById(
   } catch (err) {
     logDbError("display-request-find", err);
     return null;
+  }
+}
+
+/* --- Charge holds (T253) --------------------------------------------- */
+
+export interface ChargeHoldRow {
+  id: string;
+  site: string;
+  clientId: string;
+  kind: string;
+  message: string | null;
+  saleId: string | null;
+  staffId: string | null;
+  route: string;
+  createdAt: number;
+  acknowledgedAt: number | null;
+  acknowledgedBy: string | null;
+}
+
+/**
+ * T253 review: the hold's WHOLE state, written over whatever the row
+ * holds (an upsert by id), because this process's memory is the record
+ * and the table its durable copy: a pending hold, its conversion, its
+ * clearing and its acknowledgement are each one write of the current
+ * state, chained per id in order by the caller, so a late-landing first
+ * insert can never undo a later state. Whether the row landed; false
+ * means "memory carries it".
+ */
+export async function upsertChargeHold(row: ChargeHoldRow): Promise<boolean> {
+  try {
+    const p = await ready();
+    if (!p) return false;
+    await p.query(
+      `INSERT INTO charge_holds
+         (id, site, client_id, kind, message, sale_id, staff_id, route,
+          created_at, acknowledged_at, acknowledged_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+       ON CONFLICT (id) DO UPDATE SET
+         kind = EXCLUDED.kind,
+         message = EXCLUDED.message,
+         sale_id = EXCLUDED.sale_id,
+         acknowledged_at = EXCLUDED.acknowledged_at,
+         acknowledged_by = EXCLUDED.acknowledged_by`,
+      [
+        row.id,
+        row.site,
+        row.clientId,
+        row.kind,
+        row.message,
+        row.saleId,
+        row.staffId,
+        row.route,
+        new Date(row.createdAt),
+        row.acknowledgedAt === null ? null : new Date(row.acknowledgedAt),
+        row.acknowledgedBy,
+      ],
+    );
+    return true;
+  } catch (err) {
+    logDbError("charge-hold-write", err);
+    return false;
+  }
+}
+
+/** Unacknowledged holds for these clients on this site, created since
+ *  `since`; null when the store did not answer. */
+export async function openChargeHolds(
+  site: string,
+  clientIds: string[],
+  since: number,
+): Promise<ChargeHoldRow[] | null> {
+  try {
+    const p = await ready();
+    if (!p) return null;
+    const res = await p.query(
+      `SELECT * FROM charge_holds
+        WHERE site = $1 AND client_id = ANY($2::text[])
+          AND acknowledged_at IS NULL AND created_at >= $3
+        ORDER BY created_at ASC`,
+      [site, clientIds, new Date(since)],
+    );
+    return res.rows.map(
+      (r): ChargeHoldRow => ({
+        id: String(r.id),
+        site: String(r.site),
+        clientId: String(r.client_id),
+        kind: String(r.kind),
+        message: r.message ?? null,
+        saleId: r.sale_id ?? null,
+        staffId: r.staff_id ?? null,
+        route: String(r.route),
+        createdAt: new Date(r.created_at).getTime(),
+        acknowledgedAt: null,
+        acknowledgedBy: null,
+      }),
+    );
+  } catch (err) {
+    logDbError("charge-hold-read", err);
+    return null;
+  }
+}
+
+/** Acknowledge one hold by id. Answers the client id it was for, null for
+ *  no such open row, or "unavailable" when the store did not answer. */
+export async function acknowledgeChargeHoldRow(
+  id: string,
+  staffId: string,
+): Promise<string | null | "unavailable"> {
+  try {
+    const p = await ready();
+    if (!p) return "unavailable";
+    const res = await p.query(
+      `UPDATE charge_holds
+          SET acknowledged_at = now(), acknowledged_by = $2
+        WHERE id = $1 AND acknowledged_at IS NULL
+        RETURNING client_id`,
+      [id, staffId],
+    );
+    return res.rows[0] ? String(res.rows[0].client_id) : null;
+  } catch (err) {
+    logDbError("charge-hold-ack", err);
+    return "unavailable";
   }
 }

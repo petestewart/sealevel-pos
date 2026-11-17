@@ -187,6 +187,99 @@ export async function contractRequiresSignature(): Promise<ConfirmSetting> {
   return { on: contractFromEnv(), source: "env" };
 }
 
+/* =====================================================================
+ * T241 (Pete, 2026-11-17, on the student typing their card on the
+ * customer screen): "i think we can keep that for now and remove it once
+ * we actually have stripe. the ipad lets them take a picture, so it's not
+ * as bad as it could be. but let's hide it behind a flag so i can turn it
+ * off if it becomes annoying."
+ *
+ * Read and stored exactly like T205's `contract_requires_signature`, and
+ * DEFAULT ON like it: `app_settings`, admin-edited through PUT
+ * /api/admin/display-typed-card, shown to everyone, the environment
+ * deciding when there is no stored answer, where only `false` or `0`
+ * turn it off. Since T249 a store that goes QUIET keeps the last answer
+ * it gave, as T207's setting does, because this one's environment
+ * default is the looser side.
+ *
+ * Unlike T203 and T205 this is not a rail and does not relax one. Off,
+ * the server REMOVES a way to pay ("A different card" is never offered,
+ * /api/display/card refuses and every card already held is dropped);
+ * on, a student's card still reaches Mindbody only through the
+ * teacher's own checkout, under every rail. It is admin-only and logged
+ * for the reason T207's is: a studio-wide policy should be somebody's.
+ *
+ * MEANT TO BE REMOVED, with the feature it gates, once Phase 4's card
+ * reader exists (docs/PLAN.md, Phase 4).
+ *
+ * Nothing in this file calls Mindbody.
+ * =================================================================== */
+
+/** The app_settings key. */
+export const DISPLAY_CARD_SETTING_KEY = "display_typed_card";
+
+/** The environment fallback, for a deployment with no database. */
+export const DISPLAY_CARD_ENV_VAR = "POS_DISPLAY_TYPED_CARD";
+
+function displayCardFromEnv(): boolean {
+  const raw = (process.env[DISPLAY_CARD_ENV_VAR] ?? "").trim().toLowerCase();
+  /* Unset is ON; only the two words that mean no turn it off. */
+  return !(raw === "false" || raw === "0");
+}
+
+let displayCardWarnedUnreadAt = 0;
+
+/**
+ * T249 (T241 review residual): the last answer the store actually GAVE
+ * in this process, and null once it has answered that there is no row.
+ * T207's idiom for `signup_mode`, and for its reason: the environment's
+ * answer here defaults ON, so a studio that stored "off" and has a
+ * database blip would quietly start offering "A different card" again,
+ * which is the looser direction nobody asked for. A blip keeps the
+ * loaded value; the environment decides only when this process has never
+ * had an answer.
+ */
+let displayCardLastAnswered: boolean | null = null;
+
+/** Whether a student may type a card on the customer screen, read per
+ *  request, bounded and never throwing. */
+export async function displayTypedCardAllowed(): Promise<ConfirmSetting> {
+  const answer = await readSetting(DISPLAY_CARD_SETTING_KEY).catch(() => ({
+    answered: false as const,
+    value: null,
+  }));
+  if (!answer.answered) {
+    const held = displayCardLastAnswered;
+    const now = Date.now();
+    if (now - displayCardWarnedUnreadAt >= 60_000) {
+      displayCardWarnedUnreadAt = now;
+      console.warn(
+        `[display-typed-card] the stored setting could not be read; ` +
+          (held !== null
+            ? `keeping the last stored value (${held ? "on" : "off"}).`
+            : `${DISPLAY_CARD_ENV_VAR} in the server environment decides ` +
+              `(${displayCardFromEnv() ? "on" : "off"}).`),
+      );
+    }
+    return held !== null
+      ? { on: held, source: "setting" }
+      : { on: displayCardFromEnv(), source: "env" };
+  }
+  if (answer.value === "true") {
+    displayCardLastAnswered = true;
+    return { on: true, source: "setting" };
+  }
+  if (answer.value === "false") {
+    displayCardLastAnswered = false;
+    return { on: false, source: "setting" };
+  }
+  /* No row, or a row naming neither word: the environment decides, and
+   * the memory goes with it, so a row an admin DELETED cannot come back
+   * on the next blip. */
+  displayCardLastAnswered = null;
+  return { on: displayCardFromEnv(), source: "env" };
+}
+
 /**
  * The sentence filed on the client when a teacher sold a membership with
  * their own PIN instead of the student's signature (D5). Filed the way
