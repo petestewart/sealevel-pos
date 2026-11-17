@@ -2,7 +2,13 @@ import { NextResponse } from "next/server";
 
 import { requireActor } from "@/lib/actor";
 import { requireSession } from "@/lib/auth";
-import { displayConnected, loadRequest, pairedDisplay } from "@/lib/display";
+import {
+  displayConnected,
+  loadRequest,
+  noteApprovalPolled,
+  pairedDisplay,
+  pickFor,
+} from "@/lib/display";
 import { isApproveTicket } from "@/lib/displayticket";
 
 export const dynamic = "force-dynamic";
@@ -40,11 +46,18 @@ export async function GET(request: Request) {
   if (held === null || !isApproveTicket(held.kind, held.payload)) {
     return NextResponse.json({ status: "unknown", connected });
   }
+  /* T241 third review: somebody is waiting on this approval, so it is
+   * not an orphan another iPad may retire. */
+  noteApprovalPolled(held.id);
   return NextResponse.json({
     status: held.status,
     approved: held.status === "completed" && held.result?.approved === true,
     reason: held.reason,
     consumed: held.consumedAt !== null,
     connected,
+    /* T241: the student's last pick of how to pay, if any: a key, and
+     * for a card they typed its last four. The events stream carries
+     * the same; this is what keeps it through a dropped stream. */
+    pick: pickFor(held.id),
   });
 }

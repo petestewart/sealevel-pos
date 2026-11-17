@@ -1,10 +1,11 @@
 /**
  * Phase 2: the catalog, pricing and payment layer (T22 + T24, PLAN 2.1-2.3).
  *
- * T22 shipped the reads and the Test-mode pricing; T24 added the three
+ * T22 shipped the reads and the Test-mode pricing; T24 added the
  * writes that move money: `checkoutCart` (a real, non-Test
  * /sale/checkoutshoppingcart), `purchaseCredit` (/sale/purchaseaccountcredit,
- * the under-$10 card path's first half) and nothing else. Every one of them
+ * which no card sale reaches since T238 retired the $10 card floor) and
+ * nothing else. Every one of them
  * goes through mindbody(), so dry run and the write guard intercept them
  * exactly as they intercept a check-in, and suppression is REPORTED to the
  * caller rather than dressed as success.
@@ -37,7 +38,8 @@ import {
   type Discount,
 } from "./comp";
 import { logSharedId } from "./clientrecord";
-import { mindbody, type Actor } from "./mindbody";
+import { mindbody, mindbodyHttpStatus, type Actor } from "./mindbody";
+import { PROMO_TOOK_NOTHING, type PromotionOutcome } from "./promocode";
 import { plainText } from "./richtext";
 import { studioWall } from "./roster";
 import type { TypedCard } from "./typedcard";
@@ -141,6 +143,12 @@ export interface CatalogItem {
    *  `Program.Name` or a bare `Program` string, whichever the response
    *  carries (the spec lists only `ProgramId`). Null otherwise. */
   program: string | null;
+  /** T221, services only: `RestrictToMembershipIds` (sale.yml:5318), the
+   *  memberships a client must hold to buy this option (site 471's 576,
+   *  the members' sound bath, carries [3]). Absent or empty means anyone.
+   *  Read only to decide which passes to ask Mindbody about per client;
+   *  Mindbody's own Test pricing is what decides. */
+  restrictToMembershipIds?: number[] | null;
 }
 
 function num(v: unknown): number | null {
@@ -290,6 +298,11 @@ export async function pricingOptions(): Promise<CatalogItem[]> {
         serviceType: str(s?.Type),
         isIntroOffer: typeof s?.IsIntroOffer === "boolean" ? s.IsIntroOffer : null,
         program: str(s?.Program?.Name) ?? str(s?.Program),
+        restrictToMembershipIds: Array.isArray(s?.RestrictToMembershipIds)
+          ? (s.RestrictToMembershipIds as unknown[])
+              .map((v) => num(v))
+              .filter((v): v is number => v !== null)
+          : null,
       };
     })
     .filter((s: CatalogItem | null): s is CatalogItem => s !== null)
@@ -863,6 +876,14 @@ export async function priceCart(
    *  (parseDiscount); spread over the lines HERE, never taken from the
    *  browser, and sent as DiscountAmount per line. */
   discount?: Discount | null,
+  /** T220: a Mindbody promotion code, validated by the route
+   *  (parsePromotionCode) and sent as the cart's `PromotionCode`
+   *  (sale.yml:5684). Its discount lands in Mindbody's DiscountTotal and
+   *  GrandTotal; nothing here computes it. Never sent beside a
+   *  `discount` (promotionRefusal), so T79's DiscountTotal check, which
+   *  runs only when a discount was sent, is untouched, and T75's
+   *  pre-discount SubTotal assertion runs exactly as before. */
+  promotionCode?: string | null,
 ): Promise<PricedCart> {
   assertCartLines(items, "priceCart");
   const spread = discount ? spreadDiscount(items, discount) : undefined;
@@ -881,6 +902,7 @@ export async function priceCart(
   const baseBody: Record<string, unknown> = {
     Items: cartItemsPayload(items, spread),
     ...(clientId ? { ClientId: clientId } : {}),
+    ...(promotionCode ? { PromotionCode: promotionCode } : {}),
     Test: true,
     LocationId: STUDIO_LOCATION_ID,
     InStore: true,
@@ -1177,23 +1199,38 @@ function purchasedIds(entry: unknown): string[] {
 /**
  * Does this purchased item answer to this ordered line?
  *
- * The id has to match, and the item's own `IsService` (sale.yml:2314:
- * "the purchased item was a pricing option for a service") must not
- * CONTRADICT the line's type. Both id namespaces are small integers on
- * one site -- a product's barcode and a pricing option's ProductId can
- * coincide -- so without this a sale holding a pass could answer for a
- * retail product that was never sold (T103 review, proved against the
- * mock). Where the flag is absent nothing is contradicted and the
- * either-way match stands.
+ * Both id namespaces are small integers on one site -- a product's
+ * barcode and a pricing option's ProductId can coincide -- so a sale
+ * holding a pass must not answer for a retail product that was never
+ * sold (T103 review, proved against the mock). T103 kept them apart
+ * with the entry's `IsService` (sale.yml:2314); live Mindbody reports
+ * it TRUE for a retail product (T254), so a product line now matches
+ * on its exact barcode string only, and a pricing option on either id
+ * unless the entry says it is not a service.
  */
 function purchasedMatches(entry: unknown, line: CartLine): boolean {
   const id = String(line.metadataId).trim().toLowerCase();
+  const e = entry as Record<string, unknown> | null | undefined;
+  /* T254: a retail PRODUCT is matched on its barcode string and nothing
+   * else, and its IsService is not read. Live sale 428877 (site 471,
+   * 2026-11-17) holds Mat Rental, sent as product "0003", as
+   * `{Id: 3, BarcodeId: "0003", IsService: true}`: Mindbody reports
+   * IsService TRUE for a retail product, so the veto that stood here
+   * refused a sale that had sold everything ("nothing was sold", a
+   * false alarm at the counter on a $201.99 card sale). The barcode is
+   * the product's own id as the cart sent it, which a pricing option's
+   * numeric ProductId (or its zero-padded six-digit BarcodeId) does not
+   * collide with, and the entry's numeric Id is deliberately NOT a
+   * match for a product line, which is what keeps the two namespaces
+   * apart now that the flag cannot. */
+  if (line.type === "Product") {
+    const barcode = e?.["BarcodeId"];
+    return typeof barcode === "string" && barcode.trim().toLowerCase() === id;
+  }
   if (!purchasedIds(entry).includes(id)) return false;
-  const isService = (entry as Record<string, unknown> | null | undefined)?.[
-    "IsService"
-  ];
-  if (isService === true && line.type === "Product") return false;
-  if (isService === false && line.type === "Service") return false;
+  /* A pricing option still refuses an entry Mindbody says is NOT a
+   * service; IsService true is all it has ever been seen to say. */
+  if (e?.["IsService"] === false && line.type === "Service") return false;
   return true;
 }
 
@@ -1348,11 +1385,18 @@ export function assertBasket(
  * check-in, and every function reports suppression instead of success.
  * =================================================================== */
 
-/** The studio's card-processing floor, in dollars. Policy, not API: the
- *  amount on /sale/purchaseaccountcredit is dynamic (the request schema,
- *  sale.yml:4774-4810, carries NO Amount field; the figure travels in
- *  PaymentInfo.Metadata), so this is a config value, not a rebuild. */
-export const CARD_MINIMUM_USD = 10;
+/**
+ * T238: whether a card (stored, typed, or a split's card leg) may be
+ * charged this amount. A card is charged exactly what it pays, however
+ * small: the studio's old $10 card floor, which sent a smaller card sale
+ * through a $10 account credit purchase, is retired (Pete, 2026-11-15:
+ * "change it so any amount can be charged"). What is still refused is a
+ * card charge of NOTHING: zero, negative, or not a number, none of which
+ * is a tender.
+ */
+export function cardChargeable(amount: number): boolean {
+  return Number.isFinite(amount) && amount > 0;
+}
 
 /**
  * The payment shapes this counter takes, mapped to CheckoutPaymentInfo
@@ -1408,24 +1452,32 @@ export type CheckoutPayment =
 export function checkoutPaymentPayload(
   p: CheckoutPayment,
 ): Record<string, unknown> {
-  /* T219: the GiftCard entry's Metadata is an OBJECT, like every other
-   * type here. T83 sent it as a STRING of JSON (the spec types the field
-   * `string`, sale.yml:3934, and Mindbody's gift card page lists the
-   * lowercase keys `amount`, `cardNumber`), and T83 itself recorded that
-   * shape as unverified and named this one as the first thing to try if
-   * Mindbody refused it. Pete's first live gift card tender (2026-11-09)
-   * was refused for a missing key at Finalize: a string has no keys, so
-   * Mindbody found no amount in it. Every payment that has ever settled
-   * live sent an object (StoredCard, DebitAccount, Cash, Comp, and the
-   * purchasegiftcard PaymentInfo), and their PascalCase `Amount` is read,
-   * so the keys are not case-sensitive; the lowercase spellings are kept
-   * because they are the gift card documentation's own. Still a refused
-   * payment type is a clean nothing-charged failure, and a money call
-   * never retries itself in another shape. */
+  /* T83: the ONE entry whose Metadata goes out as a STRING of JSON with
+   * lowercase keys, which is what the spec types Metadata as
+   * (sale.yml:3932, `type: string`) and what Mindbody's own gift card
+   * documentation lists for this type (keys `amount`, `cardNumber`; that
+   * page needs a login, so it is hearsay this file cannot verify). Every
+   * other type here sends a PascalCase OBJECT, because that is the shape
+   * the one live checkout known to have passed used, and changing a
+   * proven shape on a hunch is not a trade worth making. If Mindbody
+   * refuses a GiftCard payment for a metadata it cannot read, the first
+   * thing to try is the other shape -- an object, `{ Amount, CardNumber
+   * }` -- and NOT an automatic retry: a refused payment type is a clean
+   * nothing-charged failure, and a money call must never quietly try
+   * itself again in a different shape.
+   *
+   * T255 (2026-11-09) switched this to that object on the strength of
+   * Pete's report "when finalizing a sale with a Gift card - 'missing key
+   * account' bug". No record of that call is in the repo, the sentence
+   * names no amount, and "a sale with a Gift card" may as well be a gift
+   * card SOLD from the account (T108) as one spent, so the merge with
+   * main kept this string and left the question to probe B7 in PLAN.md:
+   * the drawer's copy of the next refusal, or a `Test: true` of both
+   * shapes, decides it. */
   if (p.type === "GiftCard") {
     return {
       Type: "GiftCard",
-      Metadata: { amount: p.amount, cardNumber: p.cardNumber },
+      Metadata: JSON.stringify({ amount: p.amount, cardNumber: p.cardNumber }),
     };
   }
   /* T93: the typed card. The keys are CreditCardInfo's spelling
@@ -1490,7 +1542,7 @@ export interface CheckoutOutcome {
  * /api/checkout, which fires only from an explicit Charge tap.
  *
  * Payments takes ONE entry for every ordinary sale, and since T28 may
- * take TWO for an explicit split (up to FOUR since T219, two of them
+ * take TWO for an explicit split (up to FOUR since T255, several of them
  * typed cards if the customer hands over two). The vendored schema is on side:
  * `Payments` is a plain `type: array` of CheckoutPaymentInfo with no
  * maxItems or any other constraint (sale.yml:5643-5649), so nothing
@@ -1527,6 +1579,11 @@ export async function checkoutCart(
    *  the no-Payments shape /api/checkout tries first for a 100%
    *  discount before falling back to the proven Comp payment. */
   discount?: Discount | null,
+  /** T220: the promotion code the rehearsal applied, sent as the cart's
+   *  `PromotionCode` on the real call so Mindbody charges the total it
+   *  just rehearsed. Absent or null sends no key at all, which is the
+   *  body every sale sent before T220. */
+  promotionCode?: string | null,
 ): Promise<CheckoutOutcome> {
   assertCartLines(items, "checkoutCart");
   const spread = discount ? spreadDiscount(items, discount) : undefined;
@@ -1539,7 +1596,7 @@ export async function checkoutCart(
       "checkoutCart needs a payment unless the discount covers the entire sale.",
     );
   }
-  /* T219: up to four, the split's limit in /api/checkout. */
+  /* T255: up to four, the split's limit in /api/checkout. */
   if (payments.length > 4) {
     throw new Error("checkoutCart takes one to four payment entries.");
   }
@@ -1557,6 +1614,7 @@ export async function checkoutCart(
         ? { Payments: payments.map(checkoutPaymentPayload) }
         : {}),
       ...(clientId ? { ClientId: clientId } : {}),
+      ...(promotionCode ? { PromotionCode: promotionCode } : {}),
       Test: false,
       LocationId: STUDIO_LOCATION_ID,
       InStore: true,
@@ -1596,18 +1654,15 @@ export async function checkoutCart(
 }
 
 /**
- * The Test: true rehearsal that must run BEFORE the under-$10 path buys
- * any credit (PLAN 2.3's mitigation): if Mindbody will not accept the
- * cart, the failure costs nothing. This IS priceCart -- the same
+ * The Test: true rehearsal that runs BEFORE every charge: if Mindbody
+ * will not accept the cart, the failure costs nothing, and its total is
+ * the only one that may be charged. This IS priceCart -- the same
  * machinery, same stub-retry behavior -- under the name the checkout flow
- * means by it. It deliberately does NOT rehearse with the DebitAccount
- * payment the real call will use: at rehearsal time the client has not
- * bought the credit yet, so a balance-checked DebitAccount could fail for
- * exactly the reason the flow is about to fix, and the Comp stub (the one
- * payment shape that could move nothing even if Test were ignored) is the
- * only safe stand-in. A passing rehearsal validates the CART, not the
- * payment; the live call can still fail, which is what the structured
- * step-2 failure report exists for.
+ * means by it. It deliberately does NOT rehearse with the payment the
+ * real call will use: the Comp stub (the one payment shape that could
+ * move nothing even if Test were ignored) is the only safe stand-in. A
+ * passing rehearsal validates the CART, not the payment; the live call
+ * can still fail, which the checkout route reports as exactly that.
  */
 export async function rehearseCheckout(
   items: readonly CartLine[],
@@ -1629,9 +1684,97 @@ export async function rehearseCheckout(
    * Comp stub, same strict total and discount assertions.
    */
   actor?: Actor | null,
+  /** T220: rehearsed WITH the code the real call will carry. */
+  promotionCode?: string | null,
 ): Promise<PricedCart> {
-  return priceCart(items, clientId, actor ?? null, discount);
+  return priceCart(items, clientId, actor ?? null, discount, promotionCode);
 }
+
+/**
+ * T220: price a cart WITH a promotion code, and say what became of it.
+ * Shared by /api/price-cart and /api/checkout's rehearsal, so the ticket
+ * on the screen and the rehearsal that decides the charge judge a code
+ * the same way.
+ *
+ * - Priced with the code and Mindbody's DiscountTotal above zero: the
+ *   code is APPLIED, and the cart returned is the coded one, its
+ *   DiscountTotal and GrandTotal Mindbody's own.
+ * - Priced with the code and nothing taken off: NOT applied, with
+ *   PROMO_TOOK_NOTHING. The coded cart is returned (nothing came off, so
+ *   its total is the uncoded one), and the caller drops the code.
+ * - Refused with a 4xx: the same cart is priced ONCE more with no code.
+ *   If that prices, the refusal was the code's, and the answer is the
+ *   uncoded cart with Mindbody's own sentence as the refusal, so the
+ *   ticket stays chargeable without it. If that is refused too, the
+ *   refusal is the CART's and the uncoded call's error is thrown, which
+ *   the caller handles exactly as it handles any cart refusal. One extra
+ *   metered Test call, and only after a refusal.
+ * - Suppressed (dry run, the write guard): nothing is known, so not
+ *   applied and no refusal; the screen already says pricing was
+ *   suppressed.
+ * - A 5xx or a dead transport is rethrown untouched: it said nothing
+ *   about the code.
+ */
+export async function priceCartWithPromotion(
+  items: readonly CartLine[],
+  clientId: string | undefined,
+  actor: Actor | null,
+  promotionCode: string,
+): Promise<{ priced: PricedCart; promotion: PromotionOutcome }> {
+  let priced: PricedCart;
+  try {
+    priced = await priceCart(items, clientId, actor, null, promotionCode);
+  } catch (err) {
+    const status = mindbodyHttpStatus(err);
+    if (status === null || status >= 500) throw err;
+    const reason = plainRefusal(err instanceof Error ? err.message : String(err));
+    const plain = await priceCart(items, clientId, actor, null, null);
+    console.log(
+      `[promo] refused code=${promotionCode} client=${clientId ?? "none"} ` +
+        `reason=${JSON.stringify(reason)}`,
+    );
+    return {
+      priced: plain,
+      promotion: {
+        code: promotionCode,
+        applied: false,
+        discount: null,
+        refusal: reason,
+      },
+    };
+  }
+  if (priced.suppressed) {
+    return {
+      priced,
+      promotion: { code: promotionCode, applied: false, discount: null, refusal: null },
+    };
+  }
+  const off = priced.discountTotal ?? 0;
+  if (off > 0) {
+    return {
+      priced,
+      promotion: {
+        code: promotionCode,
+        applied: true,
+        discount: roundToCents(off),
+        refusal: null,
+      },
+    };
+  }
+  console.log(
+    `[promo] took nothing code=${promotionCode} client=${clientId ?? "none"}`,
+  );
+  return {
+    priced,
+    promotion: {
+      code: promotionCode,
+      applied: false,
+      discount: null,
+      refusal: PROMO_TOOK_NOTHING,
+    },
+  };
+}
+
 
 /** Outcome of buying account credit; same suppression posture. */
 export interface CreditPurchaseOutcome {
@@ -1647,16 +1790,22 @@ export interface CreditPurchaseOutcome {
 }
 
 /**
- * POST /sale/purchaseaccountcredit (sale.yml:1778), used ONLY by the
- * under-$10 card path: charge the stored card for CARD_MINIMUM_USD of
- * account credit, then check the cart out on DebitAccount.
+ * POST /sale/purchaseaccountcredit (sale.yml:1778): charge the stored
+ * card for an amount of account credit.
+ *
+ * NOT CALLED by any sale today. It was the first half of the under-$10
+ * card path (buy $10 of credit, then check the cart out on DebitAccount),
+ * which T238 retired: a card is now charged what it pays in one
+ * checkout. It is kept because Phase 4's gift card on the reader (PLAN
+ * T232) may need a credit-then-spend path again; nothing else should
+ * start calling it without reading T238.
  *
  * Request per PurchaseAccountCreditRequest (sale.yml:4774): ClientId
  * (4779), Test (4783), LocationId (4787), SendEmailReceipt (4791),
  * PaymentInfo (4808, a CheckoutPaymentInfo). There is NO top-level
- * Amount: the amount rides PaymentInfo.Metadata, which is what makes the
- * floor a policy number rather than a preconfigured SKU (design doc,
- * "The amount is dynamic"). The card is named by lastFour per the
+ * Amount: the amount rides PaymentInfo.Metadata, so any amount can be
+ * bought rather than a preconfigured SKU (design doc, "The amount is
+ * dynamic"). The card is named by lastFour per the
  * StoredCard key set (sale.yml:3934).
  */
 export async function purchaseCredit(

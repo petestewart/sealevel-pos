@@ -89,6 +89,47 @@ export interface PassSubstitute {
   matchPrice: boolean;
 }
 
+/**
+ * T219: a pass that, once sold, signs its owner up for a class or a
+ * course.
+ *
+ * Pete, 2026-11-09: "if someone purchases either 'Gratitude Yin Sound
+ * Bath' or 'Gratitude Yin Sound Bath (Members)' workshop, they are
+ * automatically signed up for the Gratitude Yin Sound Bath on 11/25/26
+ * ... in mindbody we have to sell the pass to the person and sign them
+ * up for the course. think through how to add this as a feature so next
+ * time it is easy to implement."
+ *
+ * So it is CONFIGURATION, the same row-per-mapping shape as T112's
+ * substitutions and edited on the same tab: the next workshop is two
+ * rows in the drawer, not a deploy. Ids only (the T29 charter); the
+ * target's name, date and capacity are read from Mindbody at the moment
+ * of the sale (`src/lib/enrolonpurchase.ts`), so nothing here goes stale
+ * into a wrong date. Several passes may name one target (the members'
+ * and the public price of one workshop); one pass names at most one.
+ *
+ * `kind` says what `targetId` is, because Mindbody has two different
+ * things a workshop can be and two different writes for them:
+ *   "enrollment" -- a COURSE (Mindbody's enrollment, a workshop or event
+ *                   series), `targetId` its ClassScheduleId, booked with
+ *                   `POST /enrollment/addclienttoenrollment`. This is
+ *                   the id in Mindbody's own workshop URL ("classID=743").
+ *   "class"      -- ONE class on the schedule, `targetId` its ClassId,
+ *                   booked with `POST /class/addclienttoclass` exactly as
+ *                   a walk-in is, T208's capacity check included.
+ */
+export type EnrolmentKind = "enrollment" | "class";
+
+export const ENROLMENT_KINDS: readonly EnrolmentKind[] = ["enrollment", "class"];
+
+export interface PassEnrolment {
+  /** The pass that triggers it, as a Service id string. */
+  passId: string;
+  kind: EnrolmentKind;
+  /** ClassScheduleId for "enrollment", ClassId for "class". */
+  targetId: number;
+}
+
 export interface ShelfConfig {
   /** Items that never reach the shelf, as "<Type>:<id>" keys, the type
    *  being the catalog item's `type` ("Product" | "Service" | "Package"),
@@ -110,6 +151,9 @@ export interface ShelfConfig {
   /** T112: the substitute a refused pass may be sold as. Absent (every
    *  config before T112) means no substitution is ever offered. */
   substitutes?: PassSubstitute[];
+  /** T219: the passes that sign their owner up for something once sold.
+   *  Absent (every config before T219) means a sale books nothing. */
+  enrolments?: PassEnrolment[];
 }
 
 /** The code default: nothing hidden, no groups. What the shelf is
@@ -206,10 +250,8 @@ export function validateShelfConfig(
   if (typeof input !== "object" || input === null || Array.isArray(input)) {
     return { error: "config must be an object with hidden and groups" };
   }
-  const { hidden, groups, groupOrder, products, substitutes } = input as Record<
-    string,
-    unknown
-  >;
+  const { hidden, groups, groupOrder, products, substitutes, enrolments } =
+    input as Record<string, unknown>;
 
   if (!Array.isArray(hidden)) {
     return { error: "hidden must be an array of \"<Type>:<id>\" keys" };
@@ -485,13 +527,72 @@ export function validateShelfConfig(
     }
   }
 
+  /* T219: the passes that sign their owner up once sold. Strict for
+   * T112's reason: a row the counter could never act on, or one pass
+   * sending its buyer to two places, is refused at the save, where
+   * somebody is looking at the drawer. A target that has ended or that
+   * Mindbody no longer has is NOT refused here: it is read at the sale,
+   * which is where a stale row is caught and said so. Kept a pure shape
+   * check on purpose, because a stored config that fails validation
+   * drops the WHOLE config, hide list included, onto the default. */
+  let cleanEnrolments: PassEnrolment[] | undefined;
+  if (enrolments !== undefined && enrolments !== null) {
+    if (!Array.isArray(enrolments)) {
+      return {
+        error: "enrolments must be an array of { passId, kind, targetId }",
+      };
+    }
+    if (enrolments.length > MAX_ENTRIES) {
+      return { error: `at most ${MAX_ENTRIES} sign-up rules` };
+    }
+    cleanEnrolments = [];
+    const seenPass = new Set<string>();
+    for (const raw of enrolments) {
+      if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+        return {
+          error: "every sign-up rule must be { passId, kind, targetId }",
+        };
+      }
+      const { passId, kind, targetId } = raw as Record<string, unknown>;
+      const pass = typeof passId === "string" ? passId.trim() : "";
+      if (!/^[0-9]{1,12}$/.test(pass)) {
+        return { error: "a sign-up rule's passId is a pass id, up to 12 digits" };
+      }
+      if (!ENROLMENT_KINDS.includes(kind as EnrolmentKind)) {
+        return {
+          error: `sign-up rule for pass ${pass} needs kind "enrollment" or "class"`,
+        };
+      }
+      if (
+        typeof targetId !== "number" ||
+        !Number.isInteger(targetId) ||
+        targetId <= 0 ||
+        targetId > 2147483647
+      ) {
+        return {
+          error: `sign-up rule for pass ${pass} needs a positive whole targetId`,
+        };
+      }
+      if (seenPass.has(pass)) {
+        return { error: `pass ${pass} has two sign-up rules` };
+      }
+      seenPass.add(pass);
+      cleanEnrolments.push({
+        passId: pass,
+        kind: kind as EnrolmentKind,
+        targetId,
+      });
+    }
+  }
+
   /* The new fields are added only when they were sent, so a config
-   * from before T86 or T112 round-trips through the table byte for
-   * byte. */
+   * from before T86, T112 or T219 round-trips through the table byte
+   * for byte. */
   const clean: ShelfConfig = { hidden: cleanHidden, groups: cleanGroups };
   if (cleanOrder !== undefined) clean.groupOrder = cleanOrder;
   if (cleanProducts !== undefined) clean.products = cleanProducts;
   if (cleanSubs !== undefined) clean.substitutes = cleanSubs;
+  if (cleanEnrolments !== undefined) clean.enrolments = cleanEnrolments;
   return clean;
 }
 

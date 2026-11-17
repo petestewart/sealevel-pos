@@ -12,6 +12,7 @@
  */
 
 import { cookies } from "next/headers";
+import { noteMindbodyWrite } from "./mbtrace";
 
 import { record, redactRequest, scrubSecrets } from "./calllog";
 import { ensureTarget, targetOverride, targetSettling } from "./target";
@@ -659,6 +660,9 @@ export async function mindbody<T = any>(
   await ensureTarget();
   const env = mindbodyEnv();
   const method = opts.method ?? "GET";
+  /* T241 review: counted for /api/checkout, which keeps a student's card
+   * only when a refusal provably asked Mindbody to write nothing. */
+  if (method !== "GET") noteMindbodyWrite();
 
   if (isWrite(method, path)) {
     if (path === "/client/updateclient" && !opts.audited) {

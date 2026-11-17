@@ -43,7 +43,9 @@ export default function ApprovalWait(props: {
           : approval.stage === "busy"
             ? approval.signup === true
               ? "Someone is signing up on the customer screen."
-              : "The customer screen is busy."
+              : approval.foreignApproval === true
+                ? "The customer screen is showing another sale's approval."
+                : "The customer screen is busy."
             : approval.stage === "offline"
               ? "The customer screen is not connected."
               : approval.stage === "refused"
@@ -58,7 +60,13 @@ export default function ApprovalWait(props: {
               ? "Waiting for it to come free. The ticket goes up by itself."
               : approval.signup === true
                 ? "Wait for them to finish, take the screen over, or approve the sale with your PIN."
-                : "Wait for it, take it over, or approve the sale with your PIN."
+                : approval.foreignApproval === true
+                  ? /* T241 third review: another iPad's student is
+                       answering, and that is not this teacher's to take.
+                       An approval nobody is waiting on any more is
+                       cleared by the server after a minute. */
+                    "Another iPad is waiting on it. Wait for it, or approve this sale with your PIN. If nobody is waiting on it, it clears by itself within a minute."
+                  : "Wait for it, take it over, or approve the sale with your PIN."
             : approval.stage === "offline"
               ? "This sale needs your PIN, or a screen to ask on."
               : approval.stage === "refused"
@@ -87,7 +95,7 @@ export default function ApprovalWait(props: {
               Wait
             </button>
           ) : null}
-          {approval.stage === "busy" ? (
+          {approval.stage === "busy" && approval.foreignApproval !== true ? (
             <button
               type="button"
               className="approve-wait-btn"

@@ -3,6 +3,13 @@ import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 
 import {
+  claimCharge,
+  heldSentence,
+  outcomeOf,
+  settleCharge,
+} from "@/lib/chargehold";
+
+import {
   actorFields,
   requireActor,
   runAsActor,
@@ -118,7 +125,65 @@ function errMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+/**
+ * T253 (and its review): a live purchase is a charge like any other. A
+ * client held by a charge that is still running or may have moved money
+ * (src/lib/chargehold.ts) is refused before anything else, before a
+ * signature or a PIN is spent and before any Mindbody call; one that is
+ * not gets a `pending` hold written AHEAD of the purchase, settled by
+ * its answer: cleared when definite, an ambiguous hold when the
+ * membership MAY have started (or the route threw). The Test: true
+ * rehearsal charges nothing and is neither held nor holds.
+ */
 export async function POST(request: Request) {
+  const denied = requireSession(request);
+  if (denied) return denied;
+  const staff = await requireActor(request);
+  if (staff.denied) return staff.denied;
+  const peek: any = await request.clone().json().catch(() => null);
+  const clientId =
+    typeof peek?.clientId === "string" ? peek.clientId.trim() : "";
+  if (peek === null || peek?.test === true || clientId === "") {
+    return purchaseContractPost(request);
+  }
+  const claim = await claimCharge({
+    clientIds: [clientId],
+    walkin: false,
+    staffId: String(staff.session.staffId),
+    route: "/api/purchase-contract",
+  });
+  if ("refused" in claim) {
+    return NextResponse.json(
+      {
+        error: heldSentence(claim.refused),
+        reason: "held",
+        stage: "held",
+        holds: claim.refused,
+      },
+      { status: 409 },
+    );
+  }
+  try {
+    const res = await purchaseContractPost(request);
+    const out = await outcomeOf(res);
+    await settleCharge(claim.ticket, {
+      kind: out.kind,
+      message: out.body?.error ?? null,
+      saleId: null,
+    });
+    return res;
+  } catch (err) {
+    await settleCharge(claim.ticket, {
+      kind: "ambiguous",
+      message:
+        "The membership purchase stopped before it could say what happened. The contract MAY have been started.",
+      saleId: null,
+    }).catch(() => undefined);
+    throw err;
+  }
+}
+
+async function purchaseContractPost(request: Request) {
   const denied = requireSession(request);
   if (denied) return denied;
   /* T50: no staff session, no write. Before the body is read, so a

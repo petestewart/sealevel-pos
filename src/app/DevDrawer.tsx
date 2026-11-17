@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { DEFAULT_SETTINGS, type Settings, useSettings } from "./settings";
 import { readThemeChoice, setThemeChoice, type ThemeChoice } from "./theme";
 import { ProbeView, type ProbeResult, type Teacher } from "./StaffModal";
+import ResetDisplay from "./ResetDisplay";
 
 /**
  * A drawer that slides up from the bottom showing the Mindbody traffic this
@@ -610,6 +611,7 @@ function SettingsPanel({
       <DisplayPanel open={open} />
       <ConfirmSalePanel open={open} admin={mode?.targetAdmin === true} />
       <ContractSignaturePanel open={open} admin={mode?.targetAdmin === true} />
+      <DisplayTypedCardPanel open={open} admin={mode?.targetAdmin === true} />
       <SignupModePanel open={open} admin={mode?.targetAdmin === true} />
       <p className="muted">
         The rest is stored in this browser. Applies immediately, no restart.
@@ -867,6 +869,13 @@ function DisplayPanel({ open }: { open: boolean }) {
             </button>
           </div>
         )
+      ) : null}
+      {/* T244: the same reset the header's display mark offers. */}
+      {info?.paired ? (
+        <ResetDisplay
+          buttonClass="dev-target-btn"
+          confirmClass="dev-target-btn dev-target-go stop"
+        />
       ) : null}
     </>
   );
@@ -1195,6 +1204,169 @@ function ContractSignaturePanel({
               }}
             >
               {on ? "Turn off signatures" : "Turn on signatures"}
+            </button>
+          </div>
+        )
+      ) : null}
+    </>
+  );
+}
+
+/* --- Students can type a card on the customer screen (T241) ----------
+ *
+ * Pete: "keep that for now and remove it once we actually have stripe
+ * ... but let's hide it behind a flag so i can turn it off if it becomes
+ * annoying." Default on. Not a rail: off REMOVES a way to pay, on lets a
+ * student's card reach Mindbody only through the teacher's own checkout.
+ * Admin-edited and logged because it is a studio-wide policy. Remove it
+ * with the feature when Phase 4's reader exists.
+ */
+
+interface DisplayTypedCardInfo {
+  displayTypedCard: boolean;
+  displayTypedCardSource: string;
+  envVar: string;
+  configured: boolean;
+  available: boolean;
+}
+
+function DisplayTypedCardPanel({
+  open,
+  admin,
+}: {
+  open: boolean;
+  admin: boolean;
+}) {
+  const [info, setInfo] = useState<DisplayTypedCardInfo | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [asking, setAsking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      /* Everyone reads the line from /api/config; an admin reads the
+       * fuller answer, which says whether there is a store to write
+       * to. */
+      const res = await fetch(
+        admin ? "/api/admin/display-typed-card" : "/api/config",
+      );
+      if (!res.ok) return;
+      const body = await res.json();
+      setInfo({
+        displayTypedCard: body.displayTypedCard === true,
+        displayTypedCardSource: String(
+          body.displayTypedCardSource ?? "env",
+        ),
+        envVar: String(body.envVar ?? "POS_DISPLAY_TYPED_CARD"),
+        configured: body.configured !== false,
+        available: body.available !== false,
+      });
+    } catch {
+      /* The block stays quiet; nothing else depends on it. */
+    } finally {
+      setLoaded(true);
+    }
+  }, [admin]);
+
+  useEffect(() => {
+    if (!open) return;
+    void load();
+  }, [load, open]);
+
+  const setTo = async (next: boolean) => {
+    setBusy(true);
+    setError(null);
+    setDone(null);
+    try {
+      const res = await fetch("/api/admin/display-typed-card", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ on: next }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) {
+        setError(String(body?.error ?? `HTTP ${res.status}`));
+        return;
+      }
+      setAsking(false);
+      setDone(
+        next
+          ? "On. A student can choose \"A different card\" on the customer screen and type it there."
+          : "Off. The customer screen no longer offers a card to type, and any card a student had typed is let go.",
+      );
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!loaded || info === null) return null;
+  const on = info.displayTypedCard;
+  const stored = info.displayTypedCardSource === "setting";
+  return (
+    <>
+      <div className="dev-label">students can type a card on the customer screen</div>
+      <p className="muted">
+        {on ? "On" : "Off"}.{" "}
+        {stored
+          ? "Stored setting."
+          : `From ${info.envVar} in the server environment (unset means on).`}{" "}
+        {on
+          ? "\"A different card\" is offered on the customer screen: the student types their own card, it is held in server memory for one charge, and the teacher's Finalize charges it. To be removed once the card reader (Phase 4) is in."
+          : "The customer screen offers no card to type. The teacher's own card entry is unchanged."}
+      </p>
+      {done ? <p className="dev-changed">{done}</p> : null}
+      {error ? <p className="dev-target-error">{error}</p> : null}
+      {admin ? (
+        !info.configured || !info.available ? (
+          <p className="muted">
+            {info.configured
+              ? `The database is not answering, so ${info.envVar} in the server environment decides and this cannot be changed here.`
+              : `No database configured (DATABASE_URL unset), so ${info.envVar} in the server environment decides and this cannot be changed here.`}
+          </p>
+        ) : asking ? (
+          <div className="dev-target-ask">
+            <p className="dev-target-question">
+              {on
+                ? "Stop students typing a card on the customer screen? Any card already typed is let go."
+                : "Let students type a card on the customer screen?"}
+            </p>
+            <div className="dev-target-buttons">
+              <button
+                type="button"
+                className="dev-target-btn"
+                disabled={busy}
+                onClick={() => setAsking(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="dev-target-btn dev-target-go"
+                disabled={busy}
+                onClick={() => void setTo(!on)}
+              >
+                {busy ? "Saving" : on ? "Yes, turn it off" : "Yes, turn it on"}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="dev-target-buttons">
+            <button
+              type="button"
+              className="dev-target-btn"
+              disabled={busy}
+              onClick={() => {
+                setError(null);
+                setDone(null);
+                setAsking(true);
+              }}
+            >
+              {on ? "Turn off typed cards" : "Turn on typed cards"}
             </button>
           </div>
         )
@@ -2161,6 +2333,32 @@ interface ShelfAdminSubstitute {
   matchPrice: boolean;
 }
 
+/** T219: mirrors shelfconfig.ts PassEnrolment. */
+interface ShelfAdminEnrolment {
+  passId: string;
+  kind: "enrollment" | "class";
+  targetId: number;
+}
+
+/** T219: a sign-up rule as the tab edits it. The id is the text being
+ *  typed, so a half-typed row is not a number yet. */
+interface SignupRow {
+  passId: string;
+  kind: "enrollment" | "class";
+  targetId: string;
+}
+
+/** T219: what /api/admin/shelf/signup-target found for one id. */
+interface SignupLookup {
+  loading: boolean;
+  error: string | null;
+  enrollment: { label: string } | null;
+  enrollmentError: string | null;
+  cls: { label: string } | null;
+  classError: string | null;
+  schedule: { classId: number; label: string }[];
+}
+
 interface ShelfAdminConfig {
   hidden: string[];
   groups: ShelfAdminGroup[];
@@ -2170,6 +2368,8 @@ interface ShelfAdminConfig {
   products?: { key: string; categoryId: number }[];
   /** T112: the substitute a refused pass may be sold as. */
   substitutes?: ShelfAdminSubstitute[];
+  /** T219: the passes that sign their owner up for something. */
+  enrolments?: ShelfAdminEnrolment[];
 }
 
 /** T76: the rail's fixed pass sub-categories, mirrored from
@@ -2252,6 +2452,10 @@ function ShelfPanel() {
   const [moves, setMoves] = useState<Record<string, number>>({});
   /* T112: the pass substitutions, edited as rows. */
   const [subs, setSubs] = useState<ShelfAdminSubstitute[]>([]);
+  /* T219: the sign-up rules, edited as rows, and what each row's id was
+   * last looked up as, by row index. */
+  const [signups, setSignups] = useState<SignupRow[]>([]);
+  const [lookups, setLookups] = useState<Record<number, SignupLookup>>({});
   const [newLabel, setNewLabel] = useState("");
   const [saving, setSaving] = useState(false);
   const [outcome, setOutcome] = useState<
@@ -2299,6 +2503,14 @@ function ShelfPanel() {
         ),
       );
       setSubs((config.substitutes ?? []).map((x) => ({ ...x })));
+      setSignups(
+        (config.enrolments ?? []).map((x) => ({
+          passId: x.passId,
+          kind: x.kind,
+          targetId: String(x.targetId),
+        })),
+      );
+      setLookups({});
       setLoadError(null);
       setLoaded(true);
     } catch (err) {
@@ -2469,6 +2681,14 @@ function ShelfPanel() {
         substitutes: subs.filter(
           (x) => x.refusedId !== "" && x.substituteId !== "" && x.refusedId !== x.substituteId,
         ),
+        /* T219: only the complete rows, for T112's reason. */
+        enrolments: signups
+          .filter((x) => x.passId !== "" && /^[0-9]{1,10}$/.test(x.targetId.trim()))
+          .map((x) => ({
+            passId: x.passId,
+            kind: x.kind,
+            targetId: Number(x.targetId.trim()),
+          })),
       };
       const res = await fetch("/api/admin/shelf", {
         method: "PUT",
@@ -2516,6 +2736,68 @@ function ShelfPanel() {
 
   const byKind = (type: ShelfAdminItem["type"]) =>
     items.filter((i) => i.type === type);
+
+  /* T219: one row's sign-up edits, and its lookup. A change to the row
+   * drops the lookup, which was about the id as it was. */
+  const editSignup = (index: number, patch: Partial<SignupRow>) => {
+    setSignups((prev) => prev.map((r, i) => (i === index ? { ...r, ...patch } : r)));
+    setLookups((prev) => {
+      const next = { ...prev };
+      delete next[index];
+      return next;
+    });
+  };
+  const lookUpSignup = async (index: number, id: string) => {
+    setLookups((prev) => ({
+      ...prev,
+      [index]: {
+        loading: true,
+        error: null,
+        enrollment: null,
+        enrollmentError: null,
+        cls: null,
+        classError: null,
+        schedule: [],
+      },
+    }));
+    let found: SignupLookup;
+    try {
+      const res = await fetch(
+        `/api/admin/shelf/signup-target?id=${encodeURIComponent(id.trim())}`,
+      );
+      const body = await res.json().catch(() => null);
+      found = res.ok
+        ? {
+            loading: false,
+            error: null,
+            enrollment: body?.enrollment ?? null,
+            enrollmentError: body?.enrollmentError ?? null,
+            cls: body?.class ?? null,
+            classError: body?.classError ?? null,
+            schedule: Array.isArray(body?.schedule) ? body.schedule : [],
+          }
+        : {
+            loading: false,
+            error: String(body?.error ?? `HTTP ${res.status}`),
+            enrollment: null,
+            enrollmentError: null,
+            cls: null,
+            classError: null,
+            schedule: [],
+          };
+    } catch (err) {
+      found = {
+        loading: false,
+        error: err instanceof Error ? err.message : String(err),
+        enrollment: null,
+        enrollmentError: null,
+        cls: null,
+        classError: null,
+        schedule: [],
+      };
+    }
+    setLookups((prev) => ({ ...prev, [index]: found }));
+  };
 
   return (
     <div className="dev-settings">
@@ -2723,6 +3005,155 @@ function ShelfPanel() {
           }
         >
           add substitution
+        </button>
+      </div>
+
+      {/* T219: the passes that sign their owner up once sold. Pete: "if
+          someone purchases either 'Gratitude Yin Sound Bath' or
+          'Gratitude Yin Sound Bath (Members)' workshop, they are
+          automatically signed up for the Gratitude Yin Sound Bath on
+          11/25/26 ... think through how to add this as a feature so next
+          time it is easy to implement". The next workshop is a row here,
+          not a deploy. */}
+      <div className="dev-label">sign up on purchase</div>
+      <p className="muted">
+        Selling one of these passes signs whoever it was bought for up for
+        the course or class beside it, straight after the sale, under the
+        teacher&apos;s own sign-in; the done screen says what happened. A
+        full one goes on its waiting list, and one that has ended books
+        nothing. Paste the id from Mindbody and tap Check: a workshop is
+        usually a course, and the id in its Mindbody page (classID=...) is
+        the course&apos;s. Two passes for one workshop are two rows.
+      </p>
+      {signups.map((row, index) => {
+        const look = lookups[index];
+        const idOk = /^[0-9]{1,10}$/.test(row.targetId.trim());
+        return (
+          <div key={index}>
+            <div className="dev-setting dev-sub-row">
+              <select
+                className="dev-text dev-signup-pass"
+                aria-label="The pass that signs its owner up"
+                value={row.passId}
+                onChange={(e) => editSignup(index, { passId: e.target.value })}
+              >
+                <option value="">pass</option>
+                {byKind("Service").map((item) => (
+                  <option key={item.key} value={String(item.id)}>
+                    {item.name} ${item.price.toFixed(2)}
+                  </option>
+                ))}
+              </select>
+              <span className="muted">signs up for</span>
+              <select
+                className="dev-text"
+                aria-label="What the id names"
+                value={row.kind}
+                onChange={(e) =>
+                  editSignup(index, {
+                    kind: e.target.value === "class" ? "class" : "enrollment",
+                  })
+                }
+              >
+                <option value="enrollment">course (enrollment)</option>
+                <option value="class">one class</option>
+              </select>
+              <input
+                className="dev-text dev-signup-id"
+                inputMode="numeric"
+                aria-label="The course or class id"
+                placeholder="id"
+                value={row.targetId}
+                onChange={(e) => editSignup(index, { targetId: e.target.value })}
+              />
+              <button
+                disabled={!idOk || look?.loading === true}
+                onClick={() => void lookUpSignup(index, row.targetId)}
+              >
+                {look?.loading ? "checking" : "check"}
+              </button>
+              <button
+                onClick={() => {
+                  setSignups((prev) => prev.filter((_, i) => i !== index));
+                  setLookups({});
+                }}
+                aria-label="Remove this sign-up rule"
+              >
+                remove
+              </button>
+            </div>
+            {look && !look.loading ? (
+              look.error ? (
+                <p className="dev-bad">{look.error}</p>
+              ) : (
+                <>
+                  <p className={row.kind === "enrollment" && look.enrollment ? "" : "muted"}>
+                    As a course:{" "}
+                    {look.enrollment
+                      ? look.enrollment.label
+                      : look.enrollmentError
+                        ? `did not read (${look.enrollmentError})`
+                        : "no upcoming course has this id"}
+                    {look.enrollment && row.kind !== "enrollment" ? (
+                      <>
+                        {" "}
+                        <button onClick={() => editSignup(index, { kind: "enrollment" })}>
+                          use this
+                        </button>
+                      </>
+                    ) : null}
+                  </p>
+                  <p className={row.kind === "class" && look.cls ? "" : "muted"}>
+                    As one class:{" "}
+                    {look.cls
+                      ? look.cls.label
+                      : look.classError
+                        ? `did not read (${look.classError})`
+                        : "no upcoming class has this id"}
+                    {look.cls && row.kind !== "class" ? (
+                      <>
+                        {" "}
+                        <button onClick={() => editSignup(index, { kind: "class" })}>
+                          use this
+                        </button>
+                      </>
+                    ) : null}
+                  </p>
+                  {look.schedule.map((c) => (
+                    <p key={c.classId} className="muted">
+                      Class schedule {row.targetId.trim()} has class {c.classId}:{" "}
+                      {c.label}{" "}
+                      <button
+                        onClick={() =>
+                          editSignup(index, { kind: "class", targetId: String(c.classId) })
+                        }
+                      >
+                        use this class
+                      </button>
+                    </p>
+                  ))}
+                </>
+              )
+            ) : null}
+          </div>
+        );
+      })}
+      <div className="dev-setting">
+        <button
+          onClick={() =>
+            setSignups((prev) => [
+              ...prev,
+              {
+                passId: "",
+                kind: prev[prev.length - 1]?.kind ?? "enrollment",
+                /* The next row is usually the same workshop's other
+                   price, so it starts on the row above's target. */
+                targetId: prev[prev.length - 1]?.targetId ?? "",
+              },
+            ])
+          }
+        >
+          add sign-up rule
         </button>
       </div>
 
