@@ -23071,7 +23071,13 @@ Cause: T103's review made `purchasedMatches` refuse an entry whose
 a pricing option's ProductId apart. Live Mindbody reports `IsService: true`
 for a retail product, so every product line in a sale read failed the
 match. The fake reported false for products, which is why no drive caught
-it.
+it. Why it had not shown before: a ticket of retail products ALONE
+matched nothing, so it fell into T103's "a sale READ that answers to none
+of this ticket is the wrong sale" carve-out and stood, unverified. Only a
+ticket mixing a pass (which matched) with a retail product (which could
+not) reached the refusal. A read of every sale with no SalesRepId and a
+rental line since 2026-09-14 (29 sales) found no other client whose Notes
+carry the false sentence.
 
 - [x] `purchasedMatches` (src/lib/sale.ts): a Product line matches on its
       exact `BarcodeId` string only (never the numeric `Id`), and ignores
