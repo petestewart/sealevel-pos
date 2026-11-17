@@ -35,6 +35,18 @@ import type {
   TenderOffer,
 } from "@/lib/displayticket";
 import { IDEMPOTENCY_HEADER, newIdempotencyKey } from "@/lib/idemkey";
+import {
+  acknowledgeServerHold,
+  CART_HELD_KEY,
+  fetchServerHolds,
+  fetchWalkinNotices,
+  holdIdsFrom,
+  readRosterHeld,
+  serverHoldsFrom,
+  writeRosterHeld,
+  type RosterHeld,
+  type ServerHold,
+} from "./heldcharge";
 
 import {
   COMP_DETAIL_MAX,
@@ -1700,6 +1712,10 @@ type ChargeResult =
       kind: "partial";
       message: string;
       giftCards: { value: number; barcodeId: string }[];
+      /* T249: set when this result was brought back from the tab's
+         record rather than answered just now: when it was, and what of
+         it is not kept (a gift card id never is). */
+      restored?: string | null;
     }
   /* T103: the sale took the money and holds none of what was ordered.
      Its own kind, and the loudest one here: every other outcome either
@@ -1718,6 +1734,8 @@ type ChargeResult =
          is the route's sentence and it is shown, because a teacher who
          is told to escalate has to know what else is outstanding. */
       summary: string | null;
+      /* T249: as on `partial`. */
+      restored?: string | null;
     }
   | { kind: "ambiguous"; message: string }
   | { kind: "error"; message: string };
@@ -1962,8 +1980,87 @@ function ticketDiscountParts(
  * server's authority over every number are all exactly as they were.
  */
 /** T241 third review: where an unknown charge outcome is kept across a
- *  reload of this tab. No card data, ever. */
-const UNCERTAIN_KEY = "pos_uncertain_charge";
+ *  reload of this tab. No card data, ever. T249: and, in the same
+ *  record, a charge still in flight, a sold-nothing or partial outcome
+ *  not yet acknowledged, and the lock a part-sold ticket carries, so a
+ *  closed and reopened Cart screen, a reload or an evicted tab comes
+ *  back holding all of them. */
+const UNCERTAIN_KEY = CART_HELD_KEY;
+
+/** T249: this page load, so a record can tell a Cart screen reopened in
+ *  the same page from one restored after a reload. */
+const PAGE_LOAD_ID = Math.random().toString(36).slice(2);
+
+/**
+ * T249: the record, as written. Every field is something the screen
+ * already shows; none is a card number, a CVV, a gift card's number or a
+ * gift card id (a partial's ids are never kept: `giftIdsPending` only
+ * says some were still unwritten). `stage` is "charging" from the TAP
+ * until a definite answer, then the outcome that needs acknowledging,
+ * or null once it has been and only the lock is left.
+ */
+interface HeldRecord {
+  v: 2;
+  at: number;
+  page: string;
+  requestId: string | null;
+  stage: "charging" | "ambiguous" | "sold-nothing" | "partial" | null;
+  message: string | null;
+  saleId: string | null;
+  summary: string | null;
+  basket: BasketRow[];
+  giftIdsPending: boolean;
+  restored: string | null;
+  lock: string | null;
+  /** The ticket the lock was about, as line keys and quantities: the
+   *  lock comes back only onto the same ticket. */
+  ticket: string | null;
+  /** T252: the clients this ticket was for (the payer and any T90
+   *  recipient), so the roster's "Pay and check in" holds THOSE students
+   *  while an outcome here waits (src/app/heldcharge.ts). Ids only. */
+  clientIds: string[];
+  /** T253: the server holds this outcome made (the checkout answer's
+   *  `chargeHolds`), so its Understood acknowledges them for every iPad,
+   *  and a restore whose holds were acknowledged elsewhere lets go. */
+  serverHoldIds?: string[];
+}
+
+/** T252: the clients a ticket is for, for the record above. */
+function ticketClients(
+  client: SaleClient | null,
+  cart: readonly CartEntry[],
+): string[] {
+  const ids = new Set<string>();
+  if (client !== null) ids.add(client.id);
+  for (const line of cart) {
+    if (line.forClient) ids.add(line.forClient.id);
+  }
+  return [...ids];
+}
+
+/** T249: a sentence off the server is kept as shown, less any run of
+ *  digits long enough to be a card number (none should ever be there;
+ *  this is the belt to that). */
+function storableSentence(text: string | null): string | null {
+  return text === null ? null : text.replace(/\d[\d -]{11,}\d/g, "[number]");
+}
+
+/** T249: the ticket a part-sold lock is about. */
+function ticketPrint(cart: readonly CartEntry[]): string {
+  return cart
+    .map((line) => `${line.key}x${line.quantity}`)
+    .sort()
+    .join("|");
+}
+
+function writeHeldRecord(record: HeldRecord | null) {
+  try {
+    if (record === null) window.sessionStorage.removeItem(UNCERTAIN_KEY);
+    else window.sessionStorage.setItem(UNCERTAIN_KEY, JSON.stringify(record));
+  } catch {
+    /* No storage: the hold lasts as long as this page, as before. */
+  }
+}
 
 function PaymentPanel(props: {
   cart: readonly CartEntry[];
@@ -2038,6 +2135,10 @@ function PaymentPanel(props: {
    * own "Written on the card".
    */
   onHoldChange: (held: boolean) => void;
+  /** T249: why the Cart screen may not be closed (an outcome that may
+   *  have moved money and is not acknowledged, or a part-sold ticket),
+   *  and whether that reason is on this panel; null when it may. */
+  onLeaveHold: (hold: { why: string; result: boolean } | null) => void;
   /** Bumped by SaleScreen when "Empty cart" is confirmed on a client
    *  change (third live test): the cart is gone, so every tender line and
    *  any armed comp goes with it. */
@@ -2548,56 +2649,44 @@ function PaymentPanel(props: {
     setLines((cur) => cur.filter((l) => l.source !== "typedcard"));
     setPickHold(true);
   };
-  /* Third review (6): an unknown outcome survives a reload of this tab.
-   * Only that the last charge needs checking, when, and the display
-   * request it was about; never a card detail. The writer is declared
-   * first so it skips the mount, and the reader then restores. */
+  /** T249: when the charge a held record is about was tapped. */
+  const heldAt = useRef<number | null>(null);
+  /** T252: the clients a RESTORED record named, kept beside this ticket's
+   *  own: after a reload the cart and its client are gone, and the record
+   *  must go on holding the student it was about on the roster. */
+  const heldClients = useRef<string[]>([]);
+  /**
+   * T253: the server's holds. `ownHoldIds` are the ones THIS screen's
+   * outcome made (its Understood acknowledges them); `ticketHolds` are
+   * every standing hold for a client on this ticket, the payer and each
+   * T90 recipient, read when the screen opens and whenever those clients
+   * change, so a hold made on another iPad, in another tab or before a
+   * Home Screen relaunch is shown with its Understood BEFORE Finalize,
+   * rather than met as a refusal. `ticketLocal` is the roster dialog's
+   * own tab record for those clients (T252), shown the same way.
+   */
+  const [ownHoldIds, setOwnHoldIds] = useState<string[]>([]);
+  const ownHoldIdsRef = useRef<string[]>([]);
+  ownHoldIdsRef.current = ownHoldIds;
+  const [ticketHolds, setTicketHolds] = useState<ServerHold[]>([]);
+  const [ticketLocal, setTicketLocal] = useState<RosterHeld[]>([]);
+  const [holdAckBusy, setHoldAckBusy] = useState(false);
+  /** T253 review (6): an Understood the server could not record. */
+  const [holdAckNote, setHoldAckNote] = useState<string | null>(null);
+  /** T253 review (4): the studio-wide walk-in notices, shown on a walk-in
+   *  ticket (no client attached). They refuse nothing. */
+  const [walkinNotes, setWalkinNotes] = useState<ServerHold[]>([]);
+  /** Whether a hold on a client of this ticket stands (shown above the
+   *  foot): Finalize waits on its Understood. */
+  const ticketHeld = ticketHolds.length > 0 || ticketLocal.length > 0;
+  /** Third review (6): the record is not written until the mount's
+   *  restore below has read it. */
   const outcomeRestored = useRef(false);
-  useEffect(() => {
-    if (!outcomeRestored.current) return;
-    try {
-      if (outcomeOpen) {
-        window.sessionStorage.setItem(
-          UNCERTAIN_KEY,
-          JSON.stringify({
-            at: Date.now(),
-            requestId: uncertainRequest.current,
-          }),
-        );
-      } else {
-        window.sessionStorage.removeItem(UNCERTAIN_KEY);
-      }
-    } catch {
-      /* No storage: the hold lasts as long as this page, as before. */
-    }
-  }, [outcomeOpen]);
-  useEffect(() => {
-    try {
-      const raw = window.sessionStorage.getItem(UNCERTAIN_KEY);
-      if (raw !== null) {
-        const saved = JSON.parse(raw) as { at?: unknown; requestId?: unknown };
-        uncertainRequest.current =
-          typeof saved.requestId === "string" ? saved.requestId : null;
-        const when =
-          typeof saved.at === "number"
-            ? new Date(saved.at).toLocaleTimeString([], {
-                hour: "numeric",
-                minute: "2-digit",
-              })
-            : null;
-        setResult({
-          kind: "ambiguous",
-          message: `A charge from this iPad${
-            when !== null ? ` at ${when}` : ""
-          } was left with an unknown outcome when the page reloaded.`,
-        });
-        setPickHold(true);
-      }
-    } catch {
-      /* Nothing to restore. */
-    }
-    outcomeRestored.current = true;
-  }, []);
+  /** T249: set once the restore has run, so the writer runs once after
+   *  it even when nothing came back (a lock whose ticket is gone after a
+   *  reload must leave the record, or it would come back onto the next
+   *  identical ticket). */
+  const [restoreDone, setRestoreDone] = useState(false);
   /**
    * T95 review: the latch on a ticket that was PARTLY sold. The route's
    * sentence says which half landed; the ticket still holds every line,
@@ -2922,13 +3011,25 @@ function PaymentPanel(props: {
   /* "Empty cart" on the client-change dialog: the cart SaleScreen just
    * cleared was what the tender was for, so nothing stays armed, comp
    * included. */
+  /* T249: only a bump SEEN while this panel is mounted. The panel
+   * unmounts with the Cart screen, so a nonce bumped on an earlier visit
+   * used to run this on the next mount, which would now wipe the lock
+   * that mount restores. */
+  const seenResetNonce = useRef(cartResetNonce);
   useEffect(() => {
-    if (cartResetNonce === 0) return;
+    if (cartResetNonce === seenResetNonce.current) return;
+    seenResetNonce.current = cartResetNonce;
     resetTender();
     /* T95 review: and the partial latch goes with the ticket it was
      * about. A new ticket is the honest way on from a partial sale. */
     setPartialLock(null);
   }, [cartResetNonce, resetTender]);
+  /* T249: and a ticket with no lines left has nothing on it that could be
+   * sold twice, whatever emptied it (a recheck that dropped every line
+   * included), so the lock cannot outlive it with Empty cart disabled. */
+  useEffect(() => {
+    if (cart.length === 0) setPartialLock(null);
+  }, [cart.length]);
 
   /* PaymentPanel unmounts when the overlay closes; an amount modal that
    * was somehow open must not leave SaleScreen believing something still
@@ -3564,6 +3665,9 @@ function PaymentPanel(props: {
     !charging &&
     /* T241 third review: never while an unknown outcome is showing. */
     !outcomeOpen &&
+    /* T253: nor while a client on this ticket is held by a charge that
+       may have gone through, here or on any iPad. */
+    !ticketHeld &&
     /* T43 review: never while the reason dialog is open. The scrim covers
        the Charge button, but a keyboard Tab leaves the dialog and lands on
        it, and Enter there charged the tender the teacher was in the middle
@@ -3609,6 +3713,338 @@ function PaymentPanel(props: {
     }
   }, [result]);
   useEffect(() => () => onHoldChange(false), [onHoldChange]);
+
+  /**
+   * T249: the tab's record of anything here that must not be lost with
+   * the Cart screen. `PaymentPanel` unmounts when the overlay closes and
+   * the cart does not, so before this a sold-nothing or partial answer
+   * (and its lock) was gone on reopen and Finalize took a second payment
+   * from the ticket that had already paid. Written at the TAP (doCharge,
+   * synchronously, and here) so a reload or an evicted tab during the
+   * charge comes back as "the last charge needs checking"; kept while an
+   * unknown, sold-nothing or partial outcome waits for its own Understood
+   * and while the lock stands; removed on a definite answer (paid,
+   * suppressed, refused) and once both are gone. No card data, ever.
+   */
+  const heldStage: HeldRecord["stage"] = charging
+    ? "charging"
+    : result?.kind === "ambiguous" ||
+        result?.kind === "sold-nothing" ||
+        result?.kind === "partial"
+      ? result.kind
+      : pickHold
+        ? "ambiguous"
+        : null;
+  useEffect(() => {
+    if (!outcomeRestored.current) return;
+    if (heldStage === null && partialLock === null) {
+      heldAt.current = null;
+      heldClients.current = [];
+      writeHeldRecord(null);
+      return;
+    }
+    const shown =
+      result?.kind === "ambiguous" ||
+      result?.kind === "sold-nothing" ||
+      result?.kind === "partial"
+        ? result
+        : null;
+    writeHeldRecord({
+      v: 2,
+      at: heldAt.current ?? Date.now(),
+      page: PAGE_LOAD_ID,
+      requestId: uncertainRequest.current,
+      stage: heldStage,
+      message: storableSentence(shown?.message ?? null),
+      saleId: shown?.kind === "sold-nothing" ? shown.saleId : null,
+      summary: storableSentence(
+        shown?.kind === "sold-nothing" ? shown.summary : null,
+      ),
+      basket: shown?.kind === "sold-nothing" ? shown.basket : [],
+      giftIdsPending: shown?.kind === "partial" && holdingGiftIds,
+      restored:
+        shown?.kind === "sold-nothing" || shown?.kind === "partial"
+          ? (shown.restored ?? null)
+          : null,
+      lock: partialLock,
+      ticket: partialLock !== null ? ticketPrint(cart) : null,
+      clientIds: [
+        ...new Set([...heldClients.current, ...ticketClients(client, cart)]),
+      ],
+      serverHoldIds: ownHoldIds,
+    });
+  }, [heldStage, result, partialLock, holdingGiftIds, cart, restoreDone, client, ownHoldIds]);
+  /* The restore, once per mount, AFTER the writer so the writer skips
+   * the mount. A reopen in the same page brings each outcome back as
+   * itself; after a reload it says so, and a charge that was still in
+   * flight is an unknown outcome, never a clean ticket. The lock comes
+   * back only onto the ticket it was about: after a reload the cart is
+   * gone, and a new ticket is the honest way on. */
+  useEffect(() => {
+    try {
+      const raw = window.sessionStorage.getItem(UNCERTAIN_KEY);
+      if (raw !== null) {
+        const saved = JSON.parse(raw) as Partial<Record<keyof HeldRecord, unknown>>;
+        uncertainRequest.current =
+          typeof saved.requestId === "string" ? saved.requestId : null;
+        heldAt.current = typeof saved.at === "number" ? saved.at : Date.now();
+        heldClients.current = Array.isArray(saved.clientIds)
+          ? saved.clientIds.filter((c): c is string => typeof c === "string")
+          : [];
+        if (Array.isArray(saved.serverHoldIds)) {
+          setOwnHoldIds(
+            saved.serverHoldIds.filter((c): c is string => typeof c === "string"),
+          );
+        }
+        const when =
+          typeof saved.at === "number"
+            ? new Date(saved.at).toLocaleTimeString([], {
+                hour: "numeric",
+                minute: "2-digit",
+              })
+            : null;
+        const at = when !== null ? ` at ${when}` : "";
+        const samePage = saved.page === PAGE_LOAD_ID;
+        /* A record from before T249 carries no stage: it was always an
+         * unknown outcome. */
+        const stage = saved.v === 2 ? saved.stage : "ambiguous";
+        const said =
+          typeof saved.message === "string" && saved.message.length > 0
+            ? saved.message
+            : null;
+        if (stage === "charging") {
+          setResult({
+            kind: "ambiguous",
+            message: `A charge from this iPad${at} had not answered when ${
+              samePage ? "the Cart screen closed" : "the page reloaded"
+            }.`,
+          });
+          setPickHold(true);
+        } else if (stage === "ambiguous") {
+          setResult({
+            kind: "ambiguous",
+            message: samePage
+              ? (said ?? "")
+              : `A charge from this iPad${at} was left with an unknown outcome when the page reloaded.${
+                  said !== null ? ` ${said}` : ""
+                }`,
+          });
+          setPickHold(true);
+        } else if (stage === "sold-nothing" || stage === "partial") {
+          const restored = samePage
+            ? typeof saved.restored === "string"
+              ? saved.restored
+              : null
+            : [
+                `Recorded${at}, before this page reloaded.`,
+                saved.giftIdsPending === true
+                  ? "The gift card ids shown then are not kept here: read them in Mindbody."
+                  : null,
+              ]
+                .filter(Boolean)
+                .join(" ");
+          if (stage === "sold-nothing") {
+            setResult({
+              kind: "sold-nothing",
+              message: said ?? "The payment went through and nothing was sold.",
+              saleId: typeof saved.saleId === "string" ? saved.saleId : null,
+              basket: basketRows(saved.basket),
+              summary: typeof saved.summary === "string" ? saved.summary : null,
+              restored,
+            });
+          } else {
+            setResult({
+              kind: "partial",
+              message: said ?? "Part of this ticket was sold and part was not.",
+              giftCards: [],
+              restored,
+            });
+          }
+        }
+        if (
+          typeof saved.lock === "string" &&
+          saved.lock.length > 0 &&
+          cart.length > 0 &&
+          saved.ticket === ticketPrint(cart)
+        ) {
+          setPartialLock(saved.lock);
+        }
+      }
+    } catch {
+      /* Nothing to restore. */
+    }
+    outcomeRestored.current = true;
+    setRestoreDone(true);
+    /* Once per mount, on the cart as it stood when the screen opened. */
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /* ---------------- T253: the server's holds on this ticket -----------
+   * Read once the restore has run (so this screen's own holds are known
+   * and not shown twice), and again whenever the ticket's clients change.
+   * A server that does not answer leaves what was last read; the route
+   * refuses a held client whatever this screen believes. An outcome on
+   * THIS screen whose holds the server no longer has was acknowledged on
+   * another iPad, and lets go here too; so does a roster record. */
+  const ticketClientKey = [...ticketClients(client, cart)].sort().join(",");
+  const loadTicketHolds = useCallback(async () => {
+    const ids = ticketClientKey === "" ? [] : ticketClientKey.split(",");
+    const own = ownHoldIdsRef.current;
+    const askIds = [...new Set([...ids, ...heldClients.current])];
+    if (askIds.length === 0) {
+      /* Nobody on the ticket and no outcome naming anybody: nothing to
+       * ask, and nothing here may be released on a question not asked. */
+      setTicketHolds([]);
+      setTicketLocal([]);
+      return;
+    }
+    const standing = await fetchServerHolds(askIds);
+    if (standing === null) return;
+    const isStanding = (id: string) => standing.some((h) => h.id === id);
+    let local = readRosterHeld().filter((r) => ids.includes(r.clientId));
+    for (const r of local) {
+      const sids = r.serverHoldIds ?? [];
+      if (r.stage !== "charging" && sids.length > 0 && !sids.some(isStanding)) {
+        writeRosterHeld(r.clientId, null);
+      }
+    }
+    local = readRosterHeld().filter((r) => ids.includes(r.clientId));
+    setTicketLocal(local);
+    setTicketHolds(standing.filter((h) => !own.includes(h.id)));
+    if (own.length > 0 && !own.some(isStanding)) {
+      /* Acknowledged elsewhere: this screen's outcome is answered. */
+      setOwnHoldIds([]);
+      setResult((cur) =>
+        cur !== null &&
+        (cur.kind === "ambiguous" ||
+          cur.kind === "sold-nothing" ||
+          cur.kind === "partial")
+          ? null
+          : cur,
+      );
+    }
+  }, [ticketClientKey]);
+  useEffect(() => {
+    if (!restoreDone) return;
+    void loadTicketHolds();
+  }, [restoreDone, loadTicketHolds]);
+
+  /** Understood on a hold read from the server: acknowledged there, for
+   *  every iPad, then read again. */
+  const acknowledgeTicketHold = async (ids: string[], localClient?: string) => {
+    if (holdAckBusy) return;
+    setHoldAckBusy(true);
+    setHoldAckNote(null);
+    try {
+      let failed = false;
+      for (const id of ids) {
+        if (!(await acknowledgeServerHold(id))) failed = true;
+      }
+      if (failed) {
+        setHoldAckNote(
+          "The server could not record the Understood, so the hold stands. Try again in a moment.",
+        );
+      }
+      if (localClient !== undefined) writeRosterHeld(localClient, null);
+      await loadTicketHolds();
+    } finally {
+      setHoldAckBusy(false);
+    }
+  };
+
+  /* T253 review (4): on a walk-in ticket, the walk-in notices, read when
+   * the ticket becomes a walk-in one and whenever its first line goes on. */
+  const walkinTicket = client === null && cart.length > 0;
+  const loadWalkinNotes = useCallback(async () => {
+    const notes = await fetchWalkinNotices();
+    if (notes !== null) setWalkinNotes(notes);
+  }, []);
+  useEffect(() => {
+    if (!walkinTicket) {
+      setWalkinNotes([]);
+      return;
+    }
+    void loadWalkinNotes();
+  }, [walkinTicket, loadWalkinNotes]);
+  const acknowledgeWalkinNote = async (id: string) => {
+    if (holdAckBusy) return;
+    setHoldAckBusy(true);
+    setHoldAckNote(null);
+    try {
+      if (!(await acknowledgeServerHold(id))) {
+        setHoldAckNote(
+          "The server could not record the Understood. Try again in a moment.",
+        );
+      }
+      await loadWalkinNotes();
+    } finally {
+      setHoldAckBusy(false);
+    }
+  };
+
+  /** Understood on THIS screen's own outcome: the result goes, as it
+   *  always did, and the holds it made are acknowledged on the server. */
+  const understoodResult = () => {
+    const ids = ownHoldIdsRef.current;
+    setResult(null);
+    setOwnHoldIds([]);
+    /* T253 review (7): always read the server again for this ticket's
+     * clients, so a hold the answer did not name (an unreadable answer,
+     * a dead request) is offered here, in this view, rather than met as
+     * a refusal on the next tap. A walk-in ticket reads its notices. */
+    void (async () => {
+      for (const id of ids) await acknowledgeServerHold(id);
+      await loadTicketHolds();
+      if (walkinTicket) await loadWalkinNotes();
+    })();
+  };
+  const ticketNameOf = (id: string): string =>
+    client !== null && client.id === id
+      ? client.name
+      : (cart.find((l) => l.forClient?.id === id)?.forClient?.name ??
+        "this client");
+
+  /**
+   * T249: why the Cart screen may not be closed right now, reported up
+   * so SaleScreen's close, its Escape and the nav bar's Sign-in refuse
+   * with the sentence. An outcome that may have moved money waits for
+   * its own Understood; a part-sold ticket waits to be emptied. The
+   * nav bar's Cart stays live, because it is how a teacher reaches
+   * Empty cart, and this panel stays mounted behind it. `result` says
+   * whether the reason is on this panel (the shelf offers a way to it).
+   */
+  const leaveHold: { why: string; result: boolean } | null = outcomeOpen
+    ? {
+        why: "The last charge needs checking first. Tap Understood on it when you have.",
+        result: true,
+      }
+    : result?.kind === "sold-nothing"
+      ? {
+          why: "This ticket took a payment and sold nothing. Read what happened and tap Understood.",
+          result: true,
+        }
+      : result?.kind === "partial"
+        ? {
+            why: "Part of this ticket was sold. Read what happened and tap Understood.",
+            result: true,
+          }
+        : partialLock !== null
+          ? {
+              why: "This ticket cannot be charged again. Empty the cart before leaving the Cart screen.",
+              result: false,
+            }
+          : null;
+  const leaveHoldKey =
+    leaveHold === null ? "" : `${leaveHold.result ? "r" : "l"}:${leaveHold.why}`;
+  const { onLeaveHold } = props;
+  useEffect(() => {
+    onLeaveHold(
+      leaveHoldKey === ""
+        ? null
+        : { why: leaveHoldKey.slice(2), result: leaveHoldKey.startsWith("r") },
+    );
+  }, [leaveHoldKey, onLeaveHold]);
+  useEffect(() => () => onLeaveHold(null), [onLeaveHold]);
   /**
    * T95: the one thing a teacher MUST take off this screen. The card
    * Mindbody sold is blank card stock in their hand, and this id is what
@@ -4200,6 +4636,36 @@ function PaymentPanel(props: {
       giftDiscountOff: roundToCents(armedParts.giftCents / 100),
       tenders: displayTenders,
     });
+    /* T249: the record goes down at the TAP, before anything is sent, so
+     * a reload or an evicted tab from here until a definite answer comes
+     * back as a charge that needs checking. The writer effect keeps it
+     * from the next render on; this is the moment before that render. */
+    heldAt.current = Date.now();
+    /* T253 review: seeded with THIS ticket's clients at the tap and never
+     * shrunk until the record is gone, so detaching or switching the
+     * client after an outcome cannot unname the student it was about. */
+    heldClients.current = ticketClients(client, cart);
+    setOwnHoldIds([]);
+    uncertainRequest.current = typedCard?.displayRequestId ?? null;
+    if (outcomeRestored.current) {
+      writeHeldRecord({
+        v: 2,
+        at: heldAt.current,
+        page: PAGE_LOAD_ID,
+        requestId: uncertainRequest.current,
+        stage: "charging",
+        message: null,
+        saleId: null,
+        summary: null,
+        basket: [],
+        giftIdsPending: false,
+        restored: null,
+        lock: null,
+        ticket: null,
+        clientIds: ticketClients(client, cart),
+        serverHoldIds: [],
+      });
+    }
     inFlight.current = true;
     setCharging(true);
     onBusyChange(true);
@@ -4300,6 +4766,10 @@ function PaymentPanel(props: {
       } catch {
         /* fall through to the status-code handling below */
       }
+      /* T253: the holds this answer made on the server, which this
+       * outcome's Understood acknowledges for every iPad. */
+      const madeHolds = holdIdsFrom(body);
+      if (madeHolds.length > 0) setOwnHoldIds(madeHolds);
       /* Any answer carrying the live balance refreshes the credit gate:
        * a method-stage refusal ("credit covers this") and the split
        * failure both name the number the next decision must be made on. */
@@ -4635,6 +5105,12 @@ function PaymentPanel(props: {
           message: String(body?.error ?? "The charge did not answer."),
         });
         onClientDataStale();
+      } else if (res.status === 409 && body?.reason === "held") {
+        /* T253: refused because the server holds a client on this ticket
+         * (a charge that may have gone through, from any iPad). Nothing
+         * was charged; the hold is shown above Finalize with its
+         * Understood, which is the way on. */
+        setTicketHolds(serverHoldsFrom(body?.holds));
       } else if (
         res.status === 401 &&
         body?.reason === "teacher" &&
@@ -5739,6 +6215,8 @@ function PaymentPanel(props: {
       ? "The customer just changed how they are paying"
     : outcomeOpen
       ? "The last charge needs checking first. Tap Understood when you have."
+    : ticketHeld
+      ? "A charge for a client on this ticket may have gone through. Read it above and tap Understood."
     : charging
       ? "Charging..."
       : partialLock !== null
@@ -6202,6 +6680,131 @@ function PaymentPanel(props: {
                 <p className="muted-note">{NEEDS_HOUSE_CLIENT_LINE}</p>
               ) : null}
 
+              {/* T253: a client on this ticket held by a charge that may
+                  have gone through, on this iPad or any other (the
+                  server's record) or in the roster's own tab record.
+                  Shown before Finalize, which waits on its Understood. */}
+              {ticketHolds.map((h) => (
+                <div key={h.id} className="sale-stop pay-split" role="alert">
+                  <p className="pay-split-head">
+                    {h.kind === "pending"
+                      ? `A charge for ${ticketNameOf(h.clientId)} started at ${new Date(
+                          h.createdAt,
+                        ).toLocaleTimeString([], {
+                          hour: "numeric",
+                          minute: "2-digit",
+                        })} and has not answered yet.`
+                      : `A charge for ${ticketNameOf(h.clientId)} at ${new Date(
+                      h.createdAt,
+                    ).toLocaleTimeString([], {
+                      hour: "numeric",
+                      minute: "2-digit",
+                    })} ${
+                      h.kind === "sold-nothing"
+                        ? "took a payment and sold nothing"
+                        : h.kind === "partial"
+                          ? "was only partly sold"
+                          : "may or may not have gone through"
+                    }.`}
+                  </p>
+                  {h.message ? (
+                    <p className="pay-split-why">{h.message}</p>
+                  ) : null}
+                  {h.saleId ? (
+                    <p className="pay-split-why">{`Sale ${h.saleId}.`}</p>
+                  ) : null}
+                  <p className="pay-split-why">
+                    {h.kind === "pending"
+                      ? "Another iPad (or this one, before it reloaded) is waiting on Mindbody for it. Finalize Sale waits until it has answered."
+                      : "Check it in Mindbody before charging them again. Finalize Sale waits until you tap Understood."}
+                  </p>
+                  {h.kind === "pending" ? (
+                    <button
+                      className="class-change pay-dismiss"
+                      disabled={holdAckBusy}
+                      onClick={() => void loadTicketHolds()}
+                    >
+                      Check again
+                    </button>
+                  ) : (
+                    <button
+                      className="class-change pay-dismiss"
+                      disabled={holdAckBusy}
+                      onClick={() => void acknowledgeTicketHold([h.id])}
+                    >
+                      Understood
+                    </button>
+                  )}
+                </div>
+              ))}
+              {holdAckNote !== null ? (
+                <p className="sale-stop" role="status">
+                  {holdAckNote}
+                </p>
+              ) : null}
+              {/* T253 review (4): a walk-in sale that may have gone
+                  through, studio-wide. Read on every walk-in ticket; it
+                  never holds Finalize (a block on the house client would
+                  stop every walk-in sale), it asks the teacher to look. */}
+              {walkinNotes.map((n) => (
+                <div key={n.id} className="pass-note pay-split" role="status">
+                  <p className="pay-split-head">
+                    {`A walk-in sale at ${new Date(n.createdAt).toLocaleTimeString(
+                      [],
+                      { hour: "numeric", minute: "2-digit" },
+                    )} may have gone through. Check Mindbody before ringing up a walk-in again.`}
+                  </p>
+                  {n.message ? (
+                    <p className="pay-split-why">{n.message}</p>
+                  ) : null}
+                  {n.saleId ? (
+                    <p className="pay-split-why">{`Sale ${n.saleId}.`}</p>
+                  ) : null}
+                  <button
+                    className="class-change pay-dismiss"
+                    disabled={holdAckBusy}
+                    onClick={() => void acknowledgeWalkinNote(n.id)}
+                  >
+                    Understood
+                  </button>
+                </div>
+              ))}
+              {ticketLocal.map((r) => (
+                <div
+                  key={`local-${r.clientId}`}
+                  className="sale-stop pay-split"
+                  role="alert"
+                >
+                  <p className="pay-split-head">
+                    {r.stage === "charging"
+                      ? `A charge for ${r.name} from Pay and check in had not answered when it was last seen. It may have gone through.`
+                      : r.stage === "sold-nothing"
+                        ? `A charge for ${r.name} from Pay and check in took a payment and sold nothing.`
+                        : r.stage === "attach-failed"
+                          ? `${r.name} was charged from Pay and check in, but the pass was not attached to the visit.`
+                          : `A charge for ${r.name} from Pay and check in may or may not have gone through.`}
+                  </p>
+                  {r.message && r.stage !== "charging" ? (
+                    <p className="pay-split-why">{r.message}</p>
+                  ) : null}
+                  <p className="pay-split-why">
+                    Check it in Mindbody before charging them again.
+                  </p>
+                  <button
+                    className="class-change pay-dismiss"
+                    disabled={holdAckBusy}
+                    onClick={() =>
+                      void acknowledgeTicketHold(
+                        r.serverHoldIds ?? [],
+                        r.clientId,
+                      )
+                    }
+                  >
+                    Understood
+                  </button>
+                </div>
+              ))}
+
               {result?.kind === "suppressed" ? (
                 /* Suppression is never success: amber, no check, the
                    cart and the tender untouched. A dry run takes the
@@ -6238,6 +6841,9 @@ function PaymentPanel(props: {
                    the sold half again. */
                 <div className="sale-stop pay-split" role="alert">
                   <p className="pay-split-head">{result.message}</p>
+                  {result.restored ? (
+                    <p className="pay-split-why">{result.restored}</p>
+                  ) : null}
                   <p className="pay-split-why">
                     Check the dev drawer or Mindbody before charging
                     anything else. Finalize Sale is refused on this ticket
@@ -6263,7 +6869,7 @@ function PaymentPanel(props: {
                     }
                     onClick={() => {
                       if (holdingGiftIds) return;
-                      setResult(null);
+                      understoodResult();
                     }}
                   >
                     Understood
@@ -6278,6 +6884,9 @@ function PaymentPanel(props: {
                   <p className="pay-split-head">{result.message}</p>
                   {result.summary ? (
                     <p className="pay-split-why">{result.summary}</p>
+                  ) : null}
+                  {result.restored ? (
+                    <p className="pay-split-why">{result.restored}</p>
                   ) : null}
                   <p className="pay-split-why">
                     Finalize Sale is refused on this ticket now. Do not
@@ -6321,7 +6930,7 @@ function PaymentPanel(props: {
                   ) : null}
                   <button
                     className="class-change pay-dismiss"
-                    onClick={() => setResult(null)}
+                    onClick={understoodResult}
                   >
                     Understood
                   </button>
@@ -6333,7 +6942,7 @@ function PaymentPanel(props: {
                   {result.message ? ` (${result.message})` : ""}
                   <button
                     className="class-change pay-dismiss"
-                    onClick={() => setResult(null)}
+                    onClick={understoodResult}
                   >
                     Understood
                   </button>
@@ -8827,6 +9436,11 @@ export interface SaleNavState {
    *  case: a gift card id is on the done screen and has not been
    *  written on the card yet. */
   holdWhy: string | null;
+  /** T249: why the Cart screen may not be CLOSED right now, or null: an
+   *  outcome that may have moved money and has not been acknowledged, or
+   *  a part-sold ticket not yet emptied. Holds Sign-in only; Cart stays
+   *  live, because it is how the teacher reaches Empty cart. */
+  closeWhy: string | null;
 }
 
 export default function SaleScreen(props: {
@@ -9522,13 +10136,43 @@ export default function SaleScreen(props: {
    *  this component's close, its Escape, and the nav bar through
    *  onNavState. */
   const [payHeld, setPayHeld] = useState(false);
+  /** T249: the payment panel's word on whether the Cart screen may be
+   *  closed (PaymentPanel `leaveHold`). */
+  const [leaveHold, setLeaveHold] = useState<{
+    why: string;
+    result: boolean;
+  } | null>(null);
   /** Every close goes through here so the mode resets with it. */
   const close = useCallback(() => {
-    if (payHeld) return;
+    if (payHeld || leaveHold !== null) return;
     setSaleMode("shelf");
     onClose();
-  }, [onClose, setSaleMode, payHeld]);
+  }, [onClose, setSaleMode, payHeld, leaveHold]);
   const leavePay = useCallback(() => setSaleMode("shelf"), [setSaleMode]);
+  /**
+   * T249: the shelf's "Show the last charge" opens the payment surface
+   * only to show an outcome, without Pay's gates (T51's walk-in, T53's
+   * opt-in), because after a reload there is often nothing to pay and
+   * Pay is off. So once that outcome is acknowledged the screen goes
+   * back to the shelf by itself, and any charge after it starts from
+   * Pay, gates and all.
+   */
+  const payViaHold = useRef(false);
+  const showHeldOutcome = useCallback(() => {
+    payViaHold.current = true;
+    setSaleMode("pay");
+  }, [setSaleMode]);
+  useEffect(() => {
+    if (!payViaHold.current) return;
+    if (saleMode !== "pay") {
+      payViaHold.current = false;
+      return;
+    }
+    if (leaveHold === null || !leaveHold.result) {
+      payViaHold.current = false;
+      setSaleMode("shelf");
+    }
+  }, [leaveHold, saleMode, setSaleMode]);
 
   /**
    * T51: an anonymous sale is a CHOICE, not the absence of one. Pete,
@@ -10331,8 +10975,12 @@ export default function SaleScreen(props: {
     heldPass.current = null;
     heldForNewClient.current = false;
   }, []);
-  /** Non-null renders the refusal; the names are the lines to remove. */
-  const [detachBlock, setDetachBlock] = useState<string[] | null>(null);
+  /** Non-null renders the refusal: the names it reads out, and (T243)
+   *  the cart keys of exactly those lines, so "Remove the pass and
+   *  detach" removes what the teacher read about and nothing else. */
+  const [detachBlock, setDetachBlock] = useState<
+    { names: string[]; keys: string[] } | null
+  >(null);
   const closeDetachBlock = useCallback(() => setDetachBlock(null), []);
   useEffect(() => {
     if (detachBlock === null) return;
@@ -11372,8 +12020,9 @@ export default function SaleScreen(props: {
       charging,
       payTap,
       holdWhy: payHeld ? "Write the gift card id on the card first" : null,
+      closeWhy: leaveHold?.why ?? null,
     });
-  }, [onNavState, payWhy, charging, payTap, payHeld]);
+  }, [onNavState, payWhy, charging, payTap, payHeld, leaveHold]);
 
   if (!open) return null;
 
@@ -12376,7 +13025,10 @@ export default function SaleScreen(props: {
                      own; the teacher removes those lines or keeps the
                      client. */
                   if (selfPassLines.length > 0) {
-                    setDetachBlock(selfPassLines.map((l) => l.item.name));
+                    setDetachBlock({
+                      names: selfPassLines.map((l) => l.item.name),
+                      keys: selfPassLines.map((l) => l.key),
+                    });
                     return;
                   }
                   onDetachClient();
@@ -12783,6 +13435,7 @@ export default function SaleScreen(props: {
             onTicketLock={setTicketLock}
             onModalChange={setPayModalOpen}
             onHoldChange={setPayHeld}
+            onLeaveHold={setLeaveHold}
             cartResetNonce={cartResetNonce}
             onClientDataStale={onClientDataStale}
             discount={armedDiscount}
@@ -13588,6 +14241,26 @@ export default function SaleScreen(props: {
                 exists to end. */}
             {inPay ? null : (
               <div className="t-foot">
+                {/* T249: why the Cart screen cannot be closed yet, in
+                    words, where the teacher who just tapped Sign-in is
+                    looking. An outcome waiting for its Understood is on
+                    the payment surface, which is reached from here even
+                    with nothing left to pay (after a reload the ticket
+                    is gone and Pay is off): it only shows the result,
+                    and nothing there can charge while it stands. */}
+                {leaveHold !== null ? (
+                  <div className="sale-stop t-foot-hold" role="alert">
+                    <p className="t-foot-hold-why">{leaveHold.why}</p>
+                    {leaveHold.result ? (
+                      <button
+                        className="class-change t-foot-hold-go"
+                        onClick={showHeldOutcome}
+                      >
+                        Show the last charge
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
                 {/* T51's Empty cart, behind T38's confirm exactly. */}
                 <button
                   className="t-foot-empty"
@@ -13870,13 +14543,35 @@ export default function SaleScreen(props: {
             </button>
             <p className="modal-title">The ticket holds a pass</p>
             <p className="modal-note">
-              {detachBlock.length === 1
-                ? `${detachBlock[0]} is on this client's account, and a pass cannot be sold to a walk-in.`
-                : `${detachBlock.length} passes are on this client's account, and a pass cannot be sold to a walk-in.`}{" "}
-              Remove {detachBlock.length === 1 ? "that line" : "those lines"} first,
-              or keep the client on this sale.
+              {detachBlock.names.length === 1
+                ? `${detachBlock.names[0]} is on this client's account, and a pass cannot be sold to a walk-in.`
+                : `${detachBlock.names.length} passes are on this client's account, and a pass cannot be sold to a walk-in.`}{" "}
+              Remove {detachBlock.names.length === 1 ? "the pass" : "the passes"} and
+              detach, or keep the client on this sale.
             </p>
             <div className="modal-actions">
+              {/* T243 (Pete: "there should be a button on the modal that
+                  will remove it for them"): the same removal the ticket's
+                  own X performs, for exactly the lines that refused the
+                  detach (a line already gone is skipped, and a line for
+                  someone else or a retail line is never touched), then
+                  the same detach the client's X would have run. */}
+              <button
+                className="modal-confirm"
+                disabled={charging}
+                onClick={() => {
+                  const present = new Set(cart.map((l) => l.key));
+                  for (const key of detachBlock.keys) {
+                    if (present.has(key)) removeLine(key);
+                  }
+                  closeDetachBlock();
+                  onDetachClient();
+                }}
+              >
+                {detachBlock.names.length === 1
+                  ? "Remove the pass and detach"
+                  : "Remove the passes and detach"}
+              </button>
               <button className="modal-confirm go" onClick={closeDetachBlock}>
                 Keep the client
               </button>

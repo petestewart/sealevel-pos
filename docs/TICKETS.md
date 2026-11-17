@@ -22055,7 +22055,6 @@ said):
   with the same results. No server log and no database dump holds the
   card number.
 
-
 ### The typed-card setting (Pete, 2026-11-17)
 
 Pete, on the student typing their own card on the customer iPad: "i think
@@ -22180,3 +22179,734 @@ Approval on:
 - A's tab closing took its own new approval off the display.
 
 The full T241 drive (off and on) reran with its earlier results.
+
+## T242. "Pay and check in" offers the passes the student already has (Pete, 2026-11-17)
+
+Pete: "when the client has a pass and they have not paid for a class, if
+the teacher clicks the [unpaid] button they get a PAY AND CHECK IN modal.
+there should be an option to use one of their exisiting passes when they
+have one. it should only show the pass(es) with a button to confirm they
+want to use it. there can also be a button for purchase a pass in case
+they want to save it and get a different one. the ipad can display what
+they have, but the teacher or the student should be able to select using
+it. no need to have to wait on the student for that."
+
+T13/T14 built the write (`POST /client/updateclientvisit` with
+`{VisitId, ClientServiceId}`, `setVisitService` in `src/lib/roster.ts`,
+`/api/visit-payment`) and put it behind the roster row's Change dropdown.
+The unpaid row's tap now opens T25's Pay and check in dialog, which only
+sells, so a student holding a usable pass is offered a purchase.
+
+### To do
+
+- [x] **The dialog opens on the student's own passes when they have one.**
+      When the client holds at least one current pass for this visit, the
+      dialog shows ONLY those passes, each with its name, classes left and
+      expiry (T14's fake-unlimited suppression applies), and one 64px
+      "Use this pass and check in" per pass. Below them, one 64px "Buy a
+      pass instead" opens the dialog's existing purchase view, unchanged
+      (credit default, card switch, promotion code, approval). A client
+      with no usable pass sees the purchase view exactly as today.
+- [x] **Only passes that may pay for THIS visit are shown, from reads
+      alone.** (Revised after the review below: the first build asked
+      Mindbody with a `Test: true` `updateclientvisit` per pass, which is
+      unsafe while nobody has seen `Test` honoured on that endpoint.) The
+      client's current passes with a class left, less guest passes; where
+      the pass's `Program` (client.yml ClientService) and the class's
+      `ClassDescription.Program` (class.yml Class, on the
+      `/class/classvisits` read) are both known and differ, the pass is
+      left out; where either is unknown, it is kept. No write-shaped call
+      of any kind. The real assignment's refusal is the backstop, in
+      Mindbody's words, with nobody checked in. The route needs a
+      signed-in teacher and refuses a visit that is not this client's.
+- [x] **"Use this pass and check in"** assigns the pass through the existing
+      `/api/visit-payment` route, then checks the visit in through the
+      existing `/api/checkin` route, under the teacher's token, so dry run,
+      the write guard, T49 attribution, the T211 waiver gate and the full
+      class rule all apply unchanged. Check-in stays pessimistic: the row
+      spins until both answer. A refusal of the assignment checks nobody
+      in and shows Mindbody's sentence; a suppressed assignment says so and
+      does not pretend to check in. No money moves, so no approval is
+      asked, whatever T203's setting.
+- [x] **The customer iPad shows what they have, and the student may pick.**
+      While the dialog is on the passes view and a display is paired, the
+      display shows "Your passes" for this student (names, classes left,
+      expiry; no ids) with a 64px "Use this pass" per pass. A student's tap
+      is a pick like T241's: an opaque key from the list the TEACHER's iPad
+      offered, checked by the server, delivered through the same shared
+      piece, acted on by the teacher's iPad, which then runs the same two
+      writes. The display adds no write path to Mindbody. **Nobody waits on
+      the student**: the teacher's buttons work the whole time, and the
+      first tap from either side wins; the other side then reads "Done".
+      Closing the dialog, or "Buy a pass instead", takes the passes scene
+      down. If the customer screen is busy (another scene holds it), the
+      teacher's dialog works exactly the same without it.
+- [x] Docs: CLAUDE.md (the roster's unpaid row; the display's new scene),
+      docs/design/customer-display.md, and this ticket's Done note.
+- [x] `tsc --noEmit` and `next build` clean; driven in Chromium against the
+      fake with a paired display: a client with two usable passes and one
+      that does not cover the class sees the two; the teacher's tap assigns
+      and checks in; the student's tap does the same; "Buy a pass instead"
+      reaches the purchase view; a client with no pass sees the purchase
+      view; a refused assignment checks nobody in.
+- [ ] Pete: once live, use it once on the write-guarded dummy client and
+      confirm in Mindbody that the visit shows the chosen pass, signed in,
+      and the pass's remaining count went down by one.
+
+### Done (2026-11-17)
+
+**The dialog.** An unpaid row's tap opens "Pay and check in" on the
+student's own passes when they hold any that may pay for this visit: the
+pass's name, its facts line (`PassFactsLine`, so T14's fake-unlimited and
+the single-visit rules apply), and one 64px "Use this pass and check in"
+per pass, then one 64px "Buy a pass instead" and Cancel. Nothing else: no
+catalog, no tender, no free entry. "Buy a pass instead" shows T25's
+purchase view as it was (credit default, card switch, promotion code,
+approval). A client with no candidate pass in the roster's background
+sweep opens straight on the purchase view with no read at all; otherwise
+the dialog reads "Checking which of their passes cover this class..."
+until `GET /api/visit-passes` answers, and falls to the purchase view when
+nothing is offered (a client with no passes is answered as soon as their
+pass read is, without waiting on the class read). A read that fails falls
+to the purchase view too, with one line saying the passes could not be
+checked and that the row's payment chevron still lists them.
+
+One change to the purchase view's timing, not its content: the default
+selection, and with it the Test pricing and T221's availability check, now
+wait until the purchase view is showing. A teacher who uses a pass costs no
+Test pricing; for a client with no pass the purchase view starts exactly as
+before.
+
+**Which passes** (`src/lib/visitpasses.ts`, reads only). The client's
+current passes (`fetchPasses`, which now carries each pass's
+`Program.Id`), less guest passes (T69) and passes with no class left. The
+class's own visit list (`/class/classvisits`) is read beside it: the visit
+must be this client's (a mismatch is refused 409, a visit not on the class
+404), its `ClassDescription.Program` gives the class's program, and a pass
+from a KNOWN other program is left out while an unknown on either side
+keeps the pass. If the visit already carries a pass (a stale roster), the
+dialog says so and its "Use this pass" buttons are disabled. The route
+needs a signed-in teacher (`requireActor`). Anything this does not see (a
+membership restriction) is Mindbody's to refuse on the real assignment.
+
+**Use this pass and check in.** `/api/visit-payment` then `/api/checkin`,
+the existing routes, under the teacher's token (dry run, the write guard,
+T49 attribution, and T211's armed waiver override on the check-in, read
+once with `takeWaiverOverride` as the charge path does). The button and the
+row spin until both answer (`payStage` locks the dialog shut, `busy` spins
+the row); `payFlight`, the same single flight the charge uses, makes the
+first tap from either side win.
+
+- A refused assignment shows "Mindbody did not take the pass: <its
+  sentence> Nobody was checked in." and no check-in is sent.
+- A suppressed one says "Dry run: the pass was not assigned and nobody was
+  checked in." (or the write guard's words).
+- A check-in that fails after the pass landed, or an assignment whose
+  answer never came, says the pass may already be on the visit, disables
+  every other "Use this pass" and "Buy a pass instead", and refreshes the
+  roster so the row shows what Mindbody now says.
+- Success closes the dialog with "Done: <name> is checked in with <pass>."
+
+No checkout, no approval, whatever `customer_confirms_sale` says. T26's
+renewal offer is not chained from this path.
+
+**The customer iPad.** A new scene kind, `passes` ("Your passes"), put up
+when the passes view has passes and a display is connected.
+`/api/display/present` builds it: the teacher's iPad sends each pass's
+ClientService id with its name, count and expiry; the server gives each a
+random key, sends the display only `{key, name, remaining, expires}`
+(`readPassesPayload`, field by field, counts of 100 and over dropped) and
+keeps the key-to-id map on the request's server-only half. The student's
+64px "Use this pass" posts `{requestId, key}` to `POST /api/display/pass`
+(display cookie only); `choosePass` checks the key against the stored
+offer and the scene still offering, moves the scene to "One moment" at
+once (so a second tap from either side cannot pick again, and it holds a
+minute at most), and emits `pass-pick` to the teacher's stream with the id
+the key stood for. The teacher's iPad hears it through `useTenderPick`
+(new `applyPass`, fed by the stream the waiver block already holds and a
+1.5 second poll of `GET /api/display/passes`; acted on once per pick id,
+only for this tab's scene, and only for a pass its own list shows), says
+"Sofia chose 10 Class Series on the customer screen. Checking them in."
+and runs the same two writes. The scene then reads "Done" or "Please see
+the front desk" for the summary's eight seconds; after a refused or
+suppressed assignment the list goes back up four seconds later on the same
+request, with fresh keys and the old pick cleared. Closing the dialog and
+"Buy a pass instead" cancel it by request id. A busy screen leaves the
+dialog working exactly as without one. Nothing under `/api/display/` or in
+`src/lib/display.ts` calls Mindbody.
+
+**Verified** against a scratch copy of the fake (Taylor Brooks with a 10
+Class Series and a Month Unlimited in the class's program and a 5 Class
+Series from a "Workshops" program; Sofia Marquez with two passes; Liam
+O'Connell with one; Quinn Delgado with none; Noah Bennett with a pass
+whose real assignment is refused 400; Harper Nguyen with two), a local
+Postgres, `next build`, the built app, a paired display, and "customer
+approves each sale" ON, driven in Chromium, after the review fixes:
+
+- Taylor: opening the dialog made reads only (no POST of any kind); the
+  dialog and the display showed the two passes in the class's program, not
+  the Workshops one. `/api/visit-passes` for another client on Taylor's
+  visit answered 409 "That booking belongs to someone else." "Buy a pass
+  instead" showed the purchase list and "Charge $25.00 and check in", and
+  the display went back to Ready.
+- Taylor, the teacher's tap: `updateclientvisit {VisitId, ClientServiceId}`
+  then `{VisitId, SignedIn: true}`, both under Maya's token; the row
+  checked in, the dialog closed with the Done line, the display read
+  "Done. You are checked in with 10 Class Series." No checkout, no
+  approval.
+- Sofia, the student's tap (the assignment held two seconds): the
+  teacher's dialog read "Sofia chose 10 Class Series on the customer
+  screen. Checking them in." with that pass's button spinning and Cancel
+  locked; the display read "One moment", then "Done"; the same two writes
+  under Maya's token. Before it, a forged key and a raw ClientService id
+  were each refused 409 "That is not one of your passes."
+- Liam, first tap wins: the teacher tapped, and a student pick on the same
+  scene while the writes ran was refused 409 "The front desk is already
+  checking you in."; one assignment, one check-in.
+- Quinn: the purchase view, nothing on the display.
+- Noah, the student's tap: refused 400, "Please see the front desk", no
+  check-in sent; four seconds later the list was back on the SAME request,
+  and a second student tap was taken (not "already checking you in") and
+  refused by Mindbody again, nobody checked in.
+- Harper: the check-in made to fail after the assignment landed: the
+  dialog said the pass may already be on the visit, both "Use this pass"
+  buttons and "Buy a pass instead" were disabled, the display read "Please
+  see the front desk".
+
+`tsc --noEmit` and `next build` clean.
+
+### Review (2026-11-17)
+
+An independent review of the first commit found it unsafe for the live
+counter, and the main session decided the fix.
+
+1. **The `Test: true` checks are gone (the decision).** The first build
+   asked Mindbody about each pass with `POST /client/updateclientvisit
+   {VisitId, ClientServiceId, Test: true}` on the service account, with a
+   once-per-process guard (one candidate alone, the visit read before and
+   after). The guard protected only one branch: a refused or 5xx first
+   candidate, a failed read, a visit that already carried a pass (Cancel
+   and reopen within a second, a second iPad) or no class id all sent
+   EVERY candidate in parallel with no read-back. If real Mindbody ignores
+   `Test` there, a real student's visit would have had its pass reassigned
+   once per candidate, on the service account, with no teacher named and
+   nobody told (the browser even dropped the discovering answer when the
+   dialog had closed). Nobody has seen `Test` honoured on this endpoint,
+   and settling it needs real writes on the dummy client. So
+   `/api/visit-passes` now makes no write-shaped call at all: current
+   passes with a class left, less guest passes, less passes from a known
+   other program. The guard state, the "TEST IGNORED" path and its banner
+   are removed. The real assignment's refusal is the backstop. The route
+   now needs a signed-in teacher and refuses a visit that is not the given
+   client's. (The review's finding 2, any 4xx hiding a pass with no word,
+   went with the checks.) The training fake keeps answering `Test: true`
+   on `updateclientvisit` without changing anything, which is what the
+   spec documents.
+2. **A pick no longer outlives its offer** (review finding 3). An in-place
+   replace of a passes scene kept the last pick, so student A's pick
+   survived into student B's offer under the same request id. A replace
+   back to `offer` now clears it.
+3. **After a failed check-in, or an assignment whose answer never came**,
+   the pass is or may be on the visit: every other "Use this pass" and
+   "Buy a pass instead" are disabled, with a sentence to check the row,
+   and the roster is refreshed (4a).
+4. **A student's pick sets the one-minute "One moment" expiry** (4b), the
+   same as the teacher's own `working` present, instead of leaving the
+   offer's five minutes.
+5. **The offer goes back up after a run that changed nothing** (4c, a
+   refused or suppressed assignment), four seconds after "Please see the
+   front desk".
+6. **A client with no passes waits on one read only** (4d): the route
+   answers as soon as the pass read does, without waiting on the class
+   read it starts beside it.
+
+Not driven: the one-minute expiry of a pick nobody hears.
+
+**Second review (2026-11-17)**, of 84552ee, after merging main (T238 to
+T241 as squashed in PR #14, including 7cdc0ab; every file both sides
+touched was merged three ways from aeb7412, so both are kept):
+
+1. **Only a 4xx is a refusal** (agreed). `/api/visit-payment` answered 502
+   for everything, and the dialog read any non-ok answer as "refused", so
+   a timed-out assignment that had landed read "Mindbody did not take the
+   pass", left the dialog open to a second pass or a purchase and put the
+   list back on the student's screen. The route now answers 409 `reason:
+   "refused"` for Mindbody's 4xx and keeps 502 for a 5xx, the timeout and
+   a dead transport (its other callers read any non-ok as a failure, as
+   before). The dialog takes "refused" only from that 409 or our own
+   400/401 refusals before any call; a 5xx or an unreadable answer is
+   "unknown": the lock, no re-offer, a roster refresh.
+2. **An already-paid visit blocks everything** (agreed). The visit is now
+   read on every unpaid open, with no-candidate clients too, and in the
+   background when the sweep sends the dialog straight to the purchase
+   view (the view does not change under the teacher's finger). Already
+   paid shows "This booking is already paid with <pass>. Refresh the
+   roster before charging or checking in." in whichever view is open,
+   holds Charge, free entry, "Cart and check in", "Buy a pass instead"
+   and every "Use this pass", and refreshes the roster. Nothing writes
+   while the read is out (the purchase view's Charge already waits for
+   Mindbody's price, so for a client with no passes this is one read, in
+   parallel with the pass read).
+3. **A 404 or 409 from `/api/visit-passes` blocks the same way** (agreed),
+   with the server's sentence plus "Nothing here will write until the
+   roster is refreshed.", and a roster refresh. The doubled punctuation in
+   the "could not be checked" line is fixed.
+4. **The assignment's answer is read** (agreed). `setVisitService` returns
+   `appliedClientServiceId` from UpdateClientVisitResponse.Visit
+   (`ServiceId`, else `Service.Id`); when it names a different pass than
+   the one asked for, the dialog does not check in and says so ("unknown",
+   locked). When the answer names none, the check-in goes ahead as before.
+5. **A visit with no ClientId is refused** (agreed): 409 "Mindbody did not
+   say whose booking this is."
+
+Driven against the scratch fake (main's merge included):
+
+- Dennis Carver: the assignment reached Mindbody and landed, and the
+  browser was answered 502 "The operation was aborted due to timeout".
+  The dialog said the pass may be on the visit and nobody was checked in;
+  "Use this pass" and "Buy a pass instead" were disabled; the display read
+  "Please see the front desk" and was NOT offered the list again (Ready
+  8.5 seconds later); one assignment, no check-in.
+- Quinn Delgado, `/api/visit-passes` answered 409 "belongs to someone
+  else": the purchase view with that sentence, Charge and free entry
+  disabled.
+- Quinn Delgado, the visit paid from elsewhere while the roster still
+  showed it unpaid: the purchase view (no candidate pass) with "This
+  booking is already paid with Month Unlimited. Refresh the roster before
+  charging or checking in.", Charge and free entry disabled; nothing
+  written but the purchase view's Test pricing.
+- The whole first drive again (Taylor, Sofia, Liam, Quinn, Noah, Harper),
+  with the same results; Noah's refusal now arrives as the route's 409.
+
+**For Pete.** (1) Use it once live on the write-guarded dummy client, as
+the last box says. (2) A pass with a membership or other restriction is
+now offered, and Mindbody's refusal of the tap says why; if that turns out
+to be common, say so. (3) A student holding a pass whose last class this
+is gets no renewal offer from this path (the chip's own check-in chains
+T26's); say if it should. (4) "Check in free (comp)" is in the purchase
+view only, one tap away behind "Buy a pass instead".
+
+## T243. "The ticket holds a pass" removes the pass for you (Pete, 2026-11-17)
+
+Pete: "when there is a pass in the shopping cart and the teacher tries to
+remove the student (they changed their mind, or it was a mistake), a modal
+says they are not allowed to without removeing the pass from the cart.
+there should be a button on the modal that will remove it for them".
+
+T92's refusal (`detachBlock` in `src/app/SaleScreen.tsx`) stays: a pass
+cannot be sold to a walk-in, so detaching with the client's own pass lines
+on the ticket is still refused. What changes is the way out.
+
+### To do
+
+- [x] The modal gets a second 64px button beside "Keep the client":
+      "Remove the pass and detach" (or "Remove the passes and detach" for
+      more than one). It removes exactly the lines that blocked the detach
+      (the client's own pass lines, `selfPassLines`; never a line for
+      somebody else, never a retail line) through `removeLine`, the ONE
+      removal every other path uses, so tender lines, an armed discount,
+      a held card and the customer screen behave as they already do, then
+      detaches the client as the X would have.
+- [x] The modal keeps the line keys it was opened for, not just names, so
+      the button removes what the teacher read about even if the ticket
+      changed under it; a line already gone is skipped.
+- [x] Disabled while a charge is in flight, like the X.
+- [x] `tsc --noEmit` and `next build` clean; in Chromium against the fake:
+      a ticket with one pass and a water, X on the client, the new button:
+      the pass is gone, the water stays, the sale is a walk-in sale.
+
+**Done (2026-11-17).** `detachBlock` now holds the blocking lines' cart
+keys beside their names; the new 64px button removes exactly those
+through `removeLine` (a line already gone is skipped) and then runs the
+same `onDetachClient` as the client's X, disabled while charging.
+`tsc --noEmit` and `next build` clean. Driven in Chromium against the fake
+(Taylor Brooks, a Drop In and a Water Bottle): X on the client opened "The
+ticket holds a pass" with "Remove the pass and detach"; the tap left the
+Water Bottle alone on the ticket and the sale with no client, and the
+existing keep-or-empty question ("Start a new cart? This cart has 1 item.
+Keep them?") followed, exactly as the client's X asks after any detach
+with items left (Pete's earlier rule).
+
+
+## T249. A sold-nothing or part-sold sale stays locked when the Cart screen is closed and reopened (found in review, 2026-11-17)
+
+T241's final review (of 7cdc0ab, before PR #14 merged) found a gap that
+predates T241 (since 2026-09-14). `SaleScreen` returns null when closed and
+`PaymentPanel` unmounts, so its `result` and `partialLock` are lost while
+the cart survives. T241 kept an UNKNOWN outcome in sessionStorage, but a
+T103 sold-nothing answer and a T95/T90 partial sale are not recorded. A
+teacher who taps Sign-in and then Cart finds the ticket intact and
+unlocked, and Finalize takes a second payment (a partial gift card ticket
+can sell the same cards again).
+
+### To do
+
+- [x] Record sold-nothing and partial outcomes in the same sessionStorage
+      record as the unknown outcome (no card data), and restore each as
+      itself on reopen and on reload, `partialLock` included, until its own
+      acknowledgement.
+- [x] Also hold the sale screen's close and the nav bar while a
+      `partialLock` or an unacknowledged sold-nothing, partial or unknown
+      result stands, with a sentence saying why.
+- [x] Write the record at the charge TAP (cleared on a definite answer), so a
+      reload or tab eviction DURING the charge comes back as "the last
+      charge needs checking", not as a clean ticket.
+- [x] Review residual: with the database down, `display_typed_card` falls
+      back to the environment; keep the last stored answer the way T207's
+      setting does, so a blip cannot turn a stored "off" back on.
+- [x] tsc, next build, Chromium drive against the fake: a soldNothing
+      stored-card answer, close, reopen: still locked; a partial gift card
+      ticket, close, reopen: still locked; a reload mid-charge: locked as
+      needing a check.
+
+**Done (2026-11-17).** Both halves, either enough alone. The T241 record
+(`pos_uncertain_charge`, `HeldRecord` in `SaleScreen.tsx`) is now written
+at the charge tap as `charging`, removed on a definite answer, replaced
+by an ambiguous, sold-nothing or partial outcome (the route's sentence,
+the sale id, T103's basket audit) until that result's own Understood, and
+keeps `partialLock` with a print of the ticket's line keys and quantities
+until the ticket is emptied; a mount restores each as itself, after a
+reload says when, and brings a `charging` record back as the unknown
+outcome. The lock comes back only onto its own ticket (after a reload
+the cart is gone), and an emptied ticket always releases it. No card
+number, CVV, gift card number or gift card id is ever in it. The cart
+reset nonce now acts only on a bump seen while the panel is mounted, so
+a remount cannot wipe a restored lock. Close is held: SaleScreen's close
+and Escape refuse and the nav bar's Sign-in is off (`closeWhy`) while
+any of those stands, and the shelf's foot says why, with "Show the last
+charge" when the reason is a result (it opens the pay surface without
+Pay's gates and returns to the shelf once acknowledged); Cart stays live
+to reach Empty cart. `display_typed_card` keeps the last stored answer
+through a quiet database, as T207's `signup_mode` does. `tsc --noEmit`
+and `next build` clean. Driven in Chromium against a scratch copy of the
+fake: a stored-card checkout answering sold nothing (Sign-in refused
+with the sentence, Escape refused on the shelf, a reload brought the
+block back with "Recorded at 5:33 AM, before this page reloaded.",
+Understood freed it and returned to the shelf); a two-card gift ticket
+whose second card was refused (partial: the id never reached the
+record, Sign-in held through "Written on the card" and Understood on the
+lock's own sentence, Finalize refused, Empty cart freed it; reloaded
+before "Written", the block came back saying to read the ids in
+Mindbody); a checkout held 25 seconds and reloaded mid-charge (came back
+"had not answered when the page reloaded", Finalize refused until
+Understood); an ordinary stored-card sale and a gift card sale whose cards both sold
+left no record (the stored-card sale closed with Done). With the close hold switched off
+in a scratch build only, Sign-in then Cart after a sold-nothing and
+after a partial brought the ticket back locked, before and after
+Understood. Not driven: the database blip for `display_typed_card`
+(the shared Postgres was not stopped).
+
+
+## T250. The roster's "Pay and check in" can charge the account past its balance, with the teacher's PIN (Pete, 2026-11-17)
+
+Pete: "When making a sale, if the client has no account balance, the
+teacher needs the ability to override and give them a negative balance."
+
+T94 built this on the Cart screen (the Account keypad's "Charge full
+amount", the teacher's PIN with the `overdraft` purpose, `overdraftToken`
+on `/api/checkout`, the only thing that lets a credit charge exceed the
+live balance). The roster's Pay and check in dialog (T25, `payMethod` in
+`src/app/page.tsx`) offers the account only when the balance covers the
+total, so a student with no balance cannot be put on account from there.
+
+### To do
+
+- [x] With a client attached, the dialog always offers paying from the
+      account. When the balance covers the total it behaves as today
+      (T238's default and "Use the card instead"). When it does not, the
+      choice reads "Charge to account" with "Balance after: -$X.XX" under
+      it and a 64px control that opens the teacher's PIN pad ("Teacher PIN
+      to authorize a negative balance"), the same pad, purpose
+      (`overdraft`) and `/api/teacher/verify` path the Cart screen uses
+      (T94's rule: the token names this session's own teacher).
+- [x] A matched PIN arms the overdraft for THIS dialog's ticket only; the
+      charge sends `method: "credit"` with the `overdraftToken`; closing
+      the dialog, changing the pass, or switching to the card drops it.
+      The server is unchanged and still refuses an overdraft without the
+      token.
+- [x] Works with "customer approves each sale" on (the display reads
+      "Paying by Account balance"; T240's binding unchanged) and off.
+- [x] Filed on the client the way T94 files it on the Cart screen (check
+      T94's Done note for the exact behaviour and match it).
+- [x] tsc, next build, Chromium drive against the fake: a client with $0
+      buys a Drop In from Pay and check in on the account with a PIN, the
+      balance reads -$25.00 after, and is checked in; a wrong PIN charges
+      nothing.
+
+**Done (2026-11-17).** No server change: `/api/checkout` already takes
+`overdraftToken` on a whole-sale credit charge, verifies its `overdraft`
+purpose and that it names the session's own teacher, spends it once
+before the first Mindbody call, and files the overdraft on the client
+after the charge resolves (T94's `recordOverdraft`: "Account charged
+$25.00 against a $0.00 balance, authorized by Maya Chen. Sale N.", T45's
+Formula Note with T62's Notes fallback). So "filed on the client the way
+T94 files it" is the same code path, not a copy of it.
+
+In `src/app/page.tsx`, the purchase view of the Pay and check in dialog:
+
+- With the live profile read in and the balance short of Mindbody's
+  total, a "Charge to account" block sits under the method line with
+  "Balance after: -$X.XX" in `--warn` and one 64px `--stop` filled
+  "Charge to account with PIN" (label in `--bg`, the Cart screen's "Charge
+  full amount" treatment, `.pay-overdraft*` in `globals.css`), with "This
+  will result in a negative account balance." under it. Until the PIN,
+  the method is what it was (the card on file, or none, and T88's "Cart
+  and check in" offer with no card).
+- The control opens the shared PIN pad (`ApprovalDialog`, which T205
+  already parameterised by purpose) with `purpose="overdraft"` and the
+  title "Teacher PIN to authorize a negative balance", through
+  `/api/teacher/verify`. T94's own pad lives inside the Cart screen's
+  amount modal and cannot be lifted out without moving that screen; this
+  is the same verify call, purpose and token. A wrong PIN stays on the
+  pad and arms nothing.
+- A match arms `payOverdraft` for THIS ticket: the client, the pass, the
+  code and the total Mindbody priced. Any of them moving, the dialog
+  closing or opening, "Use the card instead", the student picking the
+  card on the customer iPad, and any answer from the charge that is not
+  a sale standing (the route has spent the token, T94 review 4) drops it.
+  Armed, the method is `credit`, the method line reads "Charges the
+  account past its balance ($0.00).", the block reads "Authorized by
+  <teacher>.", and the card stays one tap away. The charge sends
+  `method: "credit"` with `overdraftToken`.
+- With "customer approves each sale" on, the approval names "Account
+  balance" (T240's binding hashes the method, unchanged; the token is not
+  in the cart sha) and the student's Change offers the card on file.
+
+Verified: `npx tsc --noEmit -p .` and `npx next build` clean. Chromium
+against the fake (`scripts/training/fake-mindbody.mjs`, which now takes a
+`DebitAccount` payment off the client's `AccountBalance` on a real
+checkout so an overdraft reads back), app :3250, fake :4250, database
+`pos250`, Taylor Brooks ($0, card ...8210): the dialog offered "Charge to
+account" with "Balance after: -$25.00" and a 64px control beside the card
+default; a wrong PIN (9999) said "That is not your PIN.", sent no
+checkout and left the balance at $0.00; the right PIN armed it ("Authorized
+by Maya Chen"); Cancel and reopen, "Use the card instead", and picking
+another pass each dropped it; armed again, one tap sent ONE checkout with
+`method: "credit"` and the token, the dialog closed, Taylor was checked
+in, the balance read -$25.00, and the note was filed ("Account charged
+$25.00 against a $0.00 balance, authorized by Maya Chen. Sale 3100001.").
+A forged token straight at the route answered 401 and a tokenless one 409,
+nothing charged either time. With `customer_confirms_sale` on and a
+paired display: the display read "Paying by Account balance" (with Change),
+nothing was charged before Approve, Approve charged once with the
+approval id and the token, Taylor was checked in at -$25.00. Not driven:
+the dark palette (tokens only), and Mindbody itself accepting a
+`DebitAccount` past the balance, which is still T94's open live probe.
+
+## T252. The roster dialog keeps a charge that may have gone through (review of PR #16, 2026-11-17)
+
+The review, in its own words: "the roster's "Pay and check in" dialog
+(src/app/page.tsx) can charge a second time after an outcome that may
+have moved money. This is live on main today.
+
+1. The dialog has no outcome record of its own. After `charge-ambiguous`
+or `sold-nothing` (and any unknown/partial outcome it can produce), Close
+is enabled (it is disabled only while `payStage !== null`), `closePayDialog`
+wipes `payOutcome`, and reopening the same row offers a fresh Charge; the
+T242 visit read only catches an attached pass, and after an unknown charge
+the visit still reads unpaid. [...]
+2. The T249 record is only read when the Cart screen's payment panel
+mounts, so after a reload, a tab eviction, or the app unmounting behind
+the sign-in gate (a Profile sign-out is not held by `closeWhy`: the
+Profile nav item has `why: null`; a staff session expiring), the roster
+dialog can charge the same student before anyone sees the Cart screen's
+record."
+
+The rules: never invite a second charge before the teacher has
+acknowledged a may-have-moved-money outcome; a definite success or
+definite refusal clears as today; an ordinary sale is unaffected.
+
+### To do
+
+- [x] The dialog's own record, written at the Charge tap, replaced by an
+      outcome that may have moved money, kept until that outcome's own
+      Understood, keyed to the client (and visit), no card data; while it
+      stands, any row for that client shows it instead of Charge, free
+      entry or "Use this pass", and Close does not discard it.
+- [x] The Cart screen's record read at the page level, gating the roster
+      dialog the same way for its clients, with its Understood.
+- [x] Profile held on T249's `closeWhy`, and the records kept across a
+      sign-out and surfaced after sign-in.
+- [x] tsc, next build, Chromium drive: a forced ambiguous charge in Pay and
+      check in, Close, reopen: no Charge until Understood; a forced
+      unknown on the Cart screen, reload, sign in, Pay and check in for
+      that student: held.
+
+**Done (2026-11-17).** `src/app/heldcharge.ts` holds both records' shapes
+and readers. The roster dialog's record is `pos_roster_uncertain_charge`
+in sessionStorage, one per client: `{clientId, visitId, name, stage,
+message, at, page}`, `stage` one of `charging` (written synchronously at
+the tap, before the request), `ambiguous` (a dead request, an unreadable
+answer, the route's `ambiguous`), `sold-nothing` (T103) and
+`attach-failed` (charged, the new pass not on the visit: a fresh Charge
+there would sell it twice). A suppressed or refused answer removes it, a
+renewal that charged removes it, and an attach that landed removes it
+(the visit then reads paid, which T242's visit read already catches).
+The Cart screen's T249 record now carries `clientIds` (the payer and any
+T90 recipient; a restored record keeps the ids it was written with, so a
+reload's empty cart does not unname the student), and a record without
+them (written before this) holds every client. The page reads both at
+mount and on every open of the dialog; `payHeld` joins `payWriteHeld` and
+`payPassBlocked`, so Charge, free entry, the overdraft PIN, "Use this
+pass" and the "Your passes" offer on the customer iPad all stand down,
+and the dialog draws the record (when, where, the route's sentence, what
+not to do) with Close and a 64px Understood. The live outcome in the same
+open carries its own Understood. Understood on a Cart record does what
+that screen's Understood does: the stage goes, a part-sold lock stays for
+its ticket. Profile in the nav bar now waits on `closeWhy` with its
+sentence; sessionStorage survives a sign-out in the same tab regardless.
+Nothing the server does changed. "Use this pass" moves no money and keeps
+its own T242 lock.
+
+Verified: tsc and next build clean. Chromium against the fake: Pay and
+check in for Taylor Brooks with `/api/checkout` aborted showed "may or may
+not have gone through" with Understood and no Charge; the record named
+10107 as ambiguous with nothing but its time as a long number; Close and
+reopen showed it with no Charge, free entry, "Use this pass" or overdraft
+PIN, Understood 68px; a reload kept it; Understood brought Charge back and
+removed the record (one checkout attempted). The Cart screen with the
+checkout aborted wrote its record with `clientIds: ["10107"]` and held
+Profile; after a reload the roster dialog showed "A charge for Taylor
+Brooks on the Cart screen at 5:54 AM may or may not have gone through."
+with no Charge or free entry, and its Understood released it. Again with
+the staff session ended (`/api/teacher/signout`) and a reload: the gate,
+sign in, and the dialog was still held. An ordinary sale afterwards
+closed, checked Taylor in and left no record.
+
+### T253: the hold moves to the server (review of e200b71, 2026-11-17)
+
+The review found e200b71 not safe to merge, and the main session decided:
+"the authority for 'a charge for this client may have moved money' moves
+to the SERVER, because sessionStorage is per tab: a second iPad, a second
+tab, a closed tab and, very likely, the Home Screen web app after it is
+swiped away (layout.tsx sets appleWebApp.capable; iOS gives a standalone
+web app a fresh sessionStorage per launch, and swiping the app away is
+exactly how Pete reloads) all see no hold today." Plus four findings:
+the Cart screen ignored the roster's record (HIGH); the tap reset the
+Cart record's clients, so detaching the client after an outcome unnamed
+the student (MEDIUM); the roster's Understood on a Cart record released
+it without showing its sale id or summary (LOW-MEDIUM); and the overdraft
+block computed "Balance after" on a balance whose read had failed
+(minor).
+
+- [x] `charge_holds` (migration 19) plus an in-memory map, one hold per
+      client on a ticket whose `/api/checkout` answer was ambiguous (flag,
+      unreadable 5xx or 200, a thrown route), sold-nothing or partial, and
+      on an ambiguous live `/api/purchase-contract`. No card data.
+- [x] `/api/checkout` refuses a held client 409 `reason: "held"` before
+      T113's gate takes a slot and before any token, approval, display
+      card or Mindbody call; a key the gate knows replays its first answer
+      verbatim. `/api/purchase-contract` refuses a held client's live
+      purchase. `/api/guest` moves no money.
+- [x] `GET /api/charge-holds?clientId=` and `POST
+      /api/charge-holds/acknowledge`; a hold lapses after 24 hours.
+- [x] The roster dialog asks on open; the Cart screen asks on open and on
+      a client change and shows server holds and roster records for every
+      client on the ticket with Understood before Finalize; a 409 `held`
+      shows the hold; an outcome's Understood acknowledges its holds.
+- [x] The tap seeds the Cart record's clients; the roster shows a Cart
+      record's sale id and summary; an unread balance offers no PIN.
+
+**Done (2026-11-17).** As above; `src/lib/chargehold.ts`, the two routes
+under `src/app/api/charge-holds/`, `idemKeyKnown` in
+`src/lib/idemstore.ts`, `holdAfterCheckout` and `withHolds` in the
+checkout route, and the screens through `src/app/heldcharge.ts`. A tab
+record whose server holds are gone (acknowledged on another iPad) lets
+go; one that never reached the server, or is still `charging`, waits for
+its own Understood. `attach-failed` stays a tab record: the sale stood
+and the browser alone knows the pass did not attach. The training fake
+answers the next N real checkouts 500 after `POST
+/__fake/fail-checkout?n=N`, which the route reads as unknown.
+
+Verified: tsc and next build clean. Chromium against the fake, app :3250,
+fake :4250, database `pos250`: iPad A (Maya) charged Taylor Brooks from
+Pay and check in with Mindbody answering 500: the route answered 502
+ambiguous naming its hold, and `charge_holds` held one open row (columns:
+id, site, client_id, kind, message, sale_id, staff_id, route, created_at,
+acknowledged_at, acknowledged_by). iPad B (its own context, unlocked and
+signed in as Jordan, no tab record): Pay and check in showed the hold
+with no Charge or free entry; a fresh checkout straight at the route got
+409 `held` ("A charge for this client at 10:19 PM may or may not have
+gone through, and nobody has checked it yet. ..."); the Cart screen for
+Taylor showed the hold above the foot with Finalize off. The original key
+replayed returned its first 502 body byte for byte. A reloaded and a
+fresh context (the relaunch) were both held. Another student's sale went
+through meanwhile. With the table renamed away (the store not answering),
+memory still refused, and a new unknown charge then made a memory-only
+hold that refused the next. Understood on B: Charge came back on B, the
+row named staff 100000202, and A (its tab record let go) and the fresh
+context were released. A hold survived a server restart (from the table)
+and an acknowledgement released it. A failed balance read showed "The
+account balance could not be read" with no PIN. The T250 and T252 drives
+were re-run unchanged and passed, the approval drive included. Not
+driven: the roster's view of a Cart sold-nothing record with a sale id
+(built, shown only when the record has one), a T90 partial's per-recipient
+holds (the code holds every client id on the ticket), the lapse.
+
+### T253 review of 1bbe146: holds written ahead, refusals recorded, walk-ins noticed (2026-11-17)
+
+The review found 1bbe146 not yet safe. Each finding, as judged:
+
+1. HIGH, agreed: a hold written only after the answer let a relaunched
+   app or a second iPad charge the same client while Mindbody was still
+   slow. Built as asked: `claimCharge` writes a `pending` hold per ticket
+   client after T113's gate takes a NEW key and before anything else
+   (memory and table, the memory check and claim in one tick), refusing
+   "started at ... and has not answered yet"; `settleCharge` clears it
+   on a definite answer or converts it in place (same id) to ambiguous,
+   sold-nothing or partial; a pending hold with no answer after 3 minutes
+   or with no owning request in this process (a restart) becomes
+   ambiguous, never cleared. `/api/purchase-contract`'s live purchase is
+   claimed and settled the same way (a wrapper around the old handler).
+2. MEDIUM-LOW, agreed: the 409 now comes after `beginIdempotent` and is
+   recorded with `gate.record`, so a delayed duplicate of a refused tap
+   replays the refusal. `idemKeyKnown` (1bbe146) is gone.
+3. Covered by 1.
+4. Agreed, as decided: a walk-in ticket (no client id, or the house
+   client's own, decided on the server) never makes a blocking hold; one
+   that ends unknown, sold-nothing or partial leaves a studio-wide
+   `walkin` notice under the house client's id, shown on every walk-in
+   ticket on the Cart screen with its own Understood and never holding
+   Finalize. The comment calling a house-client hold harmless is gone;
+   `claimCharge` and `standingChargeHolds` drop the house client's id.
+5. LOW, agreed: any throw after the claim settles the holds as ambiguous,
+   even over a definite answer already settled (the teacher reads "may or
+   may not have gone through").
+6. LOW, agreed: with a database, an acknowledgement the table did not
+   take answers 503 `unrecorded`, is undone in memory and the hold
+   stands. Late-landing writes: every write is the hold's whole state,
+   upserted by id and chained per hold, so a slow first insert cannot
+   land over a later acknowledgement. Multi-instance noted, not built.
+7. LOW (UX), agreed: the Cart screen's Understood always reads the
+   server again for the ticket's clients and shows what it finds in the
+   same view; the roster's already did.
+
+Verified: tsc and next build clean. Chromium against the fake (which can
+now hold the next real checkout `POST /__fake/delay-checkout?ms=&n=` and
+fail it `.../fail-checkout?n=`), app :3250, fake :4250, a fresh `pos250`:
+(a) A charged Taylor from Pay and check in with Mindbody held 12 s: a
+`pending` row was in the table within 2.5 s; B (its own context, Jordan)
+read "A charge for Taylor Brooks started at ... and has not answered
+yet." with Check again and no Charge; a fresh context (the relaunch) was
+refused 409 with that sentence; acknowledging the pending hold answered
+409; (f) Alex Morgan's sale went through meanwhile in 24 ms; A's sale
+stood after 12 s with Taylor checked in, the row read `cleared|outcome`,
+B's Check again found nothing and B could charge Taylor. (b) Jordan Kim
+held 8 s then failed: B was refused "not answered yet" during it, A's
+502 named the SAME hold id, and B then read it as ambiguous. (c) the app
+killed 4 s into a 15 s charge for Sam Okafor and restarted: Sam was held
+as ambiguous ("The server restarted (or lost track) while this charge
+was waiting for Mindbody, so it may have gone through."), in memory and
+in the row. (d) B's tap refused 409, the hold acknowledged, the same key
+replayed: the recorded 409 byte for byte, no new hold; a new key then
+charged. (e) a walk-in Kombucha sale that failed left only a `walkin`
+row on the house client; another walk-in sale, with no id and with the
+house client's id, went through; B's Cart screen on a walk-in ticket
+showed "A walk-in sale at ... may have gone through. Check Mindbody
+before ringing up a walk-in again." without holding Finalize, and its
+Understood acknowledged it on the server. (6) with the table renamed
+away, Understood answered 503 "could not be recorded, so the hold
+stands", the next charge was still refused and the row stayed open; with
+the table back it was recorded with the teacher's staff id. The T250,
+T252 and earlier T253 drives were re-run on the new build and passed
+(approval drive included).

@@ -8,13 +8,16 @@ import { readTicketPayload } from "@/lib/displayticket";
 import { readContractPayload } from "@/lib/displaycontract";
 import { readSignupPayload } from "@/lib/displaysignup";
 import { readWaiverPayload } from "@/lib/displaywaiver";
+import { readPassesPayload } from "@/lib/displaypasses";
 
 import ContractScene from "./ContractScene";
+import PassesScene from "./PassesScene";
 import SignupScene from "./SignupScene";
 import TicketScene from "./TicketScene";
 import WaiverScene from "./WaiverScene";
 
 import type { ContractPayload } from "@/lib/displaycontract";
+import type { PassesPayload } from "@/lib/displaypasses";
 import type { SignupPayload } from "@/lib/displaysignup";
 import type { TicketPayload } from "@/lib/displayticket";
 import type { WaiverPayload } from "@/lib/displaywaiver";
@@ -60,7 +63,9 @@ type Scene =
   /* T204: the self-serve sign-up, the one scene the STUDENT puts up. */
   | { kind: "register"; requestId: string; payload: SignupPayload }
   /* T205: the membership contract, signed the way the waiver is. */
-  | { kind: "contract"; requestId: string; payload: ContractPayload };
+  | { kind: "contract"; requestId: string; payload: ContractPayload }
+  /* T242: the student's own passes for an unpaid visit. */
+  | { kind: "passes"; requestId: string; payload: PassesPayload };
 
 /** T202: how long "Thank you" stays after a signature, on this screen's
  *  own clock. The hub sends `idle` when the teacher's iPad finalises the
@@ -300,6 +305,20 @@ export default function DisplayScreen() {
           return;
         }
       }
+      if (data?.kind === "passes") {
+        const passes = readPassesPayload(data.payload);
+        const requestId =
+          typeof (data as { requestId?: unknown }).requestId === "string"
+            ? String((data as { requestId?: unknown }).requestId)
+            : "";
+        if (passes.ok && requestId.length > 0) {
+          setThanks(null);
+          setNotice(null);
+          setPickNotice(null);
+          setScene({ kind: "passes", requestId, payload: passes.value });
+          return;
+        }
+      }
       if (data?.kind === "ticket") {
         const ticket = readTicketPayload(data.payload);
         if (ticket.ok) {
@@ -489,6 +508,8 @@ export default function DisplayScreen() {
                 setThanks(who ?? "");
               }}
             />
+          ) : scene.kind === "passes" ? (
+            <PassesScene requestId={scene.requestId} payload={scene.payload} />
           ) : scene.kind === "ticket" ? (
             <TicketScene
               payload={scene.payload}

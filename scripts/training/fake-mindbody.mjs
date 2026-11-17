@@ -442,9 +442,25 @@ const server = http.createServer((req, res) => {
   });
 });
 
+/* T253: a driver can make the next N real (not Test) checkouts answer a
+ * 500, which the app reads as an unknown outcome, by POSTing
+ * /__fake/fail-checkout?n=1. Not part of any Mindbody API. */
+let failCheckouts = 0;
+/* And POST /__fake/delay-checkout?ms=20000&n=1 holds the next N real
+ * checkouts that long before answering (T253 review: a slow Mindbody). */
+let delayCheckouts = { n: 0, ms: 0 };
+
 function handle(method, path, q, body, res) {
   console.log(`[fake-mb] ${method} ${path}${q.size ? "?" + q.toString().slice(0, 120) : ""}`);
   switch (path) {
+    case "/__fake/fail-checkout": {
+      failCheckouts = Number(q.get("n") ?? 1) || 0;
+      return send(res, 200, { failCheckouts });
+    }
+    case "/__fake/delay-checkout": {
+      delayCheckouts = { n: Number(q.get("n") ?? 1) || 0, ms: Number(q.get("ms") ?? 20000) || 0 };
+      return send(res, 200, delayCheckouts);
+    }
     case "/usertoken/issue": {
       const u = String(body.Username ?? "").toLowerCase();
       if (logins[u] && body.Password) {
@@ -553,6 +569,15 @@ function handle(method, path, q, body, res) {
       for (const list of Object.values(visits)) {
         const v = list.find((x) => x.Id === Number(body.VisitId));
         if (v) {
+          /* T242: `Test: true` validates and commits nothing (client.yml
+           * UpdateClientVisitRequest), which is what the "Pay and check
+           * in" dialog's per-pass check relies on. */
+          if (body.Test === true) {
+            if (body.ClientServiceId && !clientServices.some((s) => s.Id === Number(body.ClientServiceId))) {
+              return send(res, 400, { Error: { Message: "Client service not found.", Code: "InvalidParameter" } });
+            }
+            return send(res, 200, { Visit: v });
+          }
           if (typeof body.SignedIn === "boolean") v.SignedIn = body.SignedIn;
           if (body.ClientServiceId) {
             const cs = clientServices.find((s) => s.Id === Number(body.ClientServiceId));
@@ -677,6 +702,15 @@ function handle(method, path, q, body, res) {
     case "/sale/giftcardbalance":
       return send(res, 200, { BarcodeId: one(q, "barcodeId"), RemainingBalance: 0 });
     case "/sale/checkoutshoppingcart": {
+      if (body.Test !== true && !body.__delayed && delayCheckouts.n > 0) {
+        delayCheckouts.n -= 1;
+        setTimeout(() => handle(method, path, q, { ...body, __delayed: true }, res), delayCheckouts.ms);
+        return;
+      }
+      if (body.Test !== true && failCheckouts > 0) {
+        failCheckouts -= 1;
+        return send(res, 500, { Error: { Message: "Internal error (fake)", Code: "InternalError" } });
+      }
       const p = priceCart(body);
       for (const l of p.lines) {
         const why = clientRefusals[`${body.ClientId}:${l.found?.ProductId}`];
@@ -706,6 +740,15 @@ function handle(method, path, q, body, res) {
       if (body.Test === true) return send(res, 200, { ShoppingCart: cart });
       const saleId = ++saleSeq;
       sales.push({ Id: saleId, ClientId: String(body.ClientId ?? ""), SaleDateTime: wall(new Date()), PurchasedItems: purchased, Payments: body.Payments ?? [] });
+      /* T250: an account payment comes off the account, below zero too,
+       * so an overdraft reads back as the negative balance it left. */
+      const payer = body.ClientId ? byId(body.ClientId) : null;
+      for (const pay of body.Payments ?? []) {
+        if (payer && pay?.Type === "DebitAccount") {
+          const amt = Number(pay?.Metadata?.Amount ?? 0);
+          payer.AccountBalance = Math.round(((payer.AccountBalance ?? 0) - amt) * 100) / 100;
+        }
+      }
       /* A pass sold becomes a ClientService the app re-reads. */
       for (const l of p.lines) {
         if (l.found?._kind === "Service" && body.ClientId) {
