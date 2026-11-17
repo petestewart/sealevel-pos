@@ -6498,8 +6498,24 @@ function FrontDesk({
             clientId: entry.clientId,
           }),
         });
-        const body = await res.json();
-        if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
+        const body = await res.json().catch(() => null);
+        if (!res.ok) {
+          /* T242 final check: only a 409 `reason: "refused"` is Mindbody
+           * saying no. A 5xx or a timeout may have changed the pass, so the
+           * row is re-read before anyone picks again, and the picker
+           * closes so a second pass cannot be tapped onto a visit that
+           * may already carry one. */
+          if (!(res.status === 409 && body?.reason === "refused")) {
+            if (activeIdRef.current !== null) {
+              await refreshRoster(activeIdRef.current);
+            }
+            setPickerFor(null);
+            throw new Error(
+              `${body?.error ?? `HTTP ${res.status}`} The pass may have changed; the row now shows what Mindbody holds.`,
+            );
+          }
+          throw new Error(body?.error ?? `HTTP ${res.status}`);
+        }
         noteActor(body, entry.clientId);
         if (body.suppressed) {
           setPassMsg(

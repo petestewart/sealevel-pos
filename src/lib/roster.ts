@@ -1166,8 +1166,13 @@ export async function setVisitService(
   const applied = res?.Visit?.ServiceId ?? res?.Visit?.Service?.Id;
   return {
     suppressed: null,
+    /* T242 final check: a 0 (or any non-positive id) is Mindbody saying
+     * nothing, not naming a pass, so it is read as absent rather than as
+     * "a different pass than the one asked for". */
     appliedClientServiceId:
-      typeof applied === "number" && Number.isInteger(applied) ? applied : null,
+      typeof applied === "number" && Number.isInteger(applied) && applied > 0
+        ? applied
+        : null,
   };
 }
 
