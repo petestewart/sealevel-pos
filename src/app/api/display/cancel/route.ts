@@ -21,15 +21,34 @@ export async function POST(request: Request) {
    * through something. A body is optional; anything unreadable is a
    * plain cancel, because a cancel must never fail for want of JSON. */
   let takenOver = false;
+  let presenter: string | null = null;
+  let requestId: string | undefined;
   try {
     const body: unknown = await request.json();
-    takenOver =
-      body !== null &&
-      typeof body === "object" &&
-      (body as Record<string, unknown>)["takenOver"] === true;
+    const b =
+      body !== null && typeof body === "object"
+        ? (body as Record<string, unknown>)
+        : {};
+    takenOver = b["takenOver"] === true;
+    /* T241 second review (N3): the tab this cancel comes from. A ticket
+     * another tab owns is not this cancel's to take down (a no-op that
+     * answers `foreign`), unless it is a live mirror being taken over. */
+    presenter = typeof b["presenter"] === "string" ? b["presenter"] : null;
+    requestId =
+      typeof b["requestId"] === "string" ? (b["requestId"] as string) : undefined;
   } catch {
-    /* No body: a plain cancel. */
+    /* No body: a plain cancel, from no tab in particular. */
   }
-  const { cancelled } = await cancelRequest(Date.now(), { takenOver });
-  return NextResponse.json({ ok: true, cancelled });
+  const { cancelled, foreign } = await cancelRequest(Date.now(), {
+    takenOver,
+    teacher: {
+      presenter,
+      ...(requestId !== undefined ? { requestId } : {}),
+    },
+  });
+  return NextResponse.json({
+    ok: true,
+    cancelled,
+    ...(foreign === true ? { foreign: true } : {}),
+  });
 }

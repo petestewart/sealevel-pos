@@ -1,5 +1,6 @@
 "use client";
 
+import { cancelOnDisplay, presenterId } from "./presenter";
 import {
   Suspense,
   type ReactNode,
@@ -61,7 +62,8 @@ import WaiverOverrideDialog, {
 import { waiverOverrideLabel, type WaiverFlow } from "@/lib/waiveroverride";
 import ApprovalWait from "./ApprovalWait";
 import { useSaleApproval } from "./useSaleApproval";
-import { displayFirstName } from "@/lib/displayticket";
+import { useTenderPick, type TenderPick } from "./useTenderPick";
+import { displayFirstName, tendersFromCharge } from "@/lib/displayticket";
 import { DEFAULT_SETTINGS, useSettings } from "./settings";
 import { toggleTheme, watchSystemTheme } from "./theme";
 import { useVisualViewport } from "./viewport";
@@ -398,7 +400,6 @@ type PayOutcome =
      charge. The gesture stops here, so nothing is attached and nobody is
      checked in on a pass that does not exist. */
   | { kind: "sold-nothing"; message: string }
-  | { kind: "split"; message: string; mindbody: string }
   | { kind: "attach-failed"; message: string }
   | { kind: "checkin-failed" };
 
@@ -1298,6 +1299,10 @@ function FrontDesk({
   } | null>(null);
   const [payPromoDraft, setPayPromoDraft] = useState("");
   const [payPromoNote, setPayPromoNote] = useState<string | null>(null);
+  /** T238: the teacher chose the card on file over a balance that
+   *  covers the total. Credit is this dialog's default, never its rule,
+   *  so the card is one tap away beside it. Reset per open. */
+  const [payUseCard, setPayUseCard] = useState(false);
   const [payPriceError, setPayPriceError] = useState<string | null>(null);
   /** Stale-response guard for the dialog's profile fetch: bumped on
    *  every open and close, the waiverGen pattern. */
@@ -1345,6 +1350,11 @@ function FrontDesk({
           ? (payCatalog.passes?.find((o) => o.id === paySelectedId) ?? null)
           : null;
       if (dialog === null || sel === null) return null;
+      /* T240: the tender the charge will send, which the approval now
+         NAMES and the server binds. No method, nothing to charge with,
+         and nothing to ask about. */
+      const method = payMethodRef.current;
+      if (method === null) return null;
       /* Mindbody's figures or none. The same rule the Charge button
          follows: a cart that is still pricing, was suppressed or whose
          total Mindbody disagreed with carries NO totals to a student's
@@ -1375,6 +1385,16 @@ function FrontDesk({
           usable.discountTotal > 0
             ? { discountTotal: usable.discountTotal }
             : {}),
+          /* T240: "Account balance" or "Card", never the last four. The
+             server rewrites this from the cart's own method below, so
+             the words and the hash cannot disagree. */
+          tenders: tendersFromCharge({ method }) ?? [],
+          /* T241: the one other way this dialog can pay, when both can
+             (Account balance and Card on file only: cash and the rest
+             have a whole screen of their own, the Cart screen). */
+          ...(payChoicesRef.current.length > 0
+            ? { choices: payChoicesRef.current }
+            : {}),
         },
         /* The cart the SERVER hashes, in the same shape the charge below
            sends it: the client and the one line's type, id, quantity and
@@ -1394,6 +1414,9 @@ function FrontDesk({
           usable.promotion.code === payPromoCode
             ? { promotionCode: usable.promotion.code }
             : {}),
+          /* T240: and the tender, exactly as the charge sends it, so a
+             switch after the student approved is refused, not charged. */
+          method,
         },
       };
     },
@@ -1403,6 +1426,10 @@ function FrontDesk({
        write's `staffSessionEnded`. The gate comes back; the panel does
        not claim the customer screen is at fault. */
     onStaffSessionEnded: () => setTeacher(null),
+    /* T241: a pick that rode the approval poll's answer. This dialog has
+       no live mirror (the Cart screen is the only screen that mirrors),
+       so the approval is the one scene a student can pick on here. */
+    onPick: (value) => payPick.receive(value),
   });
   /* Pulled out by name: the handlers the hook returns are stable, the
    * object around them is not, and closePayDialog is a dependency of
@@ -1434,6 +1461,34 @@ function FrontDesk({
       "The code changed. Charge again to ask the customer.",
     );
   }, [payPromoCode, abandonPayApproval]);
+  /* T240: and the payment method, which the approval now names. The
+   * switch is locked while one is outstanding (`pending`), so this is
+   * for a method that moved by itself under it: the card lookup
+   * answering, or a refused balance changing what covers the total. The
+   * server refuses a changed tender anyway; this says so before the
+   * student taps rather than after. The effect sits beside `payMethod`,
+   * further down; the builder above reads the method through this ref,
+   * which the render body keeps current. */
+  const payMethodRef = useRef<"credit" | "storedcard" | null>(null);
+  /** T241: the ways to pay this dialog offers on the approval, kept
+   *  current by the render body beside `payMethod`. */
+  const payChoicesRef = useRef<
+    { choice: "credit" | "storedcard"; available?: number }[]
+  >([]);
+  /** T241: the dialog's own pick handler, set beside `payMethod` where
+   *  everything it judges by is in scope. */
+  const payPickApply = useRef<(pick: TenderPick) => string | null>(
+    () => "The dialog is not open.",
+  );
+  /** T241: a pick moved the method under a live wait, which is asked
+   *  again in place rather than ended. */
+  const payPickReask = useRef(false);
+  const [payReaskNonce, setPayReaskNonce] = useState(0);
+  const payPick = useTenderPick({
+    owns: (requestId) => requestId === payApproval.requestId(),
+    firstName: displayFirstName(payDialog?.entry.name ?? null),
+    apply: (pick) => payPickApply.current(pick),
+  });
   /** Rows with a check-in in flight. */
   const [busy, setBusy] = useState<string[]>([]);
   const [searching, setSearching] = useState(false);
@@ -3700,6 +3755,7 @@ function FrontDesk({
       setPayPromoCode(null);
       setPayPromoDraft("");
       setPayPromoNote(null);
+      setPayUseCard(false);
       setPayDialog({ entry, classId: activeId, flavor });
       if (profile) {
         setPayProfile(profile);
@@ -3787,6 +3843,7 @@ function FrontDesk({
     setPayPromoCode(null);
     setPayPromoDraft("");
     setPayPromoNote(null);
+    setPayUseCard(false);
   }, [payStage, cancelPayApproval]);
 
   /**
@@ -4165,7 +4222,7 @@ function FrontDesk({
      * the customer screen takes that scene down with it. Leaving it up
      * would put one student's waiver in front of the next person. */
     if (waiverOnDisplay !== null) {
-      void fetch("/api/display/cancel", { method: "POST" });
+      void cancelOnDisplay();
       setWaiverOnDisplay(null);
     }
     setWaiverDisplayNote(null);
@@ -6026,7 +6083,7 @@ function FrontDesk({
     setWaiverOnDisplay(null);
     setWaiverDisplayNote(null);
     try {
-      await fetch("/api/display/cancel", { method: "POST" });
+      await cancelOnDisplay();
     } catch {
       /* The hub expires it either way. */
     }
@@ -6487,22 +6544,80 @@ function FrontDesk({
       : null;
   const payBalance = payProfile?.balance ?? payDialog?.entry.balance ?? null;
   const payCard = payProfile?.card ?? null;
-  /* T24's method rules, applied without a chooser: when credit covers
-   * the total, credit IS the method here; otherwise a live card on
-   * file. No cash here: this dialog is one primary action, and a cash
-   * sale has a whole screen. T82 retired rule 1, so the server no
-   * longer refuses a card that credit could have covered (the store's
-   * pay screen offers the choice Pete asked for). This dialog's
-   * preference for credit is now ITS OWN, not the server's: it has no
-   * tender chooser to offer, and spending a balance before a card is
-   * the right default for a one-tap sale. */
+  /* T24's method rules: when credit covers the total, credit is the
+   * DEFAULT here; otherwise a live card on file. No cash here: this
+   * dialog is one primary action, and a cash sale has a whole screen.
+   * T82 retired rule 1, so the server never refuses a card that credit
+   * could have covered, and T238 retired the $10 card floor, so the card
+   * is charged what the pass costs, however small. Spending a balance
+   * first is this dialog's own suggestion (so balances the old floor
+   * left behind get used), never a rule: with a live card on file the
+   * card is offered beside it (`payUseCard`), one tap away. */
   const payCreditCovers =
     payBalance !== null && payTotal !== null && payBalance >= payTotal;
-  const payMethod: "credit" | "storedcard" | null = payCreditCovers
-    ? "credit"
-    : payProfile && !payProfile.loading && payCard && !payCard.expired
-      ? "storedcard"
-      : null;
+  const payCardLive = Boolean(
+    payProfile && !payProfile.loading && payCard && !payCard.expired,
+  );
+  const payMethod: "credit" | "storedcard" | null =
+    payCreditCovers && !(payUseCard && payCardLive)
+      ? "credit"
+      : payCardLive
+        ? "storedcard"
+        : null;
+  payMethodRef.current = payMethod;
+  /* T240: the method moved under an outstanding approval (see
+   * payMethodRef): it ends, with one sentence. A no-op otherwise. */
+  useEffect(() => {
+    /* T241: except when the student's own pick moved it under a live
+     * wait, which is asked again in place just below. */
+    if (payPickReask.current) return;
+    abandonPayApproval(
+      "The payment method changed. Charge again to ask the customer.",
+    );
+  }, [payMethod, abandonPayApproval]);
+  const payAskAgain = payApproval.askAgain;
+  useEffect(() => {
+    if (payReaskNonce === 0) return;
+    payPickReask.current = false;
+    payAskAgain();
+  }, [payReaskNonce, payAskAgain]);
+  /** T238: both tenders can pay, so the dialog offers the other one. */
+  const payCanSwitchMethod = payCreditCovers && payCardLive;
+  /* T241: and so does the customer screen, on the approval: the one
+   * other method, with the balance beside the account (Pete: "yes"). */
+  payChoicesRef.current =
+    !payCanSwitchMethod || payMethod === null
+      ? []
+      : payMethod === "credit"
+        ? [{ choice: "storedcard" }]
+        : payBalance !== null
+          ? [{ choice: "credit", available: payBalance }]
+          : [];
+  payPickApply.current = (pick: TenderPick): string | null => {
+    if (payFlight.current || payStage !== null) {
+      return "The sale is already being charged.";
+    }
+    if (payMoneyMoved) return "This sale is already done.";
+    if (pick.choice === "credit") {
+      if (!payCreditCovers) return "The account balance does not cover it.";
+      setPayUseCard(false);
+    } else if (pick.choice === "storedcard") {
+      if (!payCardLive) return "There is no usable card on file.";
+      setPayUseCard(true);
+    } else {
+      return "This dialog takes the account balance or the card on file. Use Cart for anything else.";
+    }
+    /* Under a live wait, the approval is asked again in place with the
+     * new method; otherwise the switch simply stands, ready for Charge. */
+    const waiting = payApproval.requestId() !== null;
+    if (waiting) {
+      payPickReask.current = true;
+      setPayReaskNonce((n) => n + 1);
+    } else if (payApproval.pending) {
+      cancelPayApproval();
+    }
+    return null;
+  };
   /* The one-line reason there is nothing to charge with, greyed and
    * shown rather than hidden (T24's posture). */
   const payMethodReason =
@@ -6573,6 +6688,9 @@ function FrontDesk({
             [IDEMPOTENCY_HEADER]: newIdempotencyKey(),
           },
           body: JSON.stringify({
+          /* T241 third review: this tab, so a PIN-approved charge takes
+             down only this tab's own approval. */
+          presenter: presenterId(),
             items: [
               {
                 type: paySelected.type,
@@ -6634,38 +6752,6 @@ function FrontDesk({
         return;
       }
       if (!(chargeRes.ok && chargeBody?.ok === true)) {
-        if (chargeBody?.stage === "checkout-after-credit") {
-          /* T24's seam, surfaced with the same discipline: the $10
-           * credit exists, the sale did not complete (or, when the route
-           * flagged the checkout ambiguous, MAY not have), and the
-           * credit step must not run again. This dialog offers no path
-           * that could -- and when the sale's own outcome is unknown,
-           * the message must not assert it failed, or the teacher
-           * re-sells a pass that may already exist. */
-          const saleVerdict =
-            chargeBody?.ambiguous === true
-              ? "the pass sale may or may not have completed, so check the " +
-                "dev drawer or Mindbody before selling again"
-              : "the pass sale failed";
-          setPayOutcome({
-            kind: "split",
-            message:
-              `The $10 credit purchase succeeded; ${saleVerdict}; ` +
-              `their balance is now ${
-                typeof chargeBody?.creditBalance === "number"
-                  ? money(chargeBody.creditBalance)
-                  : "unknown (Mindbody did not answer the balance read)"
-              }; do NOT re-run the credit step.` +
-              (chargeBody?.ambiguous === true
-                ? ""
-                : flavor === "renewal"
-                  ? " Sell the pack in Cart, on account balance."
-                  : " Sell the pass in Cart, on account balance, then attach " +
-                    "and check in from the row."),
-            mindbody: String(chargeBody?.error ?? "no reason returned"),
-          });
-          return;
-        }
         if (chargeBody?.soldNothing === true) {
           /* T103: Mindbody took the payment and sold nothing. The
              gesture stops: no attach, no check-in, and the wording is
@@ -6689,10 +6775,9 @@ function FrontDesk({
         }
         /* A definite refusal: nothing was charged, nothing else
          * happened, and saying so is what makes a retry safe. A refusal
-         * that names the live balance (a credit line over it, or since
-         * T82 an under-$10 card sale on an account that already holds
-         * credit) refreshes the method gate, T24's freshBalance move, so
-         * the retry runs on credit instead of failing identically. */
+         * that names the live balance (a credit payment over it)
+         * refreshes the method gate, T24's freshBalance move, so the
+         * retry runs on the card instead of failing identically. */
         if (typeof chargeBody?.creditBalance === "number") {
           setPayProfile((prof) =>
             prof ? { ...prof, balance: chargeBody.creditBalance } : prof,
@@ -10040,11 +10125,7 @@ function FrontDesk({
                           "Taking the screen over. It goes up in a moment.",
                         );
                         void (async () => {
-                          await fetch("/api/display/cancel", {
-                            method: "POST",
-                            headers: { "content-type": "application/json" },
-                            body: JSON.stringify({ takenOver: true }),
-                          }).catch(() => undefined);
+                          await cancelOnDisplay({ takenOver: true }).catch(() => undefined);
                           await new Promise((r) => setTimeout(r, 3_000));
                           setWaiverDisplayBusy(false);
                           await sendWaiverToDisplay();
@@ -10666,10 +10747,19 @@ function FrontDesk({
             ) : null}
 
             {/* How it gets paid, derived from T24's rules: credit when it
-                covers the total (this dialog's own preference since T82
+                covers the total (this dialog's own default since T82
                 retired rule 1, see payMethod), otherwise the stored
                 card. A missing method renders its reason rather than
                 disappearing. */}
+            {/* T241: what the student chose on the customer iPad. */}
+            {payPick.note !== null ? (
+              <p
+                className={payPick.settling ? "pick-note fresh" : "pick-note"}
+                role="status"
+              >
+                {payPick.note}
+              </p>
+            ) : null}
             <p className="pay-method-line">
               {payMethod === "credit"
                 ? `Pays with account balance (${
@@ -10679,6 +10769,24 @@ function FrontDesk({
                   ? `Pays with the stored card ...${payCard.lastFour}.`
                   : payMethodReason}
             </p>
+            {/* T238: when the balance and the card can both pay, the
+                other one is a tap away. The balance is the default, not
+                the rule. */}
+            {payCanSwitchMethod && !payMoneyMoved && payCard ? (
+              <button
+                className="pay-method-switch"
+                /* T240: locked from the moment the approval is BEGUN,
+                   not only once its request id is back: the student is
+                   about to read the tender on their screen, and what
+                   they approve is what is charged. */
+                disabled={payStage !== null || payApproval.pending}
+                onClick={() => setPayUseCard((cur) => !cur)}
+              >
+                {payMethod === "credit"
+                  ? `Use the card ...${payCard.lastFour} instead`
+                  : "Use the account balance instead"}
+              </button>
+            ) : null}
             {/* T88: with nothing to charge with, "use Buy" was an
                 instruction where an action belongs. The line stays for
                 every other case. */}
@@ -10719,13 +10827,6 @@ function FrontDesk({
                 The charge may or may not have gone through. Check the dev
                 drawer or Mindbody before charging again.
                 {payOutcome.message ? ` (${payOutcome.message})` : ""}
-              </div>
-            ) : payOutcome?.kind === "split" ? (
-              <div className="sale-stop">
-                <p className="pay-split-head">{payOutcome.message}</p>
-                <p className="pay-split-why">
-                  Mindbody said: {payOutcome.mindbody}
-                </p>
               </div>
             ) : payOutcome?.kind === "attach-failed" ? (
               <div className="sale-stop">
@@ -10779,14 +10880,19 @@ function FrontDesk({
               ) : !payMoneyMoved ? (
                 <button
                   className="modal-confirm pay-charge"
-                  disabled={!payChargeable}
+                  /* T241 review: and for a moment after the student's
+                     pick moved the method, so the teacher sees it first. */
+                  disabled={!payChargeable || payPick.settling}
                   /* T209: with "customer approves each sale" off this is
                      the charge and nothing else, exactly as before. With
                      it on the ticket goes on the customer screen and the
                      charge follows their own tap, or the teacher's PIN.
                      The decision is the shared hook's, not this
                      dialog's. */
-                  onClick={payApproval.begin}
+                  onClick={() => {
+                    if (payPick.settlingNow()) return;
+                    payApproval.begin();
+                  }}
                 >
                   {payStage === "charge" ? (
                     <>

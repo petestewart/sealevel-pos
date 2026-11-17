@@ -187,6 +187,70 @@ export async function contractRequiresSignature(): Promise<ConfirmSetting> {
   return { on: contractFromEnv(), source: "env" };
 }
 
+/* =====================================================================
+ * T241 (Pete, 2026-11-17, on the student typing their card on the
+ * customer screen): "i think we can keep that for now and remove it once
+ * we actually have stripe. the ipad lets them take a picture, so it's not
+ * as bad as it could be. but let's hide it behind a flag so i can turn it
+ * off if it becomes annoying."
+ *
+ * Read and stored exactly like T205's `contract_requires_signature`, and
+ * DEFAULT ON like it: `app_settings`, admin-edited through PUT
+ * /api/admin/display-typed-card, shown to everyone, the environment
+ * deciding when the store does not answer, where only `false` or `0`
+ * turn it off.
+ *
+ * Unlike T203 and T205 this is not a rail and does not relax one. Off,
+ * the server REMOVES a way to pay ("A different card" is never offered,
+ * /api/display/card refuses and every card already held is dropped);
+ * on, a student's card still reaches Mindbody only through the
+ * teacher's own checkout, under every rail. It is admin-only and logged
+ * for the reason T207's is: a studio-wide policy should be somebody's.
+ *
+ * MEANT TO BE REMOVED, with the feature it gates, once Phase 4's card
+ * reader exists (docs/PLAN.md, Phase 4).
+ *
+ * Nothing in this file calls Mindbody.
+ * =================================================================== */
+
+/** The app_settings key. */
+export const DISPLAY_CARD_SETTING_KEY = "display_typed_card";
+
+/** The environment fallback, for a deployment with no database. */
+export const DISPLAY_CARD_ENV_VAR = "POS_DISPLAY_TYPED_CARD";
+
+function displayCardFromEnv(): boolean {
+  const raw = (process.env[DISPLAY_CARD_ENV_VAR] ?? "").trim().toLowerCase();
+  /* Unset is ON; only the two words that mean no turn it off. */
+  return !(raw === "false" || raw === "0");
+}
+
+let displayCardWarnedUnreadAt = 0;
+
+/** Whether a student may type a card on the customer screen, read per
+ *  request, bounded and never throwing. */
+export async function displayTypedCardAllowed(): Promise<ConfirmSetting> {
+  const answer = await readSetting(DISPLAY_CARD_SETTING_KEY).catch(() => ({
+    answered: false as const,
+    value: null,
+  }));
+  if (!answer.answered) {
+    const now = Date.now();
+    if (now - displayCardWarnedUnreadAt >= 60_000) {
+      displayCardWarnedUnreadAt = now;
+      console.warn(
+        `[display-typed-card] the stored setting could not be read; ` +
+          `${DISPLAY_CARD_ENV_VAR} in the server environment decides ` +
+          `(${displayCardFromEnv() ? "on" : "off"}).`,
+      );
+    }
+    return { on: displayCardFromEnv(), source: "env" };
+  }
+  if (answer.value === "true") return { on: true, source: "setting" };
+  if (answer.value === "false") return { on: false, source: "setting" };
+  return { on: displayCardFromEnv(), source: "env" };
+}
+
 /**
  * The sentence filed on the client when a teacher sold a membership with
  * their own PIN instead of the student's signature (D5). Filed the way

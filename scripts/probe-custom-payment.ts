@@ -28,8 +28,9 @@
  *         a. `purchasegiftcard` paid with Custom, directly.
  *         b. `purchaseaccountcredit` paid with Custom: the first half of
  *            Pete's manual workaround (sell the student account credit on
- *            the reader, behind the scenes) and of the counter's existing
- *            under-$10 path, which buys credit and spends it.
+ *            the reader, behind the scenes). `purchaseCredit` in
+ *            src/lib/sale.ts makes this call; no card sale reaches it
+ *            since T238 retired the $10 card floor.
  *         c. `purchasegiftcard` paid with DebitAccount: the second half,
  *            spending that credit on the card. A Test call cannot chain b
  *            into c, so c asks against whatever balance the client already

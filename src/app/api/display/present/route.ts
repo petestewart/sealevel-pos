@@ -9,13 +9,14 @@ import {
   presentRequest,
   readJsonObject,
 } from "@/lib/display";
-import { cartSha256 } from "@/lib/cartsha";
-import { readTicketPayload } from "@/lib/displayticket";
+import { cartSha256, carriesTender } from "@/lib/cartsha";
+import { readTicketPayload, tendersFromCharge } from "@/lib/displayticket";
 import { readContractPayload } from "@/lib/displaycontract";
 import { buildContractScene } from "@/lib/contractscene";
 import { readWaiverPayload } from "@/lib/displaywaiver";
 import { readClientFirstName } from "@/lib/clients";
 import { getWaiver } from "@/lib/waiver";
+import { displayTypedCardAllowed } from "@/lib/approval";
 
 export const dynamic = "force-dynamic";
 
@@ -108,11 +109,74 @@ export async function POST(request: Request) {
         input.cart !== null && typeof input.cart === "object"
           ? (input.cart as Record<string, unknown>)
           : {};
+      /* T240: the approval names how the student is paying, so the
+       * tender the cart carries is BOUND: it goes into the hash, and the
+       * words the student reads are rebuilt HERE from that same tender
+       * rather than taken from the payload, so the scene cannot say
+       * "Card" over a hash of an account charge. A cart carrying no
+       * tender (a page loaded before T240) hashes exactly as it always
+       * did and the scene shows no tender, which is what it approved. */
+      const tenderBound = carriesTender(cart);
+      if (tenderBound) {
+        const words = tendersFromCharge(cart);
+        if (words === null) {
+          return NextResponse.json(
+            { error: "cart: the tender could not be read" },
+            { status: 400 },
+          );
+        }
+        scene = { ...ticket.value, tenders: words };
+      } else {
+        const { tenders: _dropped, ...rest } = ticket.value;
+        scene = rest;
+      }
       privateHalf = {
         clientId:
           typeof cart["clientId"] === "string" ? cart["clientId"].trim() : "",
-        cartSha256: cartSha256(cart),
+        cartSha256: cartSha256(cart, { tender: tenderBound }),
+        tenderBound,
       };
+    } else if (ticket.value.mode === "live") {
+      /* T241: the client a live ticket is for, on the server-only half
+       * and nowhere the display can see, so a card the student types on
+       * it is bound to that client and let go of when the ticket moves
+       * to somebody else. */
+      privateHalf = {
+        clientId:
+          typeof input.clientId === "string" ? input.clientId.trim() : "",
+      };
+    }
+  }
+  /* T241 (Pete: "hide it behind a flag so i can turn it off if it
+   * becomes annoying"): with the studio's setting off, "A different
+   * card" is never offered, whatever the teacher's iPad sent. Read only
+   * when the offer carries it, so an ordinary present costs no read. */
+  if (
+    input.kind === "ticket" &&
+    Array.isArray(scene.choices) &&
+    (scene.choices as { choice?: unknown }[]).some(
+      (c) => c?.choice === "typedcard",
+    ) &&
+    !(await displayTypedCardAllowed()).on
+  ) {
+    const kept = (scene.choices as { choice?: unknown }[]).filter(
+      (c) => c?.choice !== "typedcard",
+    );
+    const { choices: _all, ...rest } = scene;
+    scene = kept.length > 0 ? { ...rest, choices: kept } : rest;
+  }
+  /* T241 review: every ticket names the tab that presented it, on the
+   * server-only half, so the hub can keep two iPads' tickets apart: a
+   * present from another tab does not take over this one, a pick goes to
+   * the tab whose ticket it was made on, and a card the student types is
+   * claimable only by that tab's checkout (with the same teacher). */
+  if (input.kind === "ticket") {
+    const presenter =
+      typeof input.presenter === "string"
+        ? input.presenter.trim().slice(0, 64)
+        : "";
+    if (presenter.length > 0) {
+      privateHalf = { ...(privateHalf ?? {}), presenter };
     }
   }
   /* T202: a WAIVER's payload is built here, not forwarded. The browser
@@ -254,6 +318,11 @@ export async function POST(request: Request) {
     initiator: "teacher",
     requestedByStaffId: String(actor.session.staffId),
     ...(ttlMs === undefined ? {} : { ttlMs }),
+    /* T241: an approval asked again after the student picked another
+     * way to pay replaces its own ticket in place. */
+    ...(input.kind === "ticket" && typeof input.replaces === "string"
+      ? { replaces: input.replaces }
+      : {}),
   });
   if (!presented.ok) {
     /* T201: `reason` is what lets the live mirror drop a refusal the
@@ -268,6 +337,8 @@ export async function POST(request: Request) {
          * own sign-up, because that is the one case the teacher's screen
          * words differently and offers Take over for. */
         ...(presented.holdingSignup === true ? { holdingSignup: true } : {}),
+        /* T241 third review: another iPad's approval holds it. */
+        ...(presented.foreignApproval === true ? { foreignApproval: true } : {}),
       },
       { status: presented.status },
     );

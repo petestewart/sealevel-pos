@@ -19,17 +19,18 @@ path for the phase that carries them.
 | P1 | Does a service account distort commission or payroll reporting? | Phase 1.5 auth | Rolling with the service account for now |
 | P2 | Partial account credit: $12 sale against a $4 balance. Ignore the balance, or spend it and let the floor top it back up? | Phase 2 payments | Literal reading of the rule is "ignore" |
 | P3 | How long does the $21 two-week upgrade last: that visit, that day, or longer? | Phase 2 offers | Decides whether the offer belongs to a roster row or to the client |
-| P4 | Is the $10 minimum measured before or after tax? | Phase 2 payments | A $2.72 item is $3.00 charged |
+| P4 | ~~Is the $10 minimum measured before or after tax?~~ **Moot (T238, 2026-11-15): there is no card minimum any more.** | Phase 2 payments | A $2.72 item is $3.00 charged, on the card, as $3.00 |
 | P5 | Where does the studio banner text live once an env var is not enough? | Phase 3 | Env var is fine until someone other than Pete edits it |
 | P6 | Who owns the Stripe account: legal entity, bank account, who holds the login? | T237 | Phase 4 |
 | P7 | The custom payment method's name in Mindbody, created on 471, and one on the sandbox | T222 | e.g. "Card (Stripe reader)" |
 | P8 | Does the card tapped on the reader count as the customer's approval (T203)? | T230 | Recommended yes: approve-then-tap is the friction the brief rules out |
 | P9 | Tipping on the reader? | T225 | Recommended none; a tip changes the held amount |
-| P10 | Does the $10 card minimum apply to the reader? | T226 | A $3 water by tap is the kind of sale being lost |
+| P10 | ~~Does the $10 card minimum apply to the reader?~~ **Answered (Pete, 2026-11-15, T238): any amount, on the reader too.** The floor is retired everywhere | T226 | A $3 water by tap is the kind of sale being lost |
 | P11 | Receipts: Mindbody's email only, or Stripe's as well? | T226 | |
 | P12 | The statement descriptor | T237 | Ideally matching what Mindbody Payments shows |
 | P13 | Who reconciles, who refunds, and where do they hear about a mismatch off the counter? | T231, T235 | |
 | P14 | S700 or a second WisePOS E? | T237 | Recommended S700, so the two readers cannot be confused |
+| P15 | The service charge on card transactions under $10 (Pete, 2026-11-15, T239: "we are eventually going to implement adding a service charge for CC transactions under $10"). **Planned, not built; until it is, a card is charged exactly the sale.** Undecided: the amount; whether it is a Mindbody product line on the cart or a fee outside it; whether it applies to the reader, a typed card and the card on file alike; and how it is shown to the student before the tap | Nothing yet | Not the retired $10 floor: nothing is bought as credit. Stripe's own $0.50 minimum still meets the reader (T226) |
 
 ## Probes to run
 
@@ -39,7 +40,7 @@ Cheap, and each one removes a guess. All are read-only or `Test: true`.
 |---|---|---|---|
 | B1 | `POST /sale/checkoutshoppingcart` with a candidate price/discount key in item `Metadata`, `Test: true`, compare returned total | Whether the POS can set a cart price directly. If yes, the $21 SKU is unnecessary | **Mostly answered from the spec (2026-08-30): CheckoutItemWrapper.DiscountAmount discounts a cart line directly, so the $21 SKU is unnecessary. One Test: true probe still owed for quantity semantics and permission gating; see TICKETS.** |
 | B2 | `GET /sale/alternativepaymentmethods` with `LocationId=98` | The HTTP 400 that gates all Apple Pay scoping | Not run. **Deprioritised 2026-11-15**: counter Apple Pay is Phase 4's reader, not this redirect flow |
-| B3 | Re-run `mindbody:probe-payments --live` against a client with a current card | Whether a charge actually settles through Stripe. Only ever reached "card is expired" | Not run |
+| B3 | Re-run `mindbody:probe-payments --live` against a client with a current card | Whether a charge actually settles through Stripe. Only ever reached "card is expired" | **Answered by use (Pete, 2026-11-15)**: the counter has charged stored cards live for months, and typed cards in testing. Open only for T238's under-$10 charge |
 | B4 | Confirm a per-client Mindbody-hosted card capture page exists and is reachable by URL | Whether Phase 3 card capture is buildable at all | Not run |
 | B5 | `scripts/probe-promo-code.ts <client> <code> <option> --create 28`: makes a throwaway one-use code, prices the cart without it and with it twice, deactivates it | Whether Mindbody honours a promotion code on the rehearsal, whether SubTotal stays pre-discount, its refusal wording, and whether pricing spends a one-use code | **Answered, prod, 2026-11-14 (Pete, dummy client 100042041).** An inactive code: 4xx "Promotion code is not active.", repriced without it. A valid one-use code for 581: HONOURED on `Test: true`, $49.00 -> $21.00, DiscountTotal $28.00, SubTotal $49.00, T75 agreeing; priced twice, applied twice, so pricing does NOT spend it. Along the way: `addpromocode` takes `Amount`/`Percent` while the list reads `FlatRate`, and answers `PromotionID: 0` |
 | R1 | `GET /sale/custompaymentmethods` on 471 and on -99 | What exists, and the response key: the spec says `PaymentMethods` (sale.yml:2798) while `scripts/probe-giftcard-free.ts` reads `CustomPaymentMethods`, so that script may have printed "none configured" wrongly. Read both | Not run (T222) |
@@ -158,7 +159,15 @@ swallow.
 and whatever `GET /sale/custompaymentmethods` returns. Read balances before
 offering a method: "account credit ($12)" greyed out beats a failure.
 
-**2.3 The $10 card minimum.** Not a refinement of 2.2, part of it.
+**2.3 The $10 card minimum.** **Retired 2026-11-15 by T238** (Pete: "that is
+an old policy! ... change it so any amount can be charged"): every card is
+charged what it pays in ONE checkout, no card sale buys account credit, and
+the roster's pay dialog defaults to a covering balance but offers the card
+beside it (and since T239 the Cart screen starts on it the same way). A
+service charge on card sales under $10 is planned and not built (P15); until
+it is, a card is charged exactly the sale. What follows is the plan as it was
+built, kept for the record.
+Not a refinement of 2.2, part of it.
 - Credit covers the total → paid entirely from credit, card not offered
 - Otherwise card, charged `max(total, 10)`, excess to credit
 - Three paths, and only the third is two calls:
@@ -330,6 +339,17 @@ settles them before T225 is called done, and both hosts must be allowed in
 the cloud environment before live Stripe work. T224's fake lets the build
 start without them.
 
+**When the reader works, remove the student-typed card (T241).** Pete,
+2026-11-17, on students typing their own card on the customer iPad: "i
+think we can keep that for now and remove it once we actually have
+stripe." It sits behind the `display_typed_card` setting (default on,
+`POS_DISPLAY_TYPED_CARD` without a database) so he can turn it off
+sooner. Once the reader is live, delete the feature with its setting:
+`src/app/display/CardForm.tsx`, `/api/display/card`,
+`src/lib/displaycard.ts`, the `typedcard` choice and checkout's
+`displayCard` path. "A different card" then becomes the reader's "tap
+your card".
+
 ### The money order
 
 Rehearse, hold, sell, take.
@@ -488,8 +508,10 @@ Cart screen and the roster's "Pay and check in", and:
    hand**: sell the purchaser account credit on the reader
    (`purchaseaccountcredit` paid with Custom, R5b), then pay for the gift
    card from that credit (`purchasegiftcard` paid `DebitAccount`, R5c). It
-   is the counter's existing under-$10 pattern (credit first, then spend),
-   so nothing about it is new to Mindbody or to this app. Its limits: it
+   is the pattern the counter's under-$10 card path used until T238 retired
+   it (credit first, then spend; `purchaseCredit` in `src/lib/sale.ts` is
+   kept, unreached, for this), so nothing about it is new to Mindbody or to
+   this app. Its limits: it
    needs a NAMED purchaser, never the house client, whose credit belongs to
    nobody; it records a credit purchase and a credit redemption rather than
    a card sale, which is the reporting cost the design doc's "$10 card
@@ -508,7 +530,9 @@ Refused in words before any call:
   after the first bills the card on file. The path stays what it is today:
   type the card once with "keep on file" and sell against it. "A membership
   bills a card on file. Add a card first."
-- **Under $10**: refused like a typed card until P10 is answered.
+
+Not refused: a small sale. Since T238 (P10, answered) the reader charges any
+amount above zero, as every other card does.
 
 ### The teacher's screen
 
@@ -662,8 +686,9 @@ changed by the item that builds it, in that item's own commit:
    itself asks (T223).
 7. **Option C's two outcomes** gain a third, hold kept while Mindbody's
    answer is unknown (design doc updated with this plan).
-8. **T93's $10 floor** "does not care whose card it is": at odds with the
-   lost-sale brief until P10 is answered (T226).
+8. ~~**T93's $10 floor** "does not care whose card it is": at odds with the
+   lost-sale brief until P10 is answered (T226).~~ Moved already: T238
+   retired the floor on every card path, so T226 has none to apply.
 
 ---
 

@@ -79,6 +79,13 @@ import {
 } from "@/lib/substitute";
 import { beginIdempotent } from "@/lib/idemstore";
 import {
+  DISPLAY_CARD_GONE,
+  claimDisplayCard,
+  settleDisplayCard,
+} from "@/lib/displaycard";
+import { traceMindbody } from "@/lib/mbtrace";
+import { closeTicketOffer, displayRequestClosed } from "@/lib/display";
+import {
   parsePromotionCode,
   promotionRefusal,
   type PromotionOutcome,
@@ -95,7 +102,7 @@ import { saveClientCard } from "@/lib/clientcard";
 
 import {
   assertBasket,
-  CARD_MINIMUM_USD,
+  cardChargeable,
   checkoutCart,
   clientPaymentProfile,
   groupByRecipient,
@@ -104,7 +111,6 @@ import {
   parseCartLines,
   passWithoutOwner,
   priceCartWithPromotion,
-  purchaseCredit,
   rehearseCheckout,
   roundToCents,
   splitDiscount,
@@ -299,21 +305,24 @@ export const dynamic = "force-dynamic";
  *         T93: a `typedcard` leg carries its own `typedCard`), amounts in whole cents that sum EXACTLY to the
  *         rehearsed server total, charged as two Payments entries in ONE
  *         checkoutshoppingcart call (no two-write seam; a refusal
- *         refuses the whole sale). The card minimum applies to the card
- *         LEG.
+ *         refuses the whole sale).
  *
- * Executes PLAN 2.3's table EXACTLY, and never collapses the card paths
- * (the design doc: routing every card sale through purchaseaccountcredit
- * would record a $150 membership as a credit purchase plus redemption and
- * wreck the reporting Pete reads):
+ * The payment table, every row ONE checkoutshoppingcart after the
+ * Test: true rehearsal, and never routed through account credit (the
+ * design doc: a card sale bought as credit plus redemption would record
+ * a $150 membership as a credit purchase and wreck the reporting Pete
+ * reads):
  *
- * - credit, chosen     -> one checkout on DebitAccount
- * - card, total >= $10 -> one checkout on StoredCard
- * - card, total < $10  -> Test: true rehearsal, purchaseaccountcredit for
- *                         $10 on the card, checkout on DebitAccount
+ * - credit, chosen -> one checkout on DebitAccount
+ * - card           -> one checkout on StoredCard or CreditCard, for the
+ *                     rehearsed total, whatever it is
  *
- * Recorded ASSUMPTIONS (T24; Pete may reverse): P4, the $10 minimum is
- * measured against the charged, after-tax total. T82 retires P2 and
+ * T238 (Pete, 2026-11-15: "change it so any amount can be charged")
+ * retired the studio's $10 card floor, and with it the under-$10 path
+ * that bought $10 of account credit on the card and spent it. A card,
+ * a split's card leg and each cart of a typed-card ticket are charged
+ * exactly what they pay; only a card charge of nothing (zero or less,
+ * `cardChargeable`) is refused. So P4 is moot. T82 retires P2 and
  * rule 1 both (Pete: "Credit should be an option, not forced. If the
  * client has credit, they can choose to not use it and pay with cash or
  * card, etc"): credit is a tender like the others, never applied
@@ -327,12 +336,7 @@ export const dynamic = "force-dynamic";
  *                                    write. The UI renders this amber,
  *                                    NEVER as a completed sale.
  * - 4xx/502 { error, stage, ... }    a definite failure, with Mindbody's
- *                                    reason. `stage` says how far it got;
- *                                    "checkout-after-credit" carries
- *                                    creditPurchased and creditBalance so
- *                                    the UI can tell the teacher the $10
- *                                    credit EXISTS and must not be bought
- *                                    again.
+ *                                    reason. `stage` says how far it got.
  * - `ambiguous: true` on an error    the transport failed (timeout,
  *                                    reset) so the write MAY have gone
  *                                    through: the UI must say so and must
@@ -456,7 +460,7 @@ function parseSplitLeg(raw: unknown): SplitLeg | string {
     return "split leg amounts must be whole cents";
   }
   /* Snap to the exact cent value: everything downstream -- the sum
-   * check, the card-minimum and balance comparisons, and above all the
+   * check, the balance comparisons, and above all the
    * Payments entry sent to Mindbody -- must carry the validated cent
    * amount, never the raw float it arrived as (10.000000001 passes the
    * epsilon but is not a tender anyone typed). */
@@ -466,6 +470,59 @@ function parseSplitLeg(raw: unknown): SplitLeg | string {
     ...(giftCardNumber === undefined ? {} : { giftCardNumber }),
     ...(typedCard === undefined ? {} : { typedCard }),
   };
+}
+
+/**
+ * T241: the `displayCard` reference on a checkout body, or null when it
+ * has none, or the 400 reason. Only on the single-method `typedcard`
+ * shape, and never beside a `typedCard` the browser typed itself: a
+ * student's card pays the whole sale, and a request carrying two cards
+ * is a mistake, not something to pick between.
+ */
+function readDisplayCardRef(
+  payload: unknown,
+):
+  | { requestId: string; presenter: string; lastFour: string }
+  | { error: string }
+  | null {
+  const body = (payload ?? {}) as Record<string, unknown>;
+  const ref = body["displayCard"];
+  if (ref === undefined || ref === null) return null;
+  const requestId = (ref as { requestId?: unknown })?.requestId;
+  if (typeof requestId !== "string" || requestId.trim() === "") {
+    return { error: "displayCard needs the display request's id" };
+  }
+  if (body["method"] !== "typedcard" || body["split"] !== undefined) {
+    return {
+      error:
+        "a card from the customer screen pays the whole sale, as method typedcard",
+    };
+  }
+  if (body["typedCard"] !== undefined) {
+    return {
+      error: "send a typed card or a card from the customer screen, not both",
+    };
+  }
+  const presenter = (ref as { presenter?: unknown })?.presenter;
+  const lastFour = (ref as { lastFour?: unknown })?.lastFour;
+  return {
+    requestId: requestId.trim(),
+    presenter: typeof presenter === "string" ? presenter : "",
+    lastFour: typeof lastFour === "string" ? lastFour : "",
+  };
+}
+
+/** T241 review: an answer that spent the customer's card says so, so the
+ *  teacher's iPad takes the line off rather than offering a dead card. */
+async function withDisplayCardSpent(res: Response): Promise<Response> {
+  const body = await res.clone().json().catch(() => null);
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    return res;
+  }
+  return NextResponse.json(
+    { ...body, displayCardSpent: true },
+    { status: res.status },
+  );
 }
 
 export async function POST(request: Request) {
@@ -493,12 +550,79 @@ export async function POST(request: Request) {
    * costs nothing at all. See src/lib/idemstore.ts. */
   const gate = await beginIdempotent(request, payload, String(session.staffId));
   if (gate.replay !== null) return gate.replay;
+  /* T241: a card the STUDENT typed on the customer iPad. The browser
+   * sends only the display request's id (`displayCard: { requestId }`);
+   * the card itself is taken here from the server's memory, BELOW the
+   * idempotency gate (so a replay never touches it) and claimed for this
+   * one checkout, which must come from the teacher and the tab whose
+   * ticket the student typed it on (T241 review), then spent once it has
+   * answered, unless the answer is a refusal that provably asked
+   * Mindbody to write nothing. From here on it is a typed card like T93's, through the same `typedCard` path, under the
+   * teacher's token: dry run, the write guard, T75, T103 and T240's
+   * tender binding apply unchanged (the method is still `typedcard`). */
+  const displayRef = readDisplayCardRef(payload);
+  if (displayRef !== null && "error" in displayRef) {
+    return gate.record(
+      NextResponse.json({ error: displayRef.error }, { status: 400 }),
+    );
+  }
+  const displayCard = displayRef;
+  let charged = payload;
+  if (displayCard !== null) {
+    /* Second review (D): a ticket this process closed (cancelled,
+     * refused, retired, expired) takes its card with it, whatever race
+     * its drop lost. */
+    const claim = displayRequestClosed(displayCard.requestId)
+      ? ({ ok: false, error: DISPLAY_CARD_GONE, code: "gone" } as const)
+      : claimDisplayCard(displayCard.requestId, {
+          clientId:
+            typeof payload?.clientId === "string" ? payload.clientId : "",
+          staffId: String(session.staffId),
+          presenter: displayCard.presenter,
+          lastFour: displayCard.lastFour,
+        });
+    if (!claim.ok) {
+      return gate.record(
+        NextResponse.json(
+          { error: claim.error, reason: "displaycard", card: claim.code },
+          { status: 409 },
+        ),
+      );
+    }
+    /* Third review: the ticket takes no pick and no new card while this
+     * charge runs, nor after it, until the teacher's iPad offers again. */
+    closeTicketOffer(displayCard.requestId);
+    const { displayCard: _ref, ...rest } = payload;
+    charged = { ...rest, typedCard: claim.card };
+  }
   try {
     /* T220: what the rehearsal took off for a promotion code, filled in
      * by runCheckout and added to the answer of a sale that stands. */
     const promo: { applied: PromotionOutcome | null } = { applied: null };
+    let ran: Response;
+    let writes = 0;
+    try {
+      const traced = await traceMindbody(() =>
+        runCheckout(request, session, charged, promo),
+      );
+      ran = traced.value;
+      writes = traced.writes;
+    } catch (err) {
+      if (displayCard !== null) settleDisplayCard(displayCard.requestId, true);
+      throw err;
+    }
+    /* T241 review: spent by every answer that asked Mindbody to write
+     * anything (sent, suppressed or refused alike: a rehearsal is a POST
+     * too), and kept only for a refusal that provably asked nothing, our
+     * own validation turning the request away. The answer says which, so
+     * the teacher's iPad can let go of a spent card's line. */
+    let spent = false;
+    if (displayCard !== null) {
+      spent = !(ran.status >= 400 && writes === 0);
+      settleDisplayCard(displayCard.requestId, spent);
+    }
     const answered = await withPromotion(
-      await runCheckout(request, session, payload, promo),
+      spent ? await withDisplayCardSpent(ran) : ran,
       promo.applied,
     );
     /* T219: a sold pass that comes with a place in a course or a class
@@ -991,9 +1115,22 @@ async function runCheckout(
           "That approval was for a different customer. Ask them again.",
         );
       }
-      if (String(held.private.cartSha256 ?? "") !== cartSha256(payload)) {
+      /* T240: an approval that NAMED the tender binds it. The hash is
+       * this body's own `method` or `split`, so a teacher who switched
+       * from the account to the card after the student approved
+       * "Account balance" is asked again rather than charged on it. An
+       * approval presented without a tender (a page from before T240)
+       * is checked exactly as it always was. */
+      const tenderBound = held.private.tenderBound === true;
+      if (
+        String(held.private.cartSha256 ?? "") !==
+        cartSha256(payload, { tender: tenderBound })
+      ) {
         return refuse(
-          "The ticket changed after the customer approved it. Ask them again.",
+          tenderBound
+            ? "The ticket or the payment changed after the customer approved " +
+                "it. Ask them again."
+            : "The ticket changed after the customer approved it. Ask them again.",
         );
       }
       approvalId = held.id;
@@ -1641,7 +1778,15 @@ async function runCheckout(
       held.status === "pending" &&
       isApproveTicket(held.kind, held.payload)
     ) {
-      await cancelRequest().catch(() => undefined);
+      /* T241 third review: owner-checked like every other teacher cancel.
+       * The approval this PIN stood in for is this tab's own; another
+       * iPad's approval (and the card its student typed) is left alone. */
+      await cancelRequest(Date.now(), {
+        teacher: {
+          presenter:
+            typeof payload?.presenter === "string" ? payload.presenter : null,
+        },
+      }).catch(() => undefined);
     }
   }
 
@@ -2225,11 +2370,11 @@ async function runCheckout(
       );
     }
 
-    /* Each part is its own Mindbody sale and so its own card charge,
-     * which is what the $10 floor is measured against (the same reading
-     * as assumption P4). A part under it is REFUSED with the reason,
-     * never topped up: the under-$10 credit dance exists for one cart,
-     * and running it per part would turn one tap into a row of seams. */
+    /* Each part is its own Mindbody sale and so its own card charge, for
+     * exactly what that part costs (T238: no card floor). A part that
+     * would charge the card nothing is refused, since that is not a
+     * tender; the discount checks above already keep every part paying
+     * something, so this is the last word, not the usual one. */
     const parts: number[] = [
       ...(items.length > 0 ? [cartTotal] : []),
       ...charged,
@@ -2265,16 +2410,15 @@ async function runCheckout(
           { status: 409 },
         );
       }
-      const short = parts.find((p) => p < CARD_MINIMUM_USD);
-      if (short !== undefined) {
+      const nothing = parts.find((p) => !cardChargeable(p));
+      if (nothing !== undefined) {
         return NextResponse.json(
           {
             error:
               "A gift card is its own sale in Mindbody, so the card is " +
-              "charged once per part of this ticket, and " +
-              `${short.toFixed(2)} is under the $${CARD_MINIMUM_USD} card ` +
-              "minimum. Take cash, or sell the parts separately. Nothing " +
-              "was charged.",
+              "charged once per part of this ticket, and one part comes " +
+              `to ${nothing.toFixed(2)}, which is nothing to charge a ` +
+              "card. Sell the parts separately. Nothing was charged.",
             stage: "method",
           },
           { status: 409 },
@@ -2295,10 +2439,7 @@ async function runCheckout(
      * the rest, and the overdraft that could have carried it is refused
      * above. So the one question is whether the balance reaches the whole
      * ticket, and a balance that does not is a plain refusal with nothing
-     * charged.
-     *
-     * No $10 floor: that is a card processing minimum and an account
-     * debit is not a card charge. */
+     * charged. */
     if (method === "credit") {
       let profile;
       try {
@@ -2983,9 +3124,10 @@ async function runCheckout(
      * card DOES pay a ticket holding a line for another client. This
      * branch is one Mindbody cart per recipient, so the card is charged
      * once per cart, each for that cart's own rehearsed total, in the
-     * T90 order (the payer's cart first). The per-cart floor is checked
-     * below, once every cart has been priced and before any is charged,
-     * and a second charge refused or ambiguous after the first stood is
+     * T90 order (the payer's cart first), whatever that total is (T238:
+     * no card floor). A cart that would charge the card nothing is
+     * refused below, once every cart has been priced and before any is
+     * charged, and a second charge refused or ambiguous after the first stood is
      * reported as exactly that by the loop's existing wording: never
      * retried, never refunded. */
 
@@ -3108,23 +3250,23 @@ async function runCheckout(
         { status: 400 },
       );
     }
-    /* T93 review: the $10 floor is a card-processing floor and each cart
-     * is its OWN authorization on the same card, so it applies per cart,
-     * not to the ticket. Checked here, after every cart has been priced
-     * and before any has been charged, so a ticket holding a cart under
-     * the floor costs nothing; the sentence names the cart, since
+    /* Each cart is its OWN authorization on the same card, for exactly
+     * that cart's total (T238 retired the $10 floor that used to apply
+     * per cart here). A cart that comes to nothing cannot be a card
+     * charge, so it is refused after every cart has been priced and
+     * before any has been charged; the sentence names the cart, since
      * otherwise nothing on screen says which one stopped it. */
     if (method === "typedcard") {
-      const under = rehearsed.find((c) => c.total < CARD_MINIMUM_USD);
-      if (under !== undefined) {
+      const nothing = rehearsed.find((c) => !cardChargeable(c.total));
+      if (nothing !== undefined) {
         return NextResponse.json(
           {
             error:
-              `The cart for ${nameOfGroup(under.group)} is ` +
-              `${under.total.toFixed(2)}, under the $${CARD_MINIMUM_USD} ` +
-              "card minimum, and a typed card is charged once per cart. " +
-              "Take cash or a gift card for this ticket, or sell that " +
-              "line on its own. Nothing was charged.",
+              `The cart for ${nameOfGroup(nothing.group)} comes to ` +
+              `${nothing.total.toFixed(2)}, and a typed card is charged ` +
+              "once per cart, so that cart would charge the card nothing. " +
+              "Take cash for this ticket, or sell that line on its own. " +
+              "Nothing was charged.",
             stage: "method",
           },
           { status: 409 },
@@ -3527,9 +3669,8 @@ async function runCheckout(
    * trusted; the amount charged below is the one Mindbody just priced.
    * T79: rehearsed WITH the discount lines the real call will carry, so
    * the total is the discounted one and the DiscountTotal check runs.
-   * For the under-$10 card path this is exactly PLAN 2.3's mitigation:
-   * a cart Mindbody will not accept fails HERE, before any credit is
-   * bought, and the failure costs nothing. */
+   * A cart Mindbody will not accept fails HERE, before any money moves,
+   * and the failure costs nothing. */
   let priced;
   try {
     /* T112: the ONE thing an "attempt" override changes. The rehearsal
@@ -4085,26 +4226,10 @@ async function runCheckout(
           { status: 409 },
         );
       }
-      /* The $10 minimum applies to the CARD LEG's amount: the floor is a
-       * card-processing floor, so what matters is what the card is
-       * charged (the same reading as assumption P4). A card leg under
-       * $10 is REFUSED with the reason, never topped up: the under-$10
-       * credit dance (buy $10 of credit, then debit) on top of a two-leg
-       * split is complexity nobody asked for, and it would turn the
-       * split's one-call no-seam guarantee into a two-write seam. The
-       * teacher's fix is to move the split point or use one method. */
-      if (cardLeg.amount < CARD_MINIMUM_USD) {
-        return NextResponse.json(
-          {
-            error:
-              `The card leg is ${cardLeg.amount.toFixed(2)}, under the ` +
-              `$${CARD_MINIMUM_USD} card minimum. Make the card leg at ` +
-              `least $${CARD_MINIMUM_USD}, or use one method. Nothing was charged.`,
-            stage: "method",
-          },
-          { status: 409 },
-        );
-      }
+      /* T238: the card leg is charged exactly its amount, however
+       * small, in the same one checkout as the other leg. There is no
+       * card floor to check: parseSplitLeg has already refused a leg of
+       * zero or less, which is the one card amount that is not a tender. */
     }
 
     /* T83: the gift card leg, checked against the live balance the same
@@ -4124,22 +4249,8 @@ async function runCheckout(
       if (refused) return refused;
     }
 
-    /* T93: the $10 floor is a CARD-PROCESSING floor, so it applies to a
-     * typed card leg exactly as it does to a stored one. There is no
-     * credit-purchase path here to top it up (that one needs a client and
-     * a stored card), so this is a plain refusal with nothing charged. */
-    if (typedLeg !== null && typedLeg.amount < CARD_MINIMUM_USD) {
-      return NextResponse.json(
-        {
-          error:
-            `The card leg is ${typedLeg.amount.toFixed(2)}, under the ` +
-            `$${CARD_MINIMUM_USD} card minimum. Make the card leg at ` +
-            `least $${CARD_MINIMUM_USD}, or use one method. Nothing was charged.`,
-          stage: "method",
-        },
-        { status: 409 },
-      );
-    }
+    /* T93's typed card leg, like the stored one, is charged exactly its
+     * amount (T238: no card floor; parseSplitLeg refused zero or less). */
 
     const toPayment = (leg: SplitLeg): CheckoutPayment =>
       leg.method === "storedcard"
@@ -4489,19 +4600,16 @@ async function runCheckout(
 
     if (m === "typedcard") {
       /* T93: a whole sale on a card typed at the counter. Like cash and a
-       * gift card it needs no client (a walk-in rides the house client);
-       * unlike the stored card there is no credit-purchase path under the
-       * $10 floor, so a total under it is refused plainly. The $10 floor
-       * is the studio's card-processing floor and does not care whose
-       * card it is. */
+       * gift card it needs no client (a walk-in rides the house client).
+       * T238: charged exactly the rehearsed total, however small; only a
+       * total of nothing is refused, since that is not a card charge. */
       const card = typedCard as TypedCard;
-      if (total < CARD_MINIMUM_USD) {
+      if (!cardChargeable(total)) {
         return NextResponse.json(
           {
             error:
-              `The total is ${total.toFixed(2)}, under the ` +
-              `$${CARD_MINIMUM_USD} card minimum. Take it in cash, or on ` +
-              "the card on file. Nothing was charged.",
+              `The total is ${total.toFixed(2)}, so there is nothing to ` +
+              "charge to a card. Nothing was charged.",
             stage: "method",
           },
           { status: 409 },
@@ -4760,134 +4868,39 @@ async function runCheckout(
      * card sale. Nothing else about the card path changes: the card is
      * still re-read here, still refused when expired or absent, and a
      * credit LINE is still refused above the live balance in its own
-     * branch. */
-
-    /* ASSUMPTION P4: the $10 floor is measured against the charged,
-     * after-tax total -- the minimum is a card-processing floor, so the
-     * amount that matters is the amount the card would be charged. */
-    if (total >= CARD_MINIMUM_USD) {
-      /* Card path one: the total itself satisfies the floor. ONE call,
-       * StoredCard, never routed through account credit. */
-      const run = await runAsActor(session, "/api/checkout", (actor) =>
-        checkoutCart(
-          items,
-          clientId,
-          { type: "StoredCard", amount: total, lastFour: card.lastFour },
-          actor,
-          sendEmail,
-          discount,
-          promotionCode,
-        ),
-      );
-      const outcome = run.result;
-      if (outcome.suppressed) {
-        const rec = await recordDiscount({
-          saleId: null,
-          cartId: null,
-          suppressed: true,
-          paid: total,
-          shape: "lines",
-          onStudio: discounted,
-        });
-        return NextResponse.json({
-          ok: false,
-          suppressed: outcome.suppressed,
-          ...rec,
-          ...actorFields(run),
-        });
-      }
-      const ids = await saleIds(outcome.saleId);
-      const rec = await recordDiscount({
-        ...ids,
-        suppressed: false,
-        paid: total,
-        shape: "lines",
-        onStudio: discounted,
-      });
-      /* T103: the answer is refused when the sale does not hold what
-       * was sent. The money has already moved, so this reports it; it
-       * never retries and never claims a sale. */
-      const nothingSold = await basketStop(items, outcome, ids, total);
-      if (nothingSold) return nothingSold;
-      return NextResponse.json({
-        ok: true,
-        method: m,
-        total,
-        saleId: ids.saleId,
-        cartId: ids.cartId,
-        receiptRequested: sendEmail,
-        emailReceipt: null,
-        ...rec,
-        ...actorFields(run),
-      });
-    }
-
-    /* T82: the ONE piece of rule 1 that survives it, and it is not rule
-     * 1: this path BUYS $10 of account credit on the card, so credit
-     * that already covers the total must be spent instead of buying
-     * more. Rule 1 refused every card sale a balance could have covered
-     * and so made credit compulsory (retired above); this refuses only
-     * the sale whose card charge would add a second $10 of credit beside
-     * the first. It is also what keeps the seam below un-re-runnable:
-     * after a credit purchase that went through and a checkout that did
-     * not, the balance covers any sub-$10 total, and a second tap must
-     * not buy a second $10. A card sale at $10 or more never reaches
-     * here and is never refused for holding credit. */
-    if (profile.balance !== null && profile.balance >= total) {
+     * branch.
+     *
+     * T238: and there is ONE card path. The card is charged exactly the
+     * rehearsed total, however small, in one checkout on StoredCard,
+     * never routed through account credit. The $10 floor that sent a
+     * smaller sale through a $10 credit purchase and a DebitAccount
+     * checkout is retired (Pete: "change it so any amount can be
+     * charged"), and with it that two-write seam. Only a total of
+     * nothing is refused, since that is not a card charge. */
+    if (!cardChargeable(total)) {
       return NextResponse.json(
         {
           error:
-            `This ${total.toFixed(2)} sale is under the ` +
-            `$${CARD_MINIMUM_USD} card minimum, so paying it by card would ` +
-            `buy another $${CARD_MINIMUM_USD} of account credit. There is ` +
-            `already ${profile.balance.toFixed(2)} on the account: spend ` +
-            "that instead. Nothing was charged.",
+            `The total is ${total.toFixed(2)}, so there is nothing to ` +
+            "charge to a card. Nothing was charged.",
           stage: "method",
-          creditBalance: profile.balance,
         },
         { status: 409 },
       );
     }
-
-    /* Card path two, total under $10: the rehearsal already passed above,
-     * so buy $10 of account credit on the card, then check out on
-     * DebitAccount. Two calls with a real seam between them; each failure
-     * mode below reports EXACTLY what state the client is in. */
-    let credit;
-    let creditRun;
-    try {
-      creditRun = await runAsActor(session, "/api/checkout", (actor) =>
-        purchaseCredit(
-          clientId as string,
-          CARD_MINIMUM_USD,
-          card.lastFour,
-          actor,
-          sendEmail,
-        ),
-      );
-      credit = creditRun.result;
-    } catch (err) {
-      /* T50 review: a dead teacher token is refused at the gate, so
-       * nothing was charged; the sign-in gate says so. */
-      const gone = staffSessionEndedResponse(err);
-      if (gone) return gone;
-      const ambiguous = isAmbiguous(err);
-      return NextResponse.json(
-        {
-          error: ambiguous
-            ? `The $${CARD_MINIMUM_USD} credit purchase did not answer. It ` +
-              "MAY have charged the card. Check the dev drawer or Mindbody " +
-              "before trying again."
-            : `The $${CARD_MINIMUM_USD} credit purchase was refused: ` +
-              errMessage(err) +
-              " Nothing was charged.",
-          stage: "credit-purchase",
-          ambiguous,
-        },
-        { status: 502 },
-      );
-    }
-    if (credit.suppressed) {
+    const run = await runAsActor(session, "/api/checkout", (actor) =>
+      checkoutCart(
+        items,
+        clientId,
+        { type: "StoredCard", amount: total, lastFour: card.lastFour },
+        actor,
+        sendEmail,
+        discount,
+        promotionCode,
+      ),
+    );
+    const outcome = run.result;
+    if (outcome.suppressed) {
       const rec = await recordDiscount({
         saleId: null,
         cartId: null,
@@ -4898,92 +4911,35 @@ async function runCheckout(
       });
       return NextResponse.json({
         ok: false,
-        suppressed: credit.suppressed,
+        suppressed: outcome.suppressed,
         ...rec,
-        ...actorFields(creditRun),
+        ...actorFields(run),
       });
     }
-
-    try {
-      const run = await runAsActor(session, "/api/checkout", (actor) =>
-        checkoutCart(
-          items,
-          clientId,
-          { type: "DebitAccount", amount: total },
-          actor,
-          sendEmail,
-          discount,
-          promotionCode,
-        ),
-      );
-      const outcome = run.result;
-      if (outcome.suppressed) {
-        /* The credit purchase went out and the checkout did not: the same
-         * seam as a step-2 failure, reported the same way. Should be
-         * unreachable (the guard decided identically two calls ago), but
-         * if it happens the teacher must know the credit exists. */
-        throw new Error(
-          "the checkout was suppressed by the write guard after the credit purchase went through",
-        );
-      }
-      const ids = await saleIds(outcome.saleId);
-      const rec = await recordDiscount({
-        ...ids,
-        suppressed: false,
-        paid: total,
-        shape: "lines",
-        onStudio: discounted,
-      });
-      /* T103: the answer is refused when the sale does not hold what
-       * was sent. The money has already moved, so this reports it; it
-       * never retries and never claims a sale. */
-      const nothingSold = await basketStop(items, outcome, ids, total);
-      if (nothingSold) return nothingSold;
-      /* Either write may have fallen back; one note covers both. */
-      const fallback = creditRun.actorFallback ?? run.actorFallback;
-      return NextResponse.json({
-        ok: true,
-        method: m,
-        total,
-        saleId: ids.saleId,
-        cartId: ids.cartId,
-        creditPurchased: CARD_MINIMUM_USD,
-        receiptRequested: sendEmail,
-        /* T53: the one confirmation Mindbody gives: the credit sale's
-         * EmailReceipt. The cart checkout after it reports nothing. */
-        emailReceipt: sendEmail ? credit.emailReceipt : null,
-        ...rec,
-        ...actorFields({
-          actorFallback: fallback,
-          staffSessionEnded: creditRun.staffSessionEnded || run.staffSessionEnded,
-        }),
-      });
-    } catch (err) {
-      /* THE seam. The card was charged $10 of credit; the sale did not
-       * complete. Nothing is lost -- the credit persists -- but the UI
-       * must say exactly that, with the live balance, or a teacher
-       * re-runs the whole flow and buys a second $10. */
-      let creditBalance: number | null = null;
-      try {
-        creditBalance = (await clientPaymentProfile(clientId as string))
-          .balance;
-      } catch {
-        /* best effort; null renders as "balance unknown" */
-      }
-      /* T203 review: the card WAS charged the credit, so the approval is
-       * spent; a second run is a second $10 and needs its own approval. */
-      await recordApproval(null, false);
-      return NextResponse.json(
-        {
-          error: errMessage(err),
-          stage: "checkout-after-credit",
-          ambiguous: isAmbiguous(err),
-          creditPurchased: CARD_MINIMUM_USD,
-          creditBalance,
-        },
-        { status: 502 },
-      );
-    }
+    const ids = await saleIds(outcome.saleId);
+    const rec = await recordDiscount({
+      ...ids,
+      suppressed: false,
+      paid: total,
+      shape: "lines",
+      onStudio: discounted,
+    });
+    /* T103: the answer is refused when the sale does not hold what
+     * was sent. The money has already moved, so this reports it; it
+     * never retries and never claims a sale. */
+    const nothingSold = await basketStop(items, outcome, ids, total);
+    if (nothingSold) return nothingSold;
+    return NextResponse.json({
+      ok: true,
+      method: m,
+      total,
+      saleId: ids.saleId,
+      cartId: ids.cartId,
+      receiptRequested: sendEmail,
+      emailReceipt: null,
+      ...rec,
+      ...actorFields(run),
+    });
   } catch (err) {
     /* T50 review: a dead teacher token (a comp's included) is refused
      * at Mindbody's gate before anything ran, so nothing was charged:

@@ -162,7 +162,15 @@ export async function POST(request: Request) {
       signatureSha256: createHash("sha256").update(signed.png).digest("hex"),
     };
   }
-  const done = await completeRequest(id, requestId, stored);
+  /* T241 review: an approve ticket's answer names the version it was
+   * given, since a pick can replace that ticket in place. */
+  const done = await completeRequest(
+    id,
+    requestId,
+    stored,
+    Date.now(),
+    input.version,
+  );
   if (!done.ok) {
     return NextResponse.json({ error: done.error }, { status: done.status });
   }
