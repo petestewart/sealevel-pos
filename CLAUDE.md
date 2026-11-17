@@ -79,12 +79,42 @@ with "Balance after: -$X.XX" and a 64px control that opens the shared PIN
 pad with the `overdraft` purpose; a match arms it for THAT ticket (client,
 pass, code, total) and the charge sends `method: "credit"` with
 `overdraftToken`. No server change. A balance read that failed offers no
-PIN. **T252: that dialog now keeps a charge that may have moved money**
+PIN. **Verified live by Pete, 2026-11-17** ("works"): the account was
+charged past its balance with the teacher's PIN and Mindbody accepted it,
+which also settles T94's open question. **T252: that dialog now keeps a charge that may have moved money**
 (see the T249 section), and **T253 moved the authority for that to the
 server**: `/api/checkout` holds each client of a charge AHEAD of running
 it and refuses a held client from any iPad until the charge has answered
 and anything it may have moved has been acknowledged (see "A charge that
 may have moved money holds the client").
+
+**T245 (2026-11-17): the roster's trash offers "Late cancel"** (Pete:
+"when they press the trash can it should pop up a 'late cancel/no show'
+option", and "all we do is mark them Late Cancel in the Mindbody UI ...
+and no we do not take a class away, that is all we do"). The trash on a
+row that is not checked in, on a class ahead, running or over, opens a
+choice of two 64px buttons: "Cancel booking" (`/api/cancel-visit`,
+unchanged) and "Late cancel" ("Marks it in Mindbody as a late cancel. No
+fee, nothing taken off their pass."). Late cancel is `POST
+/api/late-cancel`, which sends ONLY `{VisitId, Execute: "Latecancel"}` on
+`/client/updateclientvisit` under the teacher's token (`requireActor`),
+with the client id for dry run and the write guard; Undo on the row sends
+`Execute: "Unlatecancel"` the same way. Never `removeclientfromclass` with
+`LateCancel` for this: that removes the booking, which the studio does
+not do. Pessimistic: the row spins until Mindbody answers, and a 4xx is a
+409 `reason: "refused"` whose sentence the dialog (or the row, for Undo)
+shows with nothing changed. A late-cancelled visit stays on the roster
+(`lateCancelled` on `RosterEntry`, from the visit's `LateCancelled`),
+greyed, its chip reading "late cancel", with no check-in, trash, pass
+change or guest action, and is left out of the "signed up" counter;
+search names it "late cancel". **Mindbody enforces the studio's late
+cancel window**: probed on prod (2026-11-17, dummy client 100042041,
+visit 1305809, class at 18:00 the same day, run about 6:00 AM), a
+Latecancel that far ahead was refused "Cancellation is outside allowed
+window." and nothing changed. The window's size, and whether it is open
+AFTER the class (Andie's real one was marked the morning after), are not
+yet seen live. Late cancel stays offered on rows ahead of the class all
+the same: Mindbody decides. Probe: `scripts/probe-latecancel.ts`.
 
 **T242 (2026-11-17): the unpaid row's "Pay and check in" opens on the
 student's OWN passes** when they hold any that may pay for this visit
@@ -1273,6 +1303,10 @@ What that spec immediately corrected, after the guesses had already shipped:
   design had assumed impossible.
 - `/class/removeclientfromclass` and `/class/removeclientsfromclasses` exist,
   for when a booking rather than a sign-in needs undoing.
+- **A late cancel is an `Execute` code on the visit, not a removal**
+  (T245). `updateclientvisit` takes `Execute`: `Cancel`, `Latecancel`,
+  `Unlatecancel` (client.yml UpdateClientVisitRequest). Send it with
+  `VisitId` and nothing else.
 
 Refresh it from `github.com/api-evangelist/mindbody` (`openapi/`) if it drifts.
 Note that plain `curl` to raw.githubusercontent is blocked by the agent proxy
@@ -1387,6 +1421,14 @@ while `git clone` works, so clone the repo rather than fetching files.
   nothing). Each of those is logged and stands: a FALSE refusal tells a
   teacher at the counter that the money is gone and nothing was sold,
   which is worse than the bug this rail catches.
+  **A retail product comes back `IsService: true`** (T254, live sale
+  428877, 2026-11-17: Mat Rental, sent as product "0003", read back as
+  `{Id: 3, BarcodeId: "0003", IsService: true}`), so the T103 review's
+  veto on that flag refused a $201.99 card sale that had sold
+  everything, told the counter "nothing was sold", filed that sentence
+  on the client's Notes and held the client. A product line now matches
+  on its exact `BarcodeId` string only, a pricing option on `Id` (or
+  `BarcodeId`) unless the entry says `IsService: false`.
   The basket comes from the answer's own `PurchasedItems` when it
   carries one, else from the sale that `latestSale` already reads for
   the numeric id; when NEITHER says what the sale holds the outcome is
@@ -1556,6 +1598,20 @@ while `git clone` works, so clone the repo rather than fetching files.
 - **Cancelled classes stay in `/class/classes`** with `IsCanceled: true`,
   staff "TBA ." and zero booked. Filter them; the studio's schedule carries
   whole mornings of cancelled placeholder slots.
+- **The studio's late cancel MARKS the visit and keeps the pass** (T245,
+  read live on site 471, 2026-11-17, read-only). Andie's visit 1305761 on
+  class 112992 (the 7:30 PM Yin with Sound Bath of 11/16), marked Late
+  Cancel in Mindbody's UI the morning after, is STILL on the class's visit
+  list with `LateCancelled: true`, `SignedIn: false`, `Missed: true`,
+  `AppointmentStatus: "Cancelled"` and her ClassPass `ServiceId` 567467
+  still attached. No fee, no booking removed, no pass moved. And
+  **Mindbody refuses a late cancel outside the studio's window**: a
+  `Latecancel` about twelve hours before the class answered 4xx
+  "Cancellation is outside allowed window." with nothing changed, and an
+  `Unlatecancel` on a visit that was not late-cancelled answered 200 and
+  changed nothing but `LastModifiedDateTime` (prod, dummy client
+  100042041, visit 1305809, 2026-11-17). The window's size and whether it
+  is open after the class are not yet seen.
 - **`/class/classvisits` puts the CLASS name in the visit's `Name` field.**
   Reading it showed every roster row as "bikram yoga". Names come from
   explicit client fields, and otherwise from the client index by id.

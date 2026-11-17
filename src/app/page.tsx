@@ -143,6 +143,11 @@ interface RosterEntry {
   guestOf: { name: string } | null;
   paid: boolean;
   checkedIn: boolean;
+  /** T245: Mindbody's `LateCancelled` on the visit. The visit stays on the
+   *  class (that is what the studio's late cancel is), so the row stays,
+   *  greyed, and is not counted as signed up. Optional for a server that
+   *  predates it, read as false. */
+  lateCancelled?: boolean;
   /** true = waiver on file, false = blocked, null = unknown (fails open). */
   waiverSigned: boolean | null;
   /** RedAlert text from the client record; null when none or lookup failed.
@@ -1838,6 +1843,17 @@ function FrontDesk({
    *  notice when dry run or the write guard stopped the write. Never
    *  rendered as success. */
   const [cancelMsg, setCancelMsg] = useState<string | null>(null);
+  /** T245: which of the trash dialog's two writes is on the wire, for the
+   *  spinner: "Cancel booking" (the removal) or "Late cancel" (the mark).
+   *  `cancelBusy` stays the one in-flight flag the dialog closes on. */
+  const [cancelKind, setCancelKind] = useState<"remove" | "late">("remove");
+  /** T245: rows whose late-cancel mark (or its Undo) is on the wire, by
+   *  client id. Pessimistic like check-in: the row spins until Mindbody
+   *  answers, and only Mindbody's answer greys or restores it. */
+  const [lateBusy, setLateBusy] = useState<string[]>([]);
+  /** T245: per-row outcome of a late-cancel Undo: Mindbody's refusal, or
+   *  the suppression notice. Never shown as success. */
+  const [lateMsg, setLateMsg] = useState<Record<string, string>>({});
   /** Walk-in bookings in flight, by client id. Like check-in, booking is
    *  NOT optimistic: a booking is attendance-adjacent, so the row spins
    *  until Mindbody answers rather than faking success. */
@@ -2066,6 +2082,7 @@ function FrontDesk({
   const writeBusy =
     busy.length > 0 ||
     cancelBusy ||
+    lateBusy.length > 0 ||
     bookingIds.length > 0 ||
     promoting.length > 0 ||
     passSavingId !== null;
@@ -2526,6 +2543,7 @@ function FrontDesk({
      * classId at open, and closing it mid-gesture would unmount the
      * outcome of a charge. */
     setFailed({});
+    setLateMsg({});
     /* A cancel dialog has no business surviving a class switch; close it.
      * Safe even mid-write: the dialog state carries the classId it was
      * opened for, and that is what the write posts. */
@@ -2742,8 +2760,9 @@ function FrontDesk({
    */
   const cancelVisit = useCallback(
     async (req: { entry: RosterEntry; classId: number }) => {
-      if (cancelBusy) return;
+      if (cancelBusy || lateBusy.includes(req.entry.clientId)) return;
       setCancelBusy(true);
+      setCancelKind("remove");
       setCancelMsg(null);
       try {
         const res = await fetch("/api/cancel-visit", {
@@ -2779,7 +2798,112 @@ function FrontDesk({
         setCancelBusy(false);
       }
     },
-    [cancelBusy, refreshRoster, noteActor],
+    [cancelBusy, lateBusy, refreshRoster, noteActor],
+  );
+
+  /**
+   * T245: mark a visit as a late cancel (from the trash dialog's "Late
+   * cancel") or take the mark off (the late row's Undo). The studio's own
+   * late cancel in Mindbody's UI only MARKS the visit: it stays on the
+   * class with its pass, nothing is charged and no class is taken (Pete,
+   * 2026-11-17). So this sends only `{VisitId, Execute}` through
+   * /api/late-cancel, under the teacher's token.
+   *
+   * Pessimistic, like check-in: the row spins (and the dialog's button,
+   * when it came from there) until Mindbody answers, and the row only
+   * greys or comes back on Mindbody's answer, then the roster is read
+   * again so what shows is what Mindbody holds. A refusal shows
+   * Mindbody's sentence and changes nothing; a suppressed write says so
+   * and changes nothing.
+   */
+  const markLateCancel = useCallback(
+    async (req: { entry: RosterEntry; classId: number }, undo: boolean) => {
+      const { entry, classId } = req;
+      if (lateBusy.includes(entry.clientId) || busy.includes(entry.clientId)) return;
+      const fromDialog = !undo;
+      if (fromDialog && cancelBusy) return;
+      const say = (line: string) => {
+        if (fromDialog) setCancelMsg(line);
+        else setLateMsg((m) => ({ ...m, [entry.clientId]: line }));
+      };
+      if (entry.visitId === null) {
+        say("No visit id on this booking, so it cannot be marked.");
+        return;
+      }
+      setLateBusy((b) => [...b, entry.clientId]);
+      setLateMsg((m) => {
+        const { [entry.clientId]: _drop, ...rest } = m;
+        return rest;
+      });
+      setActorNotes((n) => {
+        const { [entry.clientId]: _drop, ...rest } = n;
+        return rest;
+      });
+      if (fromDialog) {
+        setCancelBusy(true);
+        setCancelKind("late");
+        setCancelMsg(null);
+      }
+      let mayHaveLanded = false;
+      try {
+        const res = await fetch("/api/late-cancel", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            visitId: entry.visitId,
+            clientId: entry.clientId,
+            undo,
+          }),
+        });
+        const body = await res.json().catch(() => null);
+        if (!res.ok) {
+          /* Only a 409 `refused` is Mindbody saying no; anything else (a
+           * 5xx, a dead transport) may have landed, so the roster is read
+           * again below rather than trusting the row as it stands. */
+          mayHaveLanded = !(res.status === 409 && body?.reason === "refused");
+          throw new Error(body?.error ?? `HTTP ${res.status}`);
+        }
+        noteActor(body, entry.clientId);
+        if (body?.suppressed) {
+          say(
+            body.suppressed === "dry-run"
+              ? "Dry run: the late cancel was not sent, nothing was written."
+              : "Write guard: this client is not in POS_WRITE_CLIENT_IDS, nothing was written.",
+          );
+          return;
+        }
+        if (body?.applied === false) {
+          mayHaveLanded = true;
+          throw new Error(
+            undo
+              ? "Mindbody answered, but the visit still reads as a late cancel."
+              : "Mindbody answered, but the visit does not read as a late cancel.",
+          );
+        }
+        if (activeIdRef.current === classId) {
+          setEntries((rows) =>
+            rows.map((r) =>
+              r.visitId === entry.visitId
+                ? {
+                    ...r,
+                    lateCancelled: !undo,
+                    checkedIn: undo ? r.checkedIn : false,
+                  }
+                : r,
+            ),
+          );
+        }
+        if (fromDialog) setCancelling(null);
+        await refreshRoster(classId);
+      } catch (err) {
+        say(err instanceof Error ? err.message : String(err));
+        if (mayHaveLanded) void refreshRoster(classId);
+      } finally {
+        setLateBusy((b) => b.filter((id) => id !== entry.clientId));
+        if (fromDialog) setCancelBusy(false);
+      }
+    },
+    [lateBusy, busy, cancelBusy, refreshRoster, noteActor],
   );
 
   /**
@@ -4971,6 +5095,12 @@ function FrontDesk({
     () => new Set(entries.map((e) => e.clientId)),
     [entries],
   );
+  /** T245: the roster less its late cancels, which stay on the screen
+   *  (greyed) but are not counted as signed up. */
+  const bookedEntries = useMemo(
+    () => entries.filter((e) => e.lateCancelled !== true),
+    [entries],
+  );
   const walkIns = useMemo(
     () => found.filter((f) => !rosterIds.has(f.id)),
     [found, rosterIds],
@@ -4985,9 +5115,21 @@ function FrontDesk({
    *  the roster and whether they are in, and who is queued, from the
    *  waitlist already loaded for a full class (never fetched for this). */
   const rosterStatus = useMemo(() => {
-    const m = new Map<string, "checked in" | "signed up" | "waitlist">();
+    const m = new Map<
+      string,
+      "checked in" | "signed up" | "late cancel" | "waitlist"
+    >();
     for (const en of entries) {
-      m.set(en.clientId, en.checkedIn ? "checked in" : "signed up");
+      /* T245: a late-cancelled visit is still theirs on this class, so
+       * search says so rather than offering to book them again. */
+      m.set(
+        en.clientId,
+        en.checkedIn
+          ? "checked in"
+          : en.lateCancelled === true
+            ? "late cancel"
+            : "signed up",
+      );
     }
     for (const w of waitlist ?? []) {
       if (!m.has(w.clientId)) m.set(w.clientId, "waitlist");
@@ -8747,7 +8889,9 @@ function FrontDesk({
               panels; the waitlist's is the only home its entries have. */}
           <div className="counter counter-stat">
             <span className="counter-label">signed up</span>
-            <span className="counter-num">{entries.length}</span>
+            {/* T245: a late cancel is still a visit on the class in
+                Mindbody, and not somebody signed up. */}
+            <span className="counter-num">{bookedEntries.length}</span>
           </div>
           <button
             className="counter"
@@ -9007,18 +9151,29 @@ function FrontDesk({
       >
         {sortedEntries.map((entry) => {
           const working = busy.includes(entry.clientId);
+          /* T245: a late cancel the studio marked. The visit is still on
+             the class in Mindbody, so the row stays, greyed, with no
+             check-in, no trash and a quiet Undo; `lateWorking` is the
+             mark or its Undo on the wire (the row spins meanwhile). */
+          const late = entry.lateCancelled === true;
+          const lateWorking = lateBusy.includes(entry.clientId);
           /* False only. Null is unknown (lookup failed) and fails open:
              no badge, normal check-in. */
-          const noWaiver = entry.waiverSigned === false && !entry.checkedIn;
+          const noWaiver =
+            entry.waiverSigned === false && !entry.checkedIn && !late;
           /* The line under the name: an in-flight call, a failure, or a
              confirm prompt outranks the quiet history line; with none of
              those and no history yet, nothing renders and nothing waits.
              The waiver gate does NOT get a line here: the "no waiver" pill
              already says it, and the tap-gate dialog carries the signing
              path (T18). */
-          const statusMsg = working
-            ? "Talking to Mindbody..."
-            : (failed[entry.clientId] ?? actorNotes[entry.clientId] ?? null);
+          const statusMsg =
+            working || lateWorking
+              ? "Talking to Mindbody..."
+              : (failed[entry.clientId] ??
+                lateMsg[entry.clientId] ??
+                actorNotes[entry.clientId] ??
+                null);
           const visits = histories[entry.clientId];
           const history =
             statusMsg === null && visits ? historyLine(visits) : "";
@@ -9055,9 +9210,10 @@ function FrontDesk({
           /* T59c review: the Guest action's presence changes the payment
            * cell's shape (see .cell-pay.has-guest), so it is decided
            * once, here, for the cell's class and the button both. */
-          const guestPass = futureClass
-            ? null
-            : usableGuestPass(passLists[entry.clientId]?.data ?? null);
+          const guestPass =
+            futureClass || late
+              ? null
+              : usableGuestPass(passLists[entry.clientId]?.data ?? null);
 
           return (
             <li key={`${entry.clientId}-${entry.mindbodyId ?? ""}`}>
@@ -9066,7 +9222,7 @@ function FrontDesk({
                   the only trigger. The inline controls' stopPropagation
                   calls are harmless leftovers; nothing depends on them
                   for check-in safety anymore. */}
-              <div className="rrow">
+              <div className={late ? "rrow late" : "rrow"}>
                 <div className="cell-name numbered">
                   {/* T115 (Pete: "i would like the app to display the
                       number for the student to the left like mindbody
@@ -9091,7 +9247,9 @@ function FrontDesk({
                       className={
                         failed[entry.clientId] || noWaiver
                           ? "subline stop-text"
-                          : !working && actorNotes[entry.clientId]
+                          : !working &&
+                              !lateWorking &&
+                              (lateMsg[entry.clientId] || actorNotes[entry.clientId])
                             ? "subline actor-note"
                             : "subline"
                       }
@@ -9288,6 +9446,7 @@ function FrontDesk({
                      * a member whose only other pass is one gets no
                      * chevron; the person-plus beside it is the control. */
                     const showControl =
+                      !late &&
                       entry.visitId !== null &&
                       known !== null &&
                       known.some(
@@ -9349,7 +9508,25 @@ function FrontDesk({
                     tap line stays straight whatever the actions cell
                     beside it holds. */}
                 <span className="cell-chip">
-                  {entry.checkedIn && !working ? (
+                  {late || lateWorking ? (
+                    /* T245: the late row's chip is a state, not a control
+                       (check-in is not offered on a visit the studio
+                       marked); it spins while the mark or its Undo is on
+                       the wire. */
+                    <span
+                      className={lateWorking ? "chip busy" : "chip late"}
+                      role="status"
+                    >
+                      {lateWorking ? (
+                        <>
+                          <span className="spinner" aria-label="working" />{" "}
+                          {late ? "undoing" : "marking"}
+                        </>
+                      ) : (
+                        "late cancel"
+                      )}
+                    </span>
+                  ) : entry.checkedIn && !working ? (
                     /* T81 (Pete: "clicking checked in should bring up the
                        checkout popup"): the chip itself opens the
                        check-out confirm, and the arrow that did is gone.
@@ -9390,9 +9567,29 @@ function FrontDesk({
                       itself; this slot holds the trash on a row that is
                       not checked in, and a spacer otherwise, so the Buy
                       bag keeps its column. */}
-                  {!entry.checkedIn && !working ? (
-                    /* Not checked in: the quiet trash cancels the BOOKING
-                       (behind a confirm) rather than a sign-in. */
+                  {late && !lateWorking ? (
+                    /* T245: the quiet Undo takes the late-cancel mark off
+                       (`Execute: "Unlatecancel"`), straight away and
+                       pessimistically: the row spins until Mindbody
+                       answers. */
+                    <button
+                      className="late-undo"
+                      disabled={working || activeId === null}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (activeId === null) return;
+                        void markLateCancel({ entry, classId: activeId }, true);
+                      }}
+                      aria-label={`Undo the late cancel for ${entry.name}`}
+                      title="Undo the late cancel"
+                    >
+                      Undo
+                    </button>
+                  ) : !entry.checkedIn && !working && !lateWorking ? (
+                    /* Not checked in: the quiet trash opens the choice
+                       (T245): cancel the BOOKING, or mark a late cancel.
+                       Offered whatever the class's clock says, since a
+                       no-show is usually marked after the class. */
                     <button
                       className="undo-btn"
                       onClick={(e) => {
@@ -9404,8 +9601,8 @@ function FrontDesk({
                          * different activeId. */
                         setCancelling({ entry, classId: activeId });
                       }}
-                      aria-label={`Remove ${entry.name} from this class`}
-                      title={`Remove ${entry.name} from this class`}
+                      aria-label={`Cancel or late cancel ${entry.name}`}
+                      title={`Cancel or late cancel ${entry.name}`}
                     >
                       <TrashIcon />
                     </button>
@@ -10766,7 +10963,7 @@ function FrontDesk({
               </p>
               <p className="modal-title">
                 {counterModal === "checkedIn"
-                  ? `Checked in (${entries.filter((e) => e.checkedIn).length} of ${entries.length})`
+                  ? `Checked in (${entries.filter((e) => e.checkedIn).length} of ${bookedEntries.length})`
                   : `Waiting list${waitlist !== null ? ` (${waitlist.length})` : ""}`}
               </p>
             </div>
@@ -11497,7 +11694,13 @@ function FrontDesk({
 
       {/* Cancel a booking. Names the person, says what it does in the stop
           colour, and waits for Mindbody on the confirm button itself: the
-          dialog is the spinner, and it refuses to close mid-write. */}
+          dialog is the spinner, and it refuses to close mid-write.
+          T245 (Pete: "when they press the trash can it should pop up a
+          'late cancel/no show' option"): the trash now offers TWO
+          choices, each a 64px button with its consequence under it.
+          "Cancel booking" is the removal it always was; "Late cancel"
+          only marks the visit in Mindbody, which is all the studio does
+          for one. The X, the scrim and Escape are the way out. */}
       {cancelling ? (
         <div
           className="modal-scrim"
@@ -11513,7 +11716,7 @@ function FrontDesk({
             className="modal"
             role="alertdialog"
             aria-modal="true"
-            aria-label="Confirm removal from class"
+            aria-label="Cancel booking or late cancel"
             onClick={(e) => e.stopPropagation()}
           >
             <button
@@ -11530,7 +11733,8 @@ function FrontDesk({
             <div className="modal-head">
               <p className="modal-kicker">Remove from class</p>
               <p className="modal-title">
-                Remove {cancelling.entry.name} from this class?
+                Cancel {cancelling.entry.name}&apos;s booking, or mark a late
+                cancel?
               </p>
             </div>
             <div className="modal-entity">
@@ -11539,33 +11743,40 @@ function FrontDesk({
                 {entityFacts(cancelling.entry)}
               </span>
             </div>
-            <p className="modal-consequence">
-              Cancels their booking for this class.
-            </p>
-            {cancelMsg ? <p className="pass-note modal-note-gap">{cancelMsg}</p> : null}
-            <div className="modal-actions">
-              <button
-                className="modal-cancel"
-                disabled={cancelBusy}
-                onClick={() => {
-                  setCancelling(null);
-                  setCancelMsg(null);
-                }}
-              >
-                Cancel
-              </button>
-              <button
-                className="modal-confirm"
-                disabled={cancelBusy}
-                onClick={() => void cancelVisit(cancelling)}
-              >
-                {cancelBusy ? (
-                  <span className="spinner" aria-label="working" />
-                ) : (
-                  "Remove"
-                )}
-              </button>
+            <div className="cancel-choices">
+              <div className="cancel-choice">
+                <button
+                  className="cancel-choice-btn remove"
+                  disabled={cancelBusy}
+                  onClick={() => void cancelVisit(cancelling)}
+                >
+                  {cancelBusy && cancelKind === "remove" ? (
+                    <span className="spinner" aria-label="working" />
+                  ) : null}
+                  Cancel booking
+                </button>
+                <p className="cancel-choice-line">
+                  Removes them from this class.
+                </p>
+              </div>
+              <div className="cancel-choice">
+                <button
+                  className="cancel-choice-btn late"
+                  disabled={cancelBusy}
+                  onClick={() => void markLateCancel(cancelling, false)}
+                >
+                  {cancelBusy && cancelKind === "late" ? (
+                    <span className="spinner" aria-label="working" />
+                  ) : null}
+                  Late cancel
+                </button>
+                <p className="cancel-choice-line">
+                  Marks it in Mindbody as a late cancel. No fee, nothing
+                  taken off their pass.
+                </p>
+              </div>
             </div>
+            {cancelMsg ? <p className="pass-note modal-note-gap">{cancelMsg}</p> : null}
           </div>
         </div>
       ) : null}

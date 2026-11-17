@@ -351,7 +351,7 @@ const waitlist = {}; /* classId -> entries */
 
 function classRow(d) {
   const s = staff.find((x) => x.Id === d.teacher);
-  const booked = (visits[d.Id] ?? []).length;
+  const booked = (visits[d.Id] ?? []).filter((v) => !v.LateCancelled).length;
   return {
     Id: d.Id,
     ClassScheduleId: d.Id - 20000,
@@ -449,6 +449,13 @@ let failCheckouts = 0;
 /* And POST /__fake/delay-checkout?ms=20000&n=1 holds the next N real
  * checkouts that long before answering (T253 review: a slow Mindbody). */
 let delayCheckouts = { n: 0, ms: 0 };
+/* T245: POST /__fake/refuse-execute?n=1 makes the next N updateclientvisit
+ * calls carrying `Execute` answer a 400, as Mindbody refusing a late
+ * cancel would. Not part of any Mindbody API. */
+let refuseExecutes = 0;
+/* And POST /__fake/delay-execute?ms=3000&n=1 holds the next N of them
+ * that long, so the row's spinner can be seen. */
+let delayExecutes = { n: 0, ms: 0 };
 
 function handle(method, path, q, body, res) {
   console.log(`[fake-mb] ${method} ${path}${q.size ? "?" + q.toString().slice(0, 120) : ""}`);
@@ -456,6 +463,14 @@ function handle(method, path, q, body, res) {
     case "/__fake/fail-checkout": {
       failCheckouts = Number(q.get("n") ?? 1) || 0;
       return send(res, 200, { failCheckouts });
+    }
+    case "/__fake/refuse-execute": {
+      refuseExecutes = Number(q.get("n") ?? 1) || 0;
+      return send(res, 200, { refuseExecutes });
+    }
+    case "/__fake/delay-execute": {
+      delayExecutes = { n: Number(q.get("n") ?? 1) || 0, ms: Number(q.get("ms") ?? 3000) || 0 };
+      return send(res, 200, delayExecutes);
     }
     case "/__fake/delay-checkout": {
       delayCheckouts = { n: Number(q.get("n") ?? 1) || 0, ms: Number(q.get("ms") ?? 20000) || 0 };
@@ -576,6 +591,33 @@ function handle(method, path, q, body, res) {
             if (body.ClientServiceId && !clientServices.some((s) => s.Id === Number(body.ClientServiceId))) {
               return send(res, 400, { Error: { Message: "Client service not found.", Code: "InvalidParameter" } });
             }
+            return send(res, 200, { Visit: v });
+          }
+          /* T245: the execute codes (client.yml UpdateClientVisitRequest:
+           * Cancel, Latecancel, Unlatecancel). A late cancel MARKS the
+           * visit, as site 471's real one does: it stays on the class,
+           * signed out, its pass still attached. Unlatecancel takes the
+           * mark off. Cancel is not modelled. */
+          if (typeof body.Execute === "string") {
+            if (delayExecutes.n > 0 && !body.__delayed) {
+              delayExecutes.n -= 1;
+              const ms = delayExecutes.ms;
+              setTimeout(() => handle("POST", "/client/updateclientvisit", q, { ...body, __delayed: true }, res), ms);
+              return;
+            }
+            if (refuseExecutes > 0) {
+              refuseExecutes -= 1;
+              return send(res, 400, { Error: { Message: "Cancellation is outside allowed window.", Code: "InvalidParameter" } });
+            }
+            if (body.Execute === "Latecancel") {
+              v.LateCancelled = true;
+              v.SignedIn = false;
+            } else if (body.Execute === "Unlatecancel") {
+              v.LateCancelled = false;
+            } else {
+              return send(res, 400, { Error: { Message: `Execute ${body.Execute} is not supported by the fake.`, Code: "InvalidParameter" } });
+            }
+            console.log(`[fake-mb] visit ${v.Id} Execute=${body.Execute} keys=${Object.keys(body).filter((k) => k !== "__delayed").sort().join(",")}`);
             return send(res, 200, { Visit: v });
           }
           if (typeof body.SignedIn === "boolean") v.SignedIn = body.SignedIn;
@@ -725,7 +767,8 @@ function handle(method, path, q, body, res) {
         Id: l.found?.ProductId ?? l.id,
         BarcodeId: l.found?.Id ?? null,
         Name: l.found?.Name ?? "Item",
-        IsService: l.found?._kind === "Service",
+        /* T254: live Mindbody says true for a retail product too (sale 428877). */
+        IsService: true,
         Quantity: l.qty,
         Price: l.found?.Price ?? 0,
       }));
