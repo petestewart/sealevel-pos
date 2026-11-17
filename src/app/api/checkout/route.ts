@@ -2740,7 +2740,7 @@ async function runCheckout(
         return NextResponse.json(
           {
             error:
-              `Remove the discount — this gift card can't be sold for ` +
+              `Remove the discount: this gift card can't be sold for ` +
               `less than its value. The discount comes off what's on the ` +
               `card, so this would hand over a $${trial.value.toFixed(2)} ` +
               `card instead of a $${unit.cardValue.toFixed(2)} one. Giving ` +
