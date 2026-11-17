@@ -1,10 +1,11 @@
 /**
  * Phase 2: the catalog, pricing and payment layer (T22 + T24, PLAN 2.1-2.3).
  *
- * T22 shipped the reads and the Test-mode pricing; T24 added the three
+ * T22 shipped the reads and the Test-mode pricing; T24 added the
  * writes that move money: `checkoutCart` (a real, non-Test
  * /sale/checkoutshoppingcart), `purchaseCredit` (/sale/purchaseaccountcredit,
- * the under-$10 card path's first half) and nothing else. Every one of them
+ * which no card sale reaches since T238 retired the $10 card floor) and
+ * nothing else. Every one of them
  * goes through mindbody(), so dry run and the write guard intercept them
  * exactly as they intercept a check-in, and suppression is REPORTED to the
  * caller rather than dressed as success.
@@ -1198,23 +1199,38 @@ function purchasedIds(entry: unknown): string[] {
 /**
  * Does this purchased item answer to this ordered line?
  *
- * The id has to match, and the item's own `IsService` (sale.yml:2314:
- * "the purchased item was a pricing option for a service") must not
- * CONTRADICT the line's type. Both id namespaces are small integers on
- * one site -- a product's barcode and a pricing option's ProductId can
- * coincide -- so without this a sale holding a pass could answer for a
- * retail product that was never sold (T103 review, proved against the
- * mock). Where the flag is absent nothing is contradicted and the
- * either-way match stands.
+ * Both id namespaces are small integers on one site -- a product's
+ * barcode and a pricing option's ProductId can coincide -- so a sale
+ * holding a pass must not answer for a retail product that was never
+ * sold (T103 review, proved against the mock). T103 kept them apart
+ * with the entry's `IsService` (sale.yml:2314); live Mindbody reports
+ * it TRUE for a retail product (T254), so a product line now matches
+ * on its exact barcode string only, and a pricing option on either id
+ * unless the entry says it is not a service.
  */
 function purchasedMatches(entry: unknown, line: CartLine): boolean {
   const id = String(line.metadataId).trim().toLowerCase();
+  const e = entry as Record<string, unknown> | null | undefined;
+  /* T254: a retail PRODUCT is matched on its barcode string and nothing
+   * else, and its IsService is not read. Live sale 428877 (site 471,
+   * 2026-11-17) holds Mat Rental, sent as product "0003", as
+   * `{Id: 3, BarcodeId: "0003", IsService: true}`: Mindbody reports
+   * IsService TRUE for a retail product, so the veto that stood here
+   * refused a sale that had sold everything ("nothing was sold", a
+   * false alarm at the counter on a $201.99 card sale). The barcode is
+   * the product's own id as the cart sent it, which a pricing option's
+   * numeric ProductId (or its zero-padded six-digit BarcodeId) does not
+   * collide with, and the entry's numeric Id is deliberately NOT a
+   * match for a product line, which is what keeps the two namespaces
+   * apart now that the flag cannot. */
+  if (line.type === "Product") {
+    const barcode = e?.["BarcodeId"];
+    return typeof barcode === "string" && barcode.trim().toLowerCase() === id;
+  }
   if (!purchasedIds(entry).includes(id)) return false;
-  const isService = (entry as Record<string, unknown> | null | undefined)?.[
-    "IsService"
-  ];
-  if (isService === true && line.type === "Product") return false;
-  if (isService === false && line.type === "Service") return false;
+  /* A pricing option still refuses an entry Mindbody says is NOT a
+   * service; IsService true is all it has ever been seen to say. */
+  if (e?.["IsService"] === false && line.type === "Service") return false;
   return true;
 }
 
@@ -1369,11 +1385,18 @@ export function assertBasket(
  * check-in, and every function reports suppression instead of success.
  * =================================================================== */
 
-/** The studio's card-processing floor, in dollars. Policy, not API: the
- *  amount on /sale/purchaseaccountcredit is dynamic (the request schema,
- *  sale.yml:4774-4810, carries NO Amount field; the figure travels in
- *  PaymentInfo.Metadata), so this is a config value, not a rebuild. */
-export const CARD_MINIMUM_USD = 10;
+/**
+ * T238: whether a card (stored, typed, or a split's card leg) may be
+ * charged this amount. A card is charged exactly what it pays, however
+ * small: the studio's old $10 card floor, which sent a smaller card sale
+ * through a $10 account credit purchase, is retired (Pete, 2026-11-15:
+ * "change it so any amount can be charged"). What is still refused is a
+ * card charge of NOTHING: zero, negative, or not a number, none of which
+ * is a tender.
+ */
+export function cardChargeable(amount: number): boolean {
+  return Number.isFinite(amount) && amount > 0;
+}
 
 /**
  * The payment shapes this counter takes, mapped to CheckoutPaymentInfo
@@ -1620,18 +1643,15 @@ export async function checkoutCart(
 }
 
 /**
- * The Test: true rehearsal that must run BEFORE the under-$10 path buys
- * any credit (PLAN 2.3's mitigation): if Mindbody will not accept the
- * cart, the failure costs nothing. This IS priceCart -- the same
+ * The Test: true rehearsal that runs BEFORE every charge: if Mindbody
+ * will not accept the cart, the failure costs nothing, and its total is
+ * the only one that may be charged. This IS priceCart -- the same
  * machinery, same stub-retry behavior -- under the name the checkout flow
- * means by it. It deliberately does NOT rehearse with the DebitAccount
- * payment the real call will use: at rehearsal time the client has not
- * bought the credit yet, so a balance-checked DebitAccount could fail for
- * exactly the reason the flow is about to fix, and the Comp stub (the one
- * payment shape that could move nothing even if Test were ignored) is the
- * only safe stand-in. A passing rehearsal validates the CART, not the
- * payment; the live call can still fail, which is what the structured
- * step-2 failure report exists for.
+ * means by it. It deliberately does NOT rehearse with the payment the
+ * real call will use: the Comp stub (the one payment shape that could
+ * move nothing even if Test were ignored) is the only safe stand-in. A
+ * passing rehearsal validates the CART, not the payment; the live call
+ * can still fail, which the checkout route reports as exactly that.
  */
 export async function rehearseCheckout(
   items: readonly CartLine[],
@@ -1759,16 +1779,22 @@ export interface CreditPurchaseOutcome {
 }
 
 /**
- * POST /sale/purchaseaccountcredit (sale.yml:1778), used ONLY by the
- * under-$10 card path: charge the stored card for CARD_MINIMUM_USD of
- * account credit, then check the cart out on DebitAccount.
+ * POST /sale/purchaseaccountcredit (sale.yml:1778): charge the stored
+ * card for an amount of account credit.
+ *
+ * NOT CALLED by any sale today. It was the first half of the under-$10
+ * card path (buy $10 of credit, then check the cart out on DebitAccount),
+ * which T238 retired: a card is now charged what it pays in one
+ * checkout. It is kept because Phase 4's gift card on the reader (PLAN
+ * T232) may need a credit-then-spend path again; nothing else should
+ * start calling it without reading T238.
  *
  * Request per PurchaseAccountCreditRequest (sale.yml:4774): ClientId
  * (4779), Test (4783), LocationId (4787), SendEmailReceipt (4791),
  * PaymentInfo (4808, a CheckoutPaymentInfo). There is NO top-level
- * Amount: the amount rides PaymentInfo.Metadata, which is what makes the
- * floor a policy number rather than a preconfigured SKU (design doc,
- * "The amount is dynamic"). The card is named by lastFour per the
+ * Amount: the amount rides PaymentInfo.Metadata, so any amount can be
+ * bought rather than a preconfigured SKU (design doc, "The amount is
+ * dynamic"). The card is named by lastFour per the
  * StoredCard key set (sale.yml:3934).
  */
 export async function purchaseCredit(

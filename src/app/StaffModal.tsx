@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import PasswordInput from "./PasswordInput";
 import PinModal from "./PinModal";
+import { ReloadApp } from "./UpdateBanner";
 
 /**
  * The staff sign-in (T49), required since T50. Pete: "seems like it's
@@ -356,6 +357,9 @@ export default function StaffModal({
                   {hasPin ? "Change PIN" : "Set up PIN"}
                 </button>
               ) : null}
+              {/* T246: picks up a new deploy. Always reloads; the
+                  "A new version is ready" banner is the careful one. */}
+              <ReloadApp buttonClass="modal-cancel" />
               <button
                 className="modal-confirm"
                 disabled={busy}

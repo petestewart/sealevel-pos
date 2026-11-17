@@ -471,7 +471,7 @@ footer { grid-column: 1 / -1; border-top: 2px solid var(--rule); padding-block: 
       <h3>Fixing a mistake</h3>
       <div class="prose">
         <p><strong>Checked in the wrong person?</strong> Tap their green <span class="chip ok">✓ checked in</span> button and confirm <span class="btn">Check out</span>. They are marked as not attended and stay booked.</p>
-        <p><strong>Someone is not coming, or was booked into the wrong class?</strong> Tap the trash can on their row and confirm <span class="btn">Remove</span>. This cancels their booking. The trash can only appears on rows that are not checked in, so check them out first if needed.</p>
+        <p><strong>Someone is not coming, or was booked into the wrong class?</strong> Tap the trash can on their row. <span class="btn">Cancel booking</span> takes them out of the class. <span class="btn">Late cancel</span> is for a late cancel or a no-show: it marks the visit in Mindbody, the way the studio always has, and they stay on the list in grey. There is no fee and nothing comes off their pass. Mindbody decides when a late cancel is allowed, and if it says no, the box shows its reason and nothing changes. Tap <span class="btn">Undo</span> on a grey row to take the mark off. The trash can only appears on rows that are not checked in, so check them out first if needed.</p>
       </div>
       <div class="pair">
         <figure>
@@ -479,8 +479,8 @@ footer { grid-column: 1 / -1; border-top: 2px solid var(--rule); padding-block: 
           <figcaption>Check out: undoes a check-in.</figcaption>
         </figure>
         <figure>
-          <button class="shot" type="button" data-full="img/14-remove.png"><img src="img/14-remove.png" alt="Remove Dana Whitfield from this class? box with Cancel and a red Remove button" loading="lazy"></button>
-          <figcaption>Remove: cancels the booking.</figcaption>
+          <button class="shot" type="button" data-full="img/14-remove.png"><img src="img/14-remove.png" alt="Cancel Dana Whitfield's booking, or mark a late cancel? box with a red Cancel booking button and a Late cancel button" loading="lazy"></button>
+          <figcaption>The trash can: cancel the booking, or mark a late cancel.</figcaption>
         </figure>
       </div>
 
@@ -764,10 +764,10 @@ footer { grid-column: 1 / -1; border-top: 2px solid var(--rule); padding-block: 
       <h3>Other ways to pay</h3>
       <ul class="prose">
         <li><strong>A card that is not on file:</strong> tap the small keypad square on the Card tile and type the card in. You can use it once, or keep it on file for next time.</li>
-        <li><strong>Account:</strong> uses their account credit. Charging more than they have puts their account below zero and needs your PIN.</li>
+        <li><strong>Account:</strong> uses their account credit. When their credit covers the whole sale, the Pay screen starts with Account already in the payment; tap Card, Cash or Gift card to pay that way instead, or the <strong>&times;</strong> to take it off. Charging more than they have puts their account below zero and needs your PIN.</li>
         <li><strong>Gift card:</strong> type or scan the gift card number and tap <span class="btn">Check balance</span>.</li>
         <li><strong>Splitting:</strong> a sale can be paid two ways (some cash, the rest on card). Tap a second tile and adjust the amounts.</li>
-        <li><strong>Card sales under $10:</strong> the card is charged $10 and the difference stays on their account as credit for next time. Tell the student.</li>
+        <li><strong>Small sales:</strong> any amount can go on a card, however small. Nothing is added to their account.</li>
       </ul>
     </section>
 

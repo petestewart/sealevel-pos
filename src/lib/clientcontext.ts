@@ -59,6 +59,10 @@ export interface PassInfo {
    *  SaleDateTime falls on this day) and, for a pass just sold, which
    *  instance is the new one. null when Mindbody omits it. */
   paymentDate: string | null;
+  /** T242: `ClientService.Program.Id` ("the service category this service
+   *  falls under", client.yml), or null when Mindbody omits it. What the
+   *  "Pay and check in" dialog compares with the class's own program. */
+  programId: number | null;
 }
 
 export interface VisitInfo {
@@ -160,6 +164,7 @@ function passInfo(s: any): PassInfo {
     count: sessionless(s?.Name) ? null : num(s?.Count),
     expires: str(s?.ExpirationDate),
     paymentDate: str(s?.PaymentDate),
+    programId: num(s?.Program?.Id),
   };
 }
 

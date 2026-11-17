@@ -13,6 +13,7 @@ import {
 } from "@/lib/display";
 import { displayIdFrom } from "@/lib/displayauth";
 import { lastEventId, sseResponse } from "@/lib/sse";
+import { buildVersion } from "@/lib/version";
 
 export const dynamic = "force-dynamic";
 
@@ -59,6 +60,10 @@ export async function GET(request: Request) {
        * must not move a reconnecting display's Last-Event-ID past
        * anything it has yet to see. */
       writer.send(0, scene.event, scene.data);
+      /* T246: and the build this server runs, so a display whose stream
+       * reconnects after a deploy learns it at once rather than at its
+       * next minute's poll. Id 0 for the same reason as the scene. */
+      writer.send(0, "version", { version: buildVersion() });
       const unsubscribe = subscribeDisplay((ev) =>
         writer.send(ev.id, ev.event, ev.data),
       );
