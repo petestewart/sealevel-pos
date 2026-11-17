@@ -1195,6 +1195,13 @@ export async function refuseRequest(
     false,
   );
   emit("teacher", "refused", { requestId: c.id, kind: c.kind, reason });
+  /* T247 (Pete: "if I click 'new here? Sign up' and then click 'not
+   * now', nothing happens"): a refusal takes the scene off the student's
+   * screen HERE. Before, only the teacher heard it, which ended a waiver
+   * or an approval because the teacher's iPad then cleared the screen,
+   * but a sign-up the student started themselves has no teacher waiting,
+   * so the display sat on the form until the app was closed. */
+  emit("display", "idle", {});
   return { ok: true };
 }
 
