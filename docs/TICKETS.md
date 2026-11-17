@@ -23540,3 +23540,45 @@ merge kept every rule main has and re-applied this ticket on top:
   `Test: true`. Pete's bug is therefore still open.
 - **Probe numbers**: main's B5 is the promotion code probe, so the free
   gift card probe is B6 and the gift card shape is B7.
+
+### Verified after the merge (2026-11-17)
+
+- `tsc --noEmit` and `next build`: clean.
+- Against `scripts/training/fake-mindbody.mjs` (fake on :4255, app on
+  :3255, a private Postgres), in Chromium at 1180x820:
+  - search: "gift card" shows the Single Class, Five Class and Custom
+    gift card cells; "towel" shows Towel Rental and Yoga Mat Towel;
+    "zzzz" says nothing matches.
+  - a $210.00 sale for Jordan Kim: the stored card tapped for the whole
+    and set to $100.00, a typed card (...1111) took the $110.00 left, a
+    second typed card (...4444) on the covered total opened its keypad
+    at $0.00 and $5.00 typed there came off the first typed card. ONE
+    `checkoutshoppingcart` went out with three Payments, StoredCard
+    $100.00, CreditCard $105.00, CreditCard $5.00: a $5.00 card leg was
+    accepted (T238). The done block named all three legs and both last
+    fours.
+  - a Cash tap on that covered total opened a $0.00 part; Cancel took it
+    off again and left the three parts as they were.
+  - Sam Okafor, a $35.31 tank top on the stored card, 20% discount with
+    the PIN: the one Card line moved to $28.25 and Finalize charged
+    $28.25 with no re-pick.
+  - "customer approves each sale" on (`POS_CUSTOMER_CONFIRMS_SALE`), a
+    display paired: a $100.00 / $60.00 / $50.00 split for Taylor Brooks
+    put "Paying by Card $100.00, Card $60.00, Card $50.00" on the
+    customer screen; with the two typed legs moved to $70.00 / $40.00
+    in the request after the student tapped Approve, `/api/checkout`
+    answered 409 `reason: "approval"` ("The ticket or the payment
+    changed after the customer approved it.") and the fake recorded no
+    sale. The same split approved untouched sold, three Payments.
+  - `/api/checkout` refuses five legs, two stored card legs and two kept
+    typed cards, each 400 in words with nothing sent.
+
+### Not verified
+
+- Nothing here has met live Mindbody; several `CreditCard` entries in
+  one checkout are the open question.
+- T239's automatic credit line beside a T255 take-from part, and a
+  discount over it, were not driven: no client in the fake has a
+  positive balance.
+- With three or four parts the Finalize button sits below the fold at
+  820px tall; the payment column scrolls to it.
