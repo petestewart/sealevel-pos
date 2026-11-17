@@ -1916,6 +1916,7 @@ function FrontDesk({
     charging: false,
     payTap: () => undefined,
     holdWhy: null,
+    closeWhy: null,
   });
   /** T85: the dev drawer's pill became the bar's Dev item, so the drawer's
    *  two facts are held here: whether /api/devlog answered at all, and
@@ -7395,13 +7396,18 @@ function FrontDesk({
    * mid-charge does: what is on that screen is not recoverable from
    * anywhere else once it is gone. */
   const leaveWhy = saleNav.charging ? "Charging..." : saleNav.holdWhy;
+  /* T249: and closing the Cart screen waits on an outcome that may have
+   * moved money (until its own Understood) or a part-sold ticket (until
+   * it is emptied). Only Sign-in closes it; Cart stays live, since it is
+   * the way back to Empty cart. */
+  const closeWhy = leaveWhy ?? saleNav.closeWhy;
   const navItems: NavItem[] = [
     {
       key: "signin",
       label: "Sign-in",
       icon: <SignInIcon />,
       on: !saleOpen,
-      why: leaveWhy,
+      why: closeWhy,
       onTap: () => {
         /* The cart and its client survive, exactly as the Back this
          * replaces left them: closing the overlay renders nothing, it

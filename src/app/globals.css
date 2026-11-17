@@ -9094,3 +9094,22 @@ textarea.reason-note-field:disabled::placeholder {
   color: var(--warn);
   font-weight: 700;
 }
+
+/* T249: why the Cart screen cannot be closed yet, above Empty cart in the
+ * shelf's foot. The stop block's own treatment; its one control, when
+ * the reason is an outcome on the payment surface, is the 64px quiet
+ * button outcome blocks use. */
+.t-foot-hold {
+  margin: 0;
+  padding: 12px 16px;
+}
+
+.t-foot-hold-why {
+  margin: 0;
+}
+
+.t-foot-hold-go {
+  display: block;
+  width: 100%;
+  margin-top: 10px;
+}

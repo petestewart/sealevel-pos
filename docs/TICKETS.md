@@ -22221,3 +22221,72 @@ Water Bottle alone on the ticket and the sale with no client, and the
 existing keep-or-empty question ("Start a new cart? This cart has 1 item.
 Keep them?") followed, exactly as the client's X asks after any detach
 with items left (Pete's earlier rule).
+
+
+## T249. A sold-nothing or part-sold sale stays locked when the Cart screen is closed and reopened (found in review, 2026-11-17)
+
+T241's final review (of 7cdc0ab, before PR #14 merged) found a gap that
+predates T241 (since 2026-09-14). `SaleScreen` returns null when closed and
+`PaymentPanel` unmounts, so its `result` and `partialLock` are lost while
+the cart survives. T241 kept an UNKNOWN outcome in sessionStorage, but a
+T103 sold-nothing answer and a T95/T90 partial sale are not recorded. A
+teacher who taps Sign-in and then Cart finds the ticket intact and
+unlocked, and Finalize takes a second payment (a partial gift card ticket
+can sell the same cards again).
+
+### To do
+
+- [x] Record sold-nothing and partial outcomes in the same sessionStorage
+      record as the unknown outcome (no card data), and restore each as
+      itself on reopen and on reload, `partialLock` included, until its own
+      acknowledgement.
+- [x] Also hold the sale screen's close and the nav bar while a
+      `partialLock` or an unacknowledged sold-nothing, partial or unknown
+      result stands, with a sentence saying why.
+- [x] Write the record at the charge TAP (cleared on a definite answer), so a
+      reload or tab eviction DURING the charge comes back as "the last
+      charge needs checking", not as a clean ticket.
+- [x] Review residual: with the database down, `display_typed_card` falls
+      back to the environment; keep the last stored answer the way T207's
+      setting does, so a blip cannot turn a stored "off" back on.
+- [x] tsc, next build, Chromium drive against the fake: a soldNothing
+      stored-card answer, close, reopen: still locked; a partial gift card
+      ticket, close, reopen: still locked; a reload mid-charge: locked as
+      needing a check.
+
+**Done (2026-11-17).** Both halves, either enough alone. The T241 record
+(`pos_uncertain_charge`, `HeldRecord` in `SaleScreen.tsx`) is now written
+at the charge tap as `charging`, removed on a definite answer, replaced
+by an ambiguous, sold-nothing or partial outcome (the route's sentence,
+the sale id, T103's basket audit) until that result's own Understood, and
+keeps `partialLock` with a print of the ticket's line keys and quantities
+until the ticket is emptied; a mount restores each as itself, after a
+reload says when, and brings a `charging` record back as the unknown
+outcome. The lock comes back only onto its own ticket (after a reload
+the cart is gone), and an emptied ticket always releases it. No card
+number, CVV, gift card number or gift card id is ever in it. The cart
+reset nonce now acts only on a bump seen while the panel is mounted, so
+a remount cannot wipe a restored lock. Close is held: SaleScreen's close
+and Escape refuse and the nav bar's Sign-in is off (`closeWhy`) while
+any of those stands, and the shelf's foot says why, with "Show the last
+charge" when the reason is a result (it opens the pay surface without
+Pay's gates and returns to the shelf once acknowledged); Cart stays live
+to reach Empty cart. `display_typed_card` keeps the last stored answer
+through a quiet database, as T207's `signup_mode` does. `tsc --noEmit`
+and `next build` clean. Driven in Chromium against a scratch copy of the
+fake: a stored-card checkout answering sold nothing (Sign-in refused
+with the sentence, Escape refused on the shelf, a reload brought the
+block back with "Recorded at 5:33 AM, before this page reloaded.",
+Understood freed it and returned to the shelf); a two-card gift ticket
+whose second card was refused (partial: the id never reached the
+record, Sign-in held through "Written on the card" and Understood on the
+lock's own sentence, Finalize refused, Empty cart freed it; reloaded
+before "Written", the block came back saying to read the ids in
+Mindbody); a checkout held 25 seconds and reloaded mid-charge (came back
+"had not answered when the page reloaded", Finalize refused until
+Understood); an ordinary stored-card sale and a gift card sale whose cards both sold
+left no record (the stored-card sale closed with Done). With the close hold switched off
+in a scratch build only, Sign-in then Cart after a sold-nothing and
+after a partial brought the ticket back locked, before and after
+Understood. Not driven: the database blip for `display_typed_card`
+(the shared Postgres was not stopped).

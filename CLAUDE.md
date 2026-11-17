@@ -241,6 +241,46 @@ over-long key, the store off or full of flights in progress all charge as
 before, loudly in the log. Nothing below the gate moved, and nothing about
 it is settable from the drawer.
 
+### A charge that may have moved money outlives the Cart screen (T249)
+
+`SaleScreen` renders nothing when closed and `PaymentPanel` unmounts with
+it, while the CART survives, so from 2026-09-14 until T249 a T103
+sold-nothing answer or a T95/T90 partial (and T95's `partialLock`) was
+lost on Sign-in then Cart: the ticket came back intact and unlocked and
+Finalize took a second payment (a partial gift card ticket could sell the
+same cards again). Two things now stand in the way, either enough alone:
+
+- **The tab's record** (`pos_uncertain_charge` in sessionStorage, the
+  T241 record widened, `HeldRecord` in `SaleScreen.tsx`). It is written at
+  the charge TAP, synchronously before the request, as `stage:
+  "charging"`; a definite answer (paid, suppressed, refused) removes it;
+  an ambiguous, sold-nothing or partial answer replaces it with that
+  outcome (the route's sentence, the sale id and T103's basket audit),
+  which stays until that result's own Understood; and the lock stays in
+  it, with a print of the ticket's line keys and quantities, until the
+  ticket is emptied. A mount restores each as itself; after a reload it
+  says when ("Recorded at 3:41 PM, before this page reloaded."), and a
+  record still `charging` comes back as the unknown outcome ("had not
+  answered when the page reloaded"), never a clean ticket. The lock comes
+  back only onto the ticket it was about, so after a reload (the cart is
+  memory) it does not, and an emptied ticket always releases it. **No
+  card data**: no number, CVV, gift card number or gift card id (a
+  partial's ids are not kept; the restored block says to read them in
+  Mindbody if they were still unwritten), and any long digit run in a
+  stored sentence is struck.
+- **The close is held.** While an unknown, sold-nothing or partial
+  result is unacknowledged, or `partialLock` stands, SaleScreen's close
+  and Escape refuse and the nav bar's Sign-in is off with the sentence
+  (`SaleNavState.closeWhy`); the shelf's foot says it in words, with
+  "Show the last charge" when the reason is a result (that opens the pay
+  surface WITHOUT Pay's gates, since after a reload there is often
+  nothing to pay, and returns to the shelf once the result is
+  acknowledged). The nav bar's Cart stays live: it is how a teacher
+  reaches Empty cart, which is what releases a part-sold ticket.
+
+Nothing about what the server charges changed. The record covers the
+Cart screen only; the roster's pay dialog keeps its own outcome.
+
 ### A sold pass can come with a place (T219)
 
 A workshop is sold as a pass AND booked, and the counter now does both
@@ -521,7 +561,11 @@ think we can keep that for now and remove it once we actually have
 stripe ... let's hide it behind a flag so i can turn it off if it
 becomes annoying"). `display_typed_card` in `app_settings`, DEFAULT ON,
 with `POS_DISPLAY_TYPED_CARD` as the no-database fallback (only `false`
-or `0` turn it off), read and stored exactly like T205's
+or `0` turn it off), read and stored like T205's, except that since T249
+a store that goes QUIET keeps the last answer it gave, as T207's does
+(the environment's answer is the looser one here, so a blip must not
+turn a stored "off" back on), falling to the environment only when this
+process has never had an answer or the row is gone
 (`displayTypedCardAllowed` in `src/lib/approval.ts`, `PUT
 /api/admin/display-typed-card`, a 64px admin control, the log naming
 the staff id). Off, the SERVER removes a way to pay: "A different card"
@@ -775,7 +819,8 @@ result's own Understood** (third review: a tile tap, a client change or
 a new ticket does not dismiss it), the fetch itself failing is handled
 the same way, and the outcome is kept in sessionStorage (no card data:
 that the last charge needs checking, when, and the request id) so a
-reload shows it again with the display's choices held. "A different card" stays offered
+reload shows it again with the display's choices held; T249 widened
+that record (see its own section near the top). "A different card" stays offered
 while a typed card is the tender, and choices are offered on an empty
 tender too. For 1.5 seconds after a pick moves the tender, the charge
 control ignores taps with the sentence highlighted (`settling` on

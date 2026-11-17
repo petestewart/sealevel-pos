@@ -1700,6 +1700,10 @@ type ChargeResult =
       kind: "partial";
       message: string;
       giftCards: { value: number; barcodeId: string }[];
+      /* T249: set when this result was brought back from the tab's
+         record rather than answered just now: when it was, and what of
+         it is not kept (a gift card id never is). */
+      restored?: string | null;
     }
   /* T103: the sale took the money and holds none of what was ordered.
      Its own kind, and the loudest one here: every other outcome either
@@ -1718,6 +1722,8 @@ type ChargeResult =
          is the route's sentence and it is shown, because a teacher who
          is told to escalate has to know what else is outstanding. */
       summary: string | null;
+      /* T249: as on `partial`. */
+      restored?: string | null;
     }
   | { kind: "ambiguous"; message: string }
   | { kind: "error"; message: string };
@@ -1962,8 +1968,66 @@ function ticketDiscountParts(
  * server's authority over every number are all exactly as they were.
  */
 /** T241 third review: where an unknown charge outcome is kept across a
- *  reload of this tab. No card data, ever. */
+ *  reload of this tab. No card data, ever. T249: and, in the same
+ *  record, a charge still in flight, a sold-nothing or partial outcome
+ *  not yet acknowledged, and the lock a part-sold ticket carries, so a
+ *  closed and reopened Cart screen, a reload or an evicted tab comes
+ *  back holding all of them. */
 const UNCERTAIN_KEY = "pos_uncertain_charge";
+
+/** T249: this page load, so a record can tell a Cart screen reopened in
+ *  the same page from one restored after a reload. */
+const PAGE_LOAD_ID = Math.random().toString(36).slice(2);
+
+/**
+ * T249: the record, as written. Every field is something the screen
+ * already shows; none is a card number, a CVV, a gift card's number or a
+ * gift card id (a partial's ids are never kept: `giftIdsPending` only
+ * says some were still unwritten). `stage` is "charging" from the TAP
+ * until a definite answer, then the outcome that needs acknowledging,
+ * or null once it has been and only the lock is left.
+ */
+interface HeldRecord {
+  v: 2;
+  at: number;
+  page: string;
+  requestId: string | null;
+  stage: "charging" | "ambiguous" | "sold-nothing" | "partial" | null;
+  message: string | null;
+  saleId: string | null;
+  summary: string | null;
+  basket: BasketRow[];
+  giftIdsPending: boolean;
+  restored: string | null;
+  lock: string | null;
+  /** The ticket the lock was about, as line keys and quantities: the
+   *  lock comes back only onto the same ticket. */
+  ticket: string | null;
+}
+
+/** T249: a sentence off the server is kept as shown, less any run of
+ *  digits long enough to be a card number (none should ever be there;
+ *  this is the belt to that). */
+function storableSentence(text: string | null): string | null {
+  return text === null ? null : text.replace(/\d[\d -]{11,}\d/g, "[number]");
+}
+
+/** T249: the ticket a part-sold lock is about. */
+function ticketPrint(cart: readonly CartEntry[]): string {
+  return cart
+    .map((line) => `${line.key}x${line.quantity}`)
+    .sort()
+    .join("|");
+}
+
+function writeHeldRecord(record: HeldRecord | null) {
+  try {
+    if (record === null) window.sessionStorage.removeItem(UNCERTAIN_KEY);
+    else window.sessionStorage.setItem(UNCERTAIN_KEY, JSON.stringify(record));
+  } catch {
+    /* No storage: the hold lasts as long as this page, as before. */
+  }
+}
 
 function PaymentPanel(props: {
   cart: readonly CartEntry[];
@@ -2038,6 +2102,10 @@ function PaymentPanel(props: {
    * own "Written on the card".
    */
   onHoldChange: (held: boolean) => void;
+  /** T249: why the Cart screen may not be closed (an outcome that may
+   *  have moved money and is not acknowledged, or a part-sold ticket),
+   *  and whether that reason is on this panel; null when it may. */
+  onLeaveHold: (hold: { why: string; result: boolean } | null) => void;
   /** Bumped by SaleScreen when "Empty cart" is confirmed on a client
    *  change (third live test): the cart is gone, so every tender line and
    *  any armed comp goes with it. */
@@ -2548,56 +2616,16 @@ function PaymentPanel(props: {
     setLines((cur) => cur.filter((l) => l.source !== "typedcard"));
     setPickHold(true);
   };
-  /* Third review (6): an unknown outcome survives a reload of this tab.
-   * Only that the last charge needs checking, when, and the display
-   * request it was about; never a card detail. The writer is declared
-   * first so it skips the mount, and the reader then restores. */
+  /** T249: when the charge a held record is about was tapped. */
+  const heldAt = useRef<number | null>(null);
+  /** Third review (6): the record is not written until the mount's
+   *  restore below has read it. */
   const outcomeRestored = useRef(false);
-  useEffect(() => {
-    if (!outcomeRestored.current) return;
-    try {
-      if (outcomeOpen) {
-        window.sessionStorage.setItem(
-          UNCERTAIN_KEY,
-          JSON.stringify({
-            at: Date.now(),
-            requestId: uncertainRequest.current,
-          }),
-        );
-      } else {
-        window.sessionStorage.removeItem(UNCERTAIN_KEY);
-      }
-    } catch {
-      /* No storage: the hold lasts as long as this page, as before. */
-    }
-  }, [outcomeOpen]);
-  useEffect(() => {
-    try {
-      const raw = window.sessionStorage.getItem(UNCERTAIN_KEY);
-      if (raw !== null) {
-        const saved = JSON.parse(raw) as { at?: unknown; requestId?: unknown };
-        uncertainRequest.current =
-          typeof saved.requestId === "string" ? saved.requestId : null;
-        const when =
-          typeof saved.at === "number"
-            ? new Date(saved.at).toLocaleTimeString([], {
-                hour: "numeric",
-                minute: "2-digit",
-              })
-            : null;
-        setResult({
-          kind: "ambiguous",
-          message: `A charge from this iPad${
-            when !== null ? ` at ${when}` : ""
-          } was left with an unknown outcome when the page reloaded.`,
-        });
-        setPickHold(true);
-      }
-    } catch {
-      /* Nothing to restore. */
-    }
-    outcomeRestored.current = true;
-  }, []);
+  /** T249: set once the restore has run, so the writer runs once after
+   *  it even when nothing came back (a lock whose ticket is gone after a
+   *  reload must leave the record, or it would come back onto the next
+   *  identical ticket). */
+  const [restoreDone, setRestoreDone] = useState(false);
   /**
    * T95 review: the latch on a ticket that was PARTLY sold. The route's
    * sentence says which half landed; the ticket still holds every line,
@@ -2922,13 +2950,25 @@ function PaymentPanel(props: {
   /* "Empty cart" on the client-change dialog: the cart SaleScreen just
    * cleared was what the tender was for, so nothing stays armed, comp
    * included. */
+  /* T249: only a bump SEEN while this panel is mounted. The panel
+   * unmounts with the Cart screen, so a nonce bumped on an earlier visit
+   * used to run this on the next mount, which would now wipe the lock
+   * that mount restores. */
+  const seenResetNonce = useRef(cartResetNonce);
   useEffect(() => {
-    if (cartResetNonce === 0) return;
+    if (cartResetNonce === seenResetNonce.current) return;
+    seenResetNonce.current = cartResetNonce;
     resetTender();
     /* T95 review: and the partial latch goes with the ticket it was
      * about. A new ticket is the honest way on from a partial sale. */
     setPartialLock(null);
   }, [cartResetNonce, resetTender]);
+  /* T249: and a ticket with no lines left has nothing on it that could be
+   * sold twice, whatever emptied it (a recheck that dropped every line
+   * included), so the lock cannot outlive it with Empty cart disabled. */
+  useEffect(() => {
+    if (cart.length === 0) setPartialLock(null);
+  }, [cart.length]);
 
   /* PaymentPanel unmounts when the overlay closes; an amount modal that
    * was somehow open must not leave SaleScreen believing something still
@@ -3609,6 +3649,200 @@ function PaymentPanel(props: {
     }
   }, [result]);
   useEffect(() => () => onHoldChange(false), [onHoldChange]);
+
+  /**
+   * T249: the tab's record of anything here that must not be lost with
+   * the Cart screen. `PaymentPanel` unmounts when the overlay closes and
+   * the cart does not, so before this a sold-nothing or partial answer
+   * (and its lock) was gone on reopen and Finalize took a second payment
+   * from the ticket that had already paid. Written at the TAP (doCharge,
+   * synchronously, and here) so a reload or an evicted tab during the
+   * charge comes back as "the last charge needs checking"; kept while an
+   * unknown, sold-nothing or partial outcome waits for its own Understood
+   * and while the lock stands; removed on a definite answer (paid,
+   * suppressed, refused) and once both are gone. No card data, ever.
+   */
+  const heldStage: HeldRecord["stage"] = charging
+    ? "charging"
+    : result?.kind === "ambiguous" ||
+        result?.kind === "sold-nothing" ||
+        result?.kind === "partial"
+      ? result.kind
+      : pickHold
+        ? "ambiguous"
+        : null;
+  useEffect(() => {
+    if (!outcomeRestored.current) return;
+    if (heldStage === null && partialLock === null) {
+      heldAt.current = null;
+      writeHeldRecord(null);
+      return;
+    }
+    const shown =
+      result?.kind === "ambiguous" ||
+      result?.kind === "sold-nothing" ||
+      result?.kind === "partial"
+        ? result
+        : null;
+    writeHeldRecord({
+      v: 2,
+      at: heldAt.current ?? Date.now(),
+      page: PAGE_LOAD_ID,
+      requestId: uncertainRequest.current,
+      stage: heldStage,
+      message: storableSentence(shown?.message ?? null),
+      saleId: shown?.kind === "sold-nothing" ? shown.saleId : null,
+      summary: storableSentence(
+        shown?.kind === "sold-nothing" ? shown.summary : null,
+      ),
+      basket: shown?.kind === "sold-nothing" ? shown.basket : [],
+      giftIdsPending: shown?.kind === "partial" && holdingGiftIds,
+      restored:
+        shown?.kind === "sold-nothing" || shown?.kind === "partial"
+          ? (shown.restored ?? null)
+          : null,
+      lock: partialLock,
+      ticket: partialLock !== null ? ticketPrint(cart) : null,
+    });
+  }, [heldStage, result, partialLock, holdingGiftIds, cart, restoreDone]);
+  /* The restore, once per mount, AFTER the writer so the writer skips
+   * the mount. A reopen in the same page brings each outcome back as
+   * itself; after a reload it says so, and a charge that was still in
+   * flight is an unknown outcome, never a clean ticket. The lock comes
+   * back only onto the ticket it was about: after a reload the cart is
+   * gone, and a new ticket is the honest way on. */
+  useEffect(() => {
+    try {
+      const raw = window.sessionStorage.getItem(UNCERTAIN_KEY);
+      if (raw !== null) {
+        const saved = JSON.parse(raw) as Partial<Record<keyof HeldRecord, unknown>>;
+        uncertainRequest.current =
+          typeof saved.requestId === "string" ? saved.requestId : null;
+        heldAt.current = typeof saved.at === "number" ? saved.at : Date.now();
+        const when =
+          typeof saved.at === "number"
+            ? new Date(saved.at).toLocaleTimeString([], {
+                hour: "numeric",
+                minute: "2-digit",
+              })
+            : null;
+        const at = when !== null ? ` at ${when}` : "";
+        const samePage = saved.page === PAGE_LOAD_ID;
+        /* A record from before T249 carries no stage: it was always an
+         * unknown outcome. */
+        const stage = saved.v === 2 ? saved.stage : "ambiguous";
+        const said =
+          typeof saved.message === "string" && saved.message.length > 0
+            ? saved.message
+            : null;
+        if (stage === "charging") {
+          setResult({
+            kind: "ambiguous",
+            message: `A charge from this iPad${at} had not answered when ${
+              samePage ? "the Cart screen closed" : "the page reloaded"
+            }.`,
+          });
+          setPickHold(true);
+        } else if (stage === "ambiguous") {
+          setResult({
+            kind: "ambiguous",
+            message: samePage
+              ? (said ?? "")
+              : `A charge from this iPad${at} was left with an unknown outcome when the page reloaded.${
+                  said !== null ? ` ${said}` : ""
+                }`,
+          });
+          setPickHold(true);
+        } else if (stage === "sold-nothing" || stage === "partial") {
+          const restored = samePage
+            ? typeof saved.restored === "string"
+              ? saved.restored
+              : null
+            : [
+                `Recorded${at}, before this page reloaded.`,
+                saved.giftIdsPending === true
+                  ? "The gift card ids shown then are not kept here: read them in Mindbody."
+                  : null,
+              ]
+                .filter(Boolean)
+                .join(" ");
+          if (stage === "sold-nothing") {
+            setResult({
+              kind: "sold-nothing",
+              message: said ?? "The payment went through and nothing was sold.",
+              saleId: typeof saved.saleId === "string" ? saved.saleId : null,
+              basket: basketRows(saved.basket),
+              summary: typeof saved.summary === "string" ? saved.summary : null,
+              restored,
+            });
+          } else {
+            setResult({
+              kind: "partial",
+              message: said ?? "Part of this ticket was sold and part was not.",
+              giftCards: [],
+              restored,
+            });
+          }
+        }
+        if (
+          typeof saved.lock === "string" &&
+          saved.lock.length > 0 &&
+          cart.length > 0 &&
+          saved.ticket === ticketPrint(cart)
+        ) {
+          setPartialLock(saved.lock);
+        }
+      }
+    } catch {
+      /* Nothing to restore. */
+    }
+    outcomeRestored.current = true;
+    setRestoreDone(true);
+    /* Once per mount, on the cart as it stood when the screen opened. */
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /**
+   * T249: why the Cart screen may not be closed right now, reported up
+   * so SaleScreen's close, its Escape and the nav bar's Sign-in refuse
+   * with the sentence. An outcome that may have moved money waits for
+   * its own Understood; a part-sold ticket waits to be emptied. The
+   * nav bar's Cart stays live, because it is how a teacher reaches
+   * Empty cart, and this panel stays mounted behind it. `result` says
+   * whether the reason is on this panel (the shelf offers a way to it).
+   */
+  const leaveHold: { why: string; result: boolean } | null = outcomeOpen
+    ? {
+        why: "The last charge needs checking first. Tap Understood on it when you have.",
+        result: true,
+      }
+    : result?.kind === "sold-nothing"
+      ? {
+          why: "This ticket took a payment and sold nothing. Read what happened and tap Understood.",
+          result: true,
+        }
+      : result?.kind === "partial"
+        ? {
+            why: "Part of this ticket was sold. Read what happened and tap Understood.",
+            result: true,
+          }
+        : partialLock !== null
+          ? {
+              why: "This ticket cannot be charged again. Empty the cart before leaving the Cart screen.",
+              result: false,
+            }
+          : null;
+  const leaveHoldKey =
+    leaveHold === null ? "" : `${leaveHold.result ? "r" : "l"}:${leaveHold.why}`;
+  const { onLeaveHold } = props;
+  useEffect(() => {
+    onLeaveHold(
+      leaveHoldKey === ""
+        ? null
+        : { why: leaveHoldKey.slice(2), result: leaveHoldKey.startsWith("r") },
+    );
+  }, [leaveHoldKey, onLeaveHold]);
+  useEffect(() => () => onLeaveHold(null), [onLeaveHold]);
   /**
    * T95: the one thing a teacher MUST take off this screen. The card
    * Mindbody sold is blank card stock in their hand, and this id is what
@@ -4200,6 +4434,29 @@ function PaymentPanel(props: {
       giftDiscountOff: roundToCents(armedParts.giftCents / 100),
       tenders: displayTenders,
     });
+    /* T249: the record goes down at the TAP, before anything is sent, so
+     * a reload or an evicted tab from here until a definite answer comes
+     * back as a charge that needs checking. The writer effect keeps it
+     * from the next render on; this is the moment before that render. */
+    heldAt.current = Date.now();
+    uncertainRequest.current = typedCard?.displayRequestId ?? null;
+    if (outcomeRestored.current) {
+      writeHeldRecord({
+        v: 2,
+        at: heldAt.current,
+        page: PAGE_LOAD_ID,
+        requestId: uncertainRequest.current,
+        stage: "charging",
+        message: null,
+        saleId: null,
+        summary: null,
+        basket: [],
+        giftIdsPending: false,
+        restored: null,
+        lock: null,
+        ticket: null,
+      });
+    }
     inFlight.current = true;
     setCharging(true);
     onBusyChange(true);
@@ -6238,6 +6495,9 @@ function PaymentPanel(props: {
                    the sold half again. */
                 <div className="sale-stop pay-split" role="alert">
                   <p className="pay-split-head">{result.message}</p>
+                  {result.restored ? (
+                    <p className="pay-split-why">{result.restored}</p>
+                  ) : null}
                   <p className="pay-split-why">
                     Check the dev drawer or Mindbody before charging
                     anything else. Finalize Sale is refused on this ticket
@@ -6278,6 +6538,9 @@ function PaymentPanel(props: {
                   <p className="pay-split-head">{result.message}</p>
                   {result.summary ? (
                     <p className="pay-split-why">{result.summary}</p>
+                  ) : null}
+                  {result.restored ? (
+                    <p className="pay-split-why">{result.restored}</p>
                   ) : null}
                   <p className="pay-split-why">
                     Finalize Sale is refused on this ticket now. Do not
@@ -8827,6 +9090,11 @@ export interface SaleNavState {
    *  case: a gift card id is on the done screen and has not been
    *  written on the card yet. */
   holdWhy: string | null;
+  /** T249: why the Cart screen may not be CLOSED right now, or null: an
+   *  outcome that may have moved money and has not been acknowledged, or
+   *  a part-sold ticket not yet emptied. Holds Sign-in only; Cart stays
+   *  live, because it is how the teacher reaches Empty cart. */
+  closeWhy: string | null;
 }
 
 export default function SaleScreen(props: {
@@ -9522,13 +9790,43 @@ export default function SaleScreen(props: {
    *  this component's close, its Escape, and the nav bar through
    *  onNavState. */
   const [payHeld, setPayHeld] = useState(false);
+  /** T249: the payment panel's word on whether the Cart screen may be
+   *  closed (PaymentPanel `leaveHold`). */
+  const [leaveHold, setLeaveHold] = useState<{
+    why: string;
+    result: boolean;
+  } | null>(null);
   /** Every close goes through here so the mode resets with it. */
   const close = useCallback(() => {
-    if (payHeld) return;
+    if (payHeld || leaveHold !== null) return;
     setSaleMode("shelf");
     onClose();
-  }, [onClose, setSaleMode, payHeld]);
+  }, [onClose, setSaleMode, payHeld, leaveHold]);
   const leavePay = useCallback(() => setSaleMode("shelf"), [setSaleMode]);
+  /**
+   * T249: the shelf's "Show the last charge" opens the payment surface
+   * only to show an outcome, without Pay's gates (T51's walk-in, T53's
+   * opt-in), because after a reload there is often nothing to pay and
+   * Pay is off. So once that outcome is acknowledged the screen goes
+   * back to the shelf by itself, and any charge after it starts from
+   * Pay, gates and all.
+   */
+  const payViaHold = useRef(false);
+  const showHeldOutcome = useCallback(() => {
+    payViaHold.current = true;
+    setSaleMode("pay");
+  }, [setSaleMode]);
+  useEffect(() => {
+    if (!payViaHold.current) return;
+    if (saleMode !== "pay") {
+      payViaHold.current = false;
+      return;
+    }
+    if (leaveHold === null || !leaveHold.result) {
+      payViaHold.current = false;
+      setSaleMode("shelf");
+    }
+  }, [leaveHold, saleMode, setSaleMode]);
 
   /**
    * T51: an anonymous sale is a CHOICE, not the absence of one. Pete,
@@ -11376,8 +11674,9 @@ export default function SaleScreen(props: {
       charging,
       payTap,
       holdWhy: payHeld ? "Write the gift card id on the card first" : null,
+      closeWhy: leaveHold?.why ?? null,
     });
-  }, [onNavState, payWhy, charging, payTap, payHeld]);
+  }, [onNavState, payWhy, charging, payTap, payHeld, leaveHold]);
 
   if (!open) return null;
 
@@ -12790,6 +13089,7 @@ export default function SaleScreen(props: {
             onTicketLock={setTicketLock}
             onModalChange={setPayModalOpen}
             onHoldChange={setPayHeld}
+            onLeaveHold={setLeaveHold}
             cartResetNonce={cartResetNonce}
             onClientDataStale={onClientDataStale}
             discount={armedDiscount}
@@ -13595,6 +13895,26 @@ export default function SaleScreen(props: {
                 exists to end. */}
             {inPay ? null : (
               <div className="t-foot">
+                {/* T249: why the Cart screen cannot be closed yet, in
+                    words, where the teacher who just tapped Sign-in is
+                    looking. An outcome waiting for its Understood is on
+                    the payment surface, which is reached from here even
+                    with nothing left to pay (after a reload the ticket
+                    is gone and Pay is off): it only shows the result,
+                    and nothing there can charge while it stands. */}
+                {leaveHold !== null ? (
+                  <div className="sale-stop t-foot-hold" role="alert">
+                    <p className="t-foot-hold-why">{leaveHold.why}</p>
+                    {leaveHold.result ? (
+                      <button
+                        className="class-change t-foot-hold-go"
+                        onClick={showHeldOutcome}
+                      >
+                        Show the last charge
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
                 {/* T51's Empty cart, behind T38's confirm exactly. */}
                 <button
                   className="t-foot-empty"
