@@ -632,6 +632,37 @@ setting off stays admin-only.
 **Rule preserved.** Nothing here is optimistic and nothing auto-charges:
 approval is a precondition the server checks, not an action that charges.
 
+**A live ticket must not outlive the tab that put it up** (T244, hotfix,
+Pete, 2026-11-17: "when i switched to another app and went back to this
+one, it is stuck on a sales screen even tho the cart is empty and no
+client is attached"). iPadOS discards a backgrounded Safari tab and
+reloads it on return; the reloaded page has an empty cart and no memory
+of the ticket it left up, so nothing took it down and the hub kept it
+for its 30 minutes. Three answers, none of which writes to Mindbody:
+
+- **The teacher's tab reconciles** on mount, on `visibilitychange` to
+  visible, on `pageshow` and when the display (re)connects. An empty
+  cart (or a closed sale screen) sends ONE `POST /api/display/cancel`
+  with `scope: "live"`, which the SERVER applies only to a live ticket
+  or a summary and answers as a no-op over a waiver, a sign-up, a
+  contract or an approval. A cart that is not empty is presented again,
+  so the display matches the teacher's screen. With T241's per-tab
+  ownership the cancel also names this tab and clears only a ticket it
+  owns, or another tab's live ticket gone two minutes without a present.
+- **"Reset customer screen"** on the teacher's screen: tap the customer
+  display mark under the header, then Reset (the deployed counter has no
+  drawer), and beside Pair and Unpair in the drawer. `scope: "reset"`
+  clears a live ticket, a summary or nothing at once, and asks first,
+  naming it, over anything a student is in ("Someone is signing up on
+  the customer screen. Clear it anyway?"). Device session and a
+  signed-in teacher; the log names the staff id. It clears whoever owns
+  the scene and tells a ticket's owning tab (`ticket-retired`).
+- **Close on the customer screen**, on the live ticket and the summary
+  only: `POST /api/display/close` under the display's own cookie. The
+  teacher's iPad hears `closed` and does not present that SAME cart (its
+  lines and name; a price answer is not a change) again until the cart
+  changes, and says "The customer closed the ticket on their screen."
+
 ---
 
 ## Scene 3: registration

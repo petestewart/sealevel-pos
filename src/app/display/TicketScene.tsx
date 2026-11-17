@@ -58,6 +58,9 @@ export default function TicketScene(props: {
   /** Told when the student has answered, so the screen can move on while
    *  the server catches up. */
   onAnswered?: (approved: boolean) => void;
+  /** T244: the student closed a live ticket or a summary, and the server
+   *  has it; the screen goes back to idle. */
+  onClosed?: () => void;
   /** T241: told when the server has the student's pick, with the words
    *  of what they picked, so the screen can say "One moment" across the
    *  teacher's iPad asking again. */
@@ -88,7 +91,7 @@ export default function TicketScene(props: {
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { requestId, onAnswered, onPicked } = props;
+  const { requestId, onAnswered, onPicked, onClosed } = props;
 
   /**
    * T241 (Pete: "would be better to surface a choice to the customer for
@@ -170,6 +173,33 @@ export default function TicketScene(props: {
     },
     [busy, requestId, onPicked],
   );
+
+
+  /* T244: Close, on the live ticket and the summary only. It refuses or
+   * approves nothing: the hub takes this scene down and tells the
+   * teacher's iPad, whose mirror then leaves THIS cart off the screen
+   * until it changes. A refusal (the ticket was replaced a moment ago)
+   * changes nothing here; the stream says what is current. It is drawn
+   * only on the ticket itself, never inside T241's Change list or card
+   * form, and the hub's cancel behind it releases a card the student
+   * typed on this ticket, exactly as the teacher's cancel does. */
+  const [closing, setClosing] = useState(false);
+  const close = useCallback(async () => {
+    if (closing || !requestId) return;
+    setClosing(true);
+    try {
+      const res = await fetch("/api/display/close", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ requestId }),
+      });
+      if (res.ok) onClosed?.();
+    } catch {
+      /* The stream still decides what this screen shows. */
+    } finally {
+      setClosing(false);
+    }
+  }, [closing, requestId, onClosed]);
 
   const answer = useCallback(
     async (approved: boolean) => {
@@ -420,6 +450,17 @@ export default function TicketScene(props: {
             <p className="dticket-receipt">A receipt is on its way by email.</p>
           ) : null}
         </div>
+      ) : null}
+
+      {!approve && requestId ? (
+        <button
+          type="button"
+          className="dscene-btn dticket-close"
+          disabled={closing || busy}
+          onClick={() => void close()}
+        >
+          Close
+        </button>
       ) : null}
     </section>
   );

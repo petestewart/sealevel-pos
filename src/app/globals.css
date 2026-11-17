@@ -64,9 +64,15 @@
    * thumb in a hot room. */
   --nav-h: 64px;
   --nav-rule: 2px;
-  --nav-space: calc(
+  /* T246: the bar itself, and the room everything above it leaves. The
+   * two differ only while "A new version is ready" shows: its height
+   * (--update-h, 0 otherwise) joins --nav-space, so the roster, the sale
+   * overlay and every modal end above the banner and it covers nothing. */
+  --nav-bar-space: calc(
     var(--nav-h) + var(--nav-rule) + env(safe-area-inset-bottom, 0px)
   );
+  --update-h: 0px;
+  --nav-space: calc(var(--nav-bar-space) + var(--update-h));
 
   /* T98: the band of the screen the teacher can SEE, not a colour either,
    * so it is defined once here. iOS shrinks the VISUAL viewport when the
@@ -7701,7 +7707,7 @@ textarea.reason-note-field:disabled::placeholder {
   display: flex;
   align-items: stretch;
   gap: 0;
-  height: var(--nav-space);
+  height: var(--nav-bar-space);
   padding-bottom: env(safe-area-inset-bottom, 0px);
   border-top: var(--nav-rule) solid var(--rule);
   background: var(--surface);
@@ -8338,6 +8344,15 @@ textarea.reason-note-field:disabled::placeholder {
   opacity: 0.45;
 }
 
+/* T244: the student's Close on a live ticket or a summary. Quiet: an
+ * ordinary surface control, its own width, at the foot of the ticket. */
+.dticket-close {
+  flex: 0 0 auto;
+  align-self: flex-start;
+  min-width: 180px;
+  color: var(--muted);
+}
+
 /* --- T241: the student chooses how to pay ----------------------------
  * On the customer display: a 64px Change beside "Paying by ...", the list
  * of the ways the teacher's iPad offered (each 64px), and the card form
@@ -8693,6 +8708,82 @@ textarea.reason-note-field:disabled::placeholder {
 
 .display-mark-row.away .display-dot {
   background: var(--warn);
+}
+
+/* T244: the mark is a control now (tap it for "Reset customer screen"),
+ * so it is a 64px button drawn exactly like the quiet row it was, plus
+ * the small menu under it. */
+
+.display-mark-wrap {
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+
+button.display-mark-row {
+  width: 100%;
+  min-height: 64px;
+  border: 0;
+  border-bottom: 0;
+  border-radius: 0;
+  text-align: left;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.display-mark-more {
+  margin-left: auto;
+  color: var(--accent);
+}
+
+.display-mark-menu {
+  padding: 8px 20px 16px;
+  border-top: 1px solid var(--line);
+  /* T246: the reset and the two reloads in one row, each with its line
+   * under it, wrapping on a narrow screen. */
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.display-reset {
+  display: grid;
+  gap: 8px;
+}
+
+.display-reset-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.display-reset-question,
+.display-reset-line {
+  margin: 0;
+  font-size: 16px;
+  color: var(--ink);
+}
+
+.display-mark-btn {
+  min-height: 64px;
+  padding: 0 20px;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+  font-size: 16px;
+}
+
+.display-mark-btn:disabled {
+  opacity: 0.5;
+  color: var(--muted);
+}
+
+.display-mark-btn-go {
+  border-color: var(--stop);
+  background: var(--stop);
+  color: var(--bg);
 }
 
 /* --- Customer display block, dev drawer settings tab (T200) ---------- */
@@ -9387,6 +9478,60 @@ textarea.reason-note-field:disabled::placeholder {
   font-size: 16px;
   color: var(--warn);
   font-weight: 700;
+}
+
+/* --- T246: "A new version is ready." ---------------------------------
+ * A slim row fixed directly above the nav bar, on the accent's selected
+ * surface with the accent rail the studio banner uses, and a 64px Reload
+ * in the actionable fill. Its 66px is added to --nav-space while it
+ * shows (data-update-ready on <html>), so nothing it sits over can be
+ * the last row of anything. Same z-index as the bar: over the sale
+ * overlay and the drawer, under every modal scrim. */
+:root[data-update-ready] {
+  --update-h: 66px;
+}
+
+.update-banner {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: var(--nav-bar-space);
+  z-index: 22;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  height: var(--update-h);
+  padding: 0 0 0 16px;
+  border-top: 2px solid var(--accent);
+  border-left: 6px solid var(--accent);
+  background: var(--accent-bg);
+  color: var(--ink);
+}
+
+.update-banner-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.update-banner-btn {
+  flex: 0 0 auto;
+  min-width: 160px;
+  height: 64px;
+  padding: 0 24px;
+  border: 0;
+  border-radius: 0;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font: inherit;
+  font-size: 17px;
+  font-weight: 800;
+}
+
+.update-banner-btn:active {
+  background: var(--accent-press);
 }
 
 /* T249: why the Cart screen cannot be closed yet, above Empty cart in the

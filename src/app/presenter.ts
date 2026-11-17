@@ -52,10 +52,18 @@ export function presenterId(): string {
  * tab: the server refuses, as a no-op, a cancel of a TICKET another tab
  * owns. `takenOver` is the design's Take over; `requestId` cancels only
  * that request (the pagehide cancel of this tab's own live ticket);
- * `keepalive` lets that one outlive the page.
+ * `keepalive` lets that one outlive the page. T244: `scope: "live"` is
+ * the mirror's own cancel and the reconcile on load and on return; the
+ * server then takes down only a live ticket or a summary this tab owns
+ * (or one gone stale), never a waiver, sign-up, contract or approval.
  */
 export function cancelOnDisplay(
-  opts: { takenOver?: boolean; requestId?: string; keepalive?: boolean } = {},
+  opts: {
+    takenOver?: boolean;
+    requestId?: string;
+    keepalive?: boolean;
+    scope?: "live";
+  } = {},
 ): Promise<Response> {
   return fetch("/api/display/cancel", {
     method: "POST",
@@ -65,6 +73,7 @@ export function cancelOnDisplay(
       presenter: presenterId(),
       ...(opts.takenOver === true ? { takenOver: true } : {}),
       ...(opts.requestId !== undefined ? { requestId: opts.requestId } : {}),
+      ...(opts.scope !== undefined ? { scope: opts.scope } : {}),
     }),
   });
 }
