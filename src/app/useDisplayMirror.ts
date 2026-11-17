@@ -27,9 +27,32 @@ import type { TicketPayload } from "@/lib/displayticket";
  *   a word and resumes on the next priced change. Nothing surfaces to the
  *   teacher, who did not ask for this and cannot act on it.
  *
+ * - **The tab reconciles on load and on return** (T244, Pete: "when i
+ *   switched to another app and went back to this one, it is stuck on a
+ *   sales screen even tho the cart is empty and no client is attached").
+ *   iPadOS discards a backgrounded Safari tab and reloads it, and the
+ *   reloaded page has an empty cart and no memory (`up`) of the ticket it
+ *   left up. So on mount, on `visibilitychange` to visible, on
+ *   `pageshow` and when the display (re)connects, an empty cart (or a
+ *   closed sale screen) sends ONE `scope: "live"` cancel, which the
+ *   SERVER applies only to a live ticket or a summary, never to a
+ *   waiver, a sign-up, a contract or an approval; a cart that is not
+ *   empty is presented again so the display matches this screen.
+ * - **The student's Close sticks** (T244). The display's Close tells this
+ *   tab (`closed` on the events stream), and the SAME ticket is not
+ *   presented again until the cart changes (`closedKey`: the lines and
+ *   the name, never a price answer, so a re-price cannot undo it).
+ *
  * Nothing here calls Mindbody. It POSTs /api/display/present and
  * /api/display/cancel, which are the two routes a scene travels through.
  */
+
+/** T244: what "the same ticket" means for the student's Close: the name
+ *  and the lines as the cart holds them. Totals are left out on purpose,
+ *  because a price answer landing is not the teacher changing the cart. */
+function closureKey(payload: TicketPayload): string {
+  return JSON.stringify({ c: payload.clientFirstName, l: payload.lines });
+}
 
 /** A burst of cart taps settles into one present. The pricing loop
  *  already debounces 400ms before it asks Mindbody, so this is only what
@@ -48,11 +71,15 @@ export interface DisplayMirror {
   /** Put the post-sale summary up. Sent once, immediately: the hub takes
    *  it back down itself after its few seconds. */
   summary: (payload: TicketPayload) => void;
+  /** T244: the student closed this cart's ticket on their screen, and it
+   *  stays closed until the cart changes. */
+  closedByCustomer: boolean;
 }
 
 export function useDisplayMirror(active: boolean): DisplayMirror {
   const [connected, setConnected] = useState(false);
   const [showing, setShowing] = useState(false);
+  const [closedByCustomer, setClosedByCustomer] = useState(false);
 
   /* Paired and connected, from the same two sources the header's mark
    * reads (T200): the events stream when it is up, and a 30 second poll
@@ -86,11 +113,30 @@ export function useDisplayMirror(active: boolean): DisplayMirror {
     };
     const on = mark(true);
     const off = mark(false);
+    /* T244: the student's Close. Only a live ticket of OURS counts (the
+     * request id the last present answered), and the cart it showed is
+     * remembered so the mirror does not put it straight back. */
+    const closed = (ev: MessageEvent) => {
+      let data: { requestId?: unknown; mode?: unknown } = {};
+      try {
+        data = JSON.parse(ev.data);
+      } catch {
+        return;
+      }
+      if (data.mode !== "live") return;
+      if (!up.current || data.requestId !== lastRequestId.current) return;
+      up.current = false;
+      closedKey.current = lastKey.current;
+      setShowing(false);
+      setClosedByCustomer(true);
+    };
     source.addEventListener("connected", on);
     source.addEventListener("disconnected", off);
+    source.addEventListener("closed", closed);
     return () => {
       source?.removeEventListener("connected", on);
       source?.removeEventListener("disconnected", off);
+      source?.removeEventListener("closed", closed);
       source?.close();
     };
   }, []);
@@ -101,6 +147,13 @@ export function useDisplayMirror(active: boolean): DisplayMirror {
   /** Whether a live ticket of ours is up, so the cart emptying cancels
    *  it rather than leaving the last line on a student's screen. */
   const up = useRef(false);
+  /** T244: the request id and closure key of the last live present that
+   *  landed, the key of a ticket the student closed, and the newest
+   *  payload the sale screen asked for (null: empty cart or closed). */
+  const lastRequestId = useRef<string | null>(null);
+  const lastKey = useRef<string | null>(null);
+  const closedKey = useRef<string | null>(null);
+  const latest = useRef<TicketPayload | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const alive = useRef(true);
   useEffect(() => {
@@ -120,6 +173,14 @@ export function useDisplayMirror(active: boolean): DisplayMirror {
         await fetch("/api/display/cancel", { method: "POST" });
         return;
       }
+      /* T244: the student closed this very ticket; nothing changed since. */
+      if (
+        payload.mode === "live" &&
+        closedKey.current !== null &&
+        closureKey(payload) === closedKey.current
+      ) {
+        return;
+      }
       const res = await fetch("/api/display/present", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -134,6 +195,11 @@ export function useDisplayMirror(active: boolean): DisplayMirror {
       const body = await res.json().catch(() => null);
       if (res.ok) {
         up.current = payload.mode === "live";
+        if (payload.mode === "live") {
+          lastRequestId.current =
+            typeof body?.requestId === "string" ? body.requestId : null;
+          lastKey.current = closureKey(payload);
+        }
         if (alive.current) setShowing(payload.mode === "live");
         return;
       }
@@ -163,6 +229,22 @@ export function useDisplayMirror(active: boolean): DisplayMirror {
 
   const live = useCallback(
     (payload: TicketPayload | null) => {
+      latest.current = payload;
+      if (payload === null) {
+        /* T244: an empty cart forgets the student's Close, so the next
+         * cart is presented whatever it holds. */
+        closedKey.current = null;
+        setClosedByCustomer(false);
+      } else if (
+        closedKey.current !== null &&
+        closureKey(payload) === closedKey.current
+      ) {
+        /* The same ticket the student closed: stays closed. */
+        return;
+      } else {
+        closedKey.current = null;
+        setClosedByCustomer(false);
+      }
       if (payload === null) {
         /* An emptied cart (or a closed sale screen) takes the ticket down
          * only if one of ours is up: a cancel against a waiver somebody
@@ -217,5 +299,57 @@ export function useDisplayMirror(active: boolean): DisplayMirror {
     [connected, post],
   );
 
-  return { connected, showing, live, summary };
+  /* T244: reconcile on load and on return. One request either way: an
+   * empty cart (or a closed sale screen) asks the SERVER to take down a
+   * live ticket or a summary and nothing else; a cart that is not empty
+   * is presented again through the normal path, so the display matches
+   * this screen (busy, closed and unpaired are all still silent). */
+  const liveRef = useRef(live);
+  liveRef.current = live;
+  /** When the last empty-cart reconcile went out: mount, `pageshow` and
+   *  the first `connected` all land in the same second of a reload, and
+   *  one cancel answers all three. */
+  const lastReconcile = useRef(0);
+  const reconcile = useCallback(() => {
+    const payload = latest.current;
+    if (payload === null) {
+      const now = Date.now();
+      if (now - lastReconcile.current < 2_000) return;
+      lastReconcile.current = now;
+      if (timer.current !== null) clearTimeout(timer.current);
+      timer.current = null;
+      queued.current = null;
+      up.current = false;
+      if (alive.current) setShowing(false);
+      void fetch("/api/display/cancel", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ scope: "live" }),
+      }).catch(() => undefined);
+      return;
+    }
+    liveRef.current(payload);
+  }, []);
+
+  useEffect(() => {
+    reconcile();
+    const onVisible = () => {
+      if (document.visibilityState === "visible") reconcile();
+    };
+    const onShow = () => reconcile();
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("pageshow", onShow);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("pageshow", onShow);
+    };
+  }, [reconcile]);
+
+  /* And when the display (re)connects: a screen that was away while this
+   * tab emptied its cart must not come back to the old ticket. */
+  useEffect(() => {
+    if (connected) reconcile();
+  }, [connected, reconcile]);
+
+  return { connected, showing, live, summary, closedByCustomer };
 }

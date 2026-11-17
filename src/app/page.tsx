@@ -13,6 +13,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 
 import DevDrawer from "./DevDrawer";
 import LockScreen from "./LockScreen";
+import ResetDisplay from "./ResetDisplay";
 import NavBar, {
   CartIcon,
   SettingsIcon,
@@ -11265,6 +11266,8 @@ function DisplayMark() {
     connected: boolean;
     name: string | null;
   } | null>(null);
+  /** T244: the small menu under the mark that holds the reset. */
+  const [menuOpen, setMenuOpen] = useState(false);
 
   const read = useCallback(() => {
     fetch("/api/admin/display")
@@ -11340,18 +11343,42 @@ function DisplayMark() {
   }, [read]);
 
   if (state === null || !state.paired) return null;
+  /* T244: the mark is also the way to "Reset customer screen" on a
+   * deployed counter, where the drawer does not exist (POS_DEVTOOLS is
+   * off in production). Tap the mark, then Reset. */
   return (
-    <p
-      className={state.connected ? "display-mark-row" : "display-mark-row away"}
-      role="status"
-    >
-      <span className="display-dot" aria-hidden="true" />
-      <span>
-        {state.connected
-          ? `Customer display connected${state.name ? `: ${state.name}` : ""}`
-          : "Customer display is not responding"}
-      </span>
-    </p>
+    <div className="display-mark-wrap">
+      <button
+        type="button"
+        className={state.connected ? "display-mark-row" : "display-mark-row away"}
+        aria-expanded={menuOpen}
+        aria-label={
+          (state.connected
+            ? `Customer display connected${state.name ? `: ${state.name}` : ""}`
+            : "Customer display is not responding") +
+          ". Customer screen options"
+        }
+        onClick={() => setMenuOpen((open) => !open)}
+      >
+        <span className="display-dot" aria-hidden="true" />
+        <span role="status">
+          {state.connected
+            ? `Customer display connected${state.name ? `: ${state.name}` : ""}`
+            : "Customer display is not responding"}
+        </span>
+        <span className="display-mark-more" aria-hidden="true">
+          {menuOpen ? "Close" : "Options"}
+        </span>
+      </button>
+      {menuOpen ? (
+        <div className="display-mark-menu">
+          <ResetDisplay
+            buttonClass="display-mark-btn"
+            confirmClass="display-mark-btn display-mark-btn-go"
+          />
+        </div>
+      ) : null}
+    </div>
   );
 }
 

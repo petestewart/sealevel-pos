@@ -472,6 +472,10 @@ export default function DisplayScreen() {
                 setScene(null);
                 if (approved) setThanks(plainText(scene.payload.clientFirstName ?? ""));
               }}
+              onClosed={() => {
+                /* T244: the student's own Close; the hub's idle follows. */
+                setScene(null);
+              }}
             />
           ) : (
             <WaiverScene

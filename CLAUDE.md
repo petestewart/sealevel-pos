@@ -531,6 +531,31 @@ rebuilds the payload field by field so no client, product or pricing
 option id and no card detail beyond the tender's WORD can reach a screen
 a student is holding.
 
+**A stuck customer screen clears itself, and can be cleared** (T244,
+hotfix, Pete: "when i switched to another app and went back to this one,
+it is stuck on a sales screen even tho the cart is empty and no client is
+attached"; he had to unpair and re-pair). iPadOS reloads a discarded tab
+with an empty cart and no memory of the ticket it left up, so
+`useDisplayMirror` now reconciles on mount, on `visibilitychange` to
+visible, on `pageshow` and on the display (re)connecting: an empty cart
+sends ONE `POST /api/display/cancel` with `scope: "live"`, which the
+SERVER applies only to a live ticket or a summary (never a waiver,
+sign-up, contract or approval; a no-op answering `held`), and a cart that
+is not empty is presented again. **"Reset customer screen"** is reached
+on the deployed counter by tapping the customer display mark under the
+header (a 64px row; "Options" opens the menu), and in the drawer beside
+Pair and Unpair (`src/app/ResetDisplay.tsx`, `scope: "reset"`): a live
+ticket or a summary goes at once, anything a student is in asks once,
+naming it, and the log names the staff id. **The student can Close** a
+live ticket or a summary (`POST /api/display/close`, display cookie);
+the teacher's tab hears `closed`, shows "The customer closed the ticket
+on their screen." and does not present that SAME cart again until it
+changes (`closedKey`: lines and name, never a price). No Mindbody call
+anywhere in it. Known limit: the deployed hub has no per-tab owner, so a
+second teacher iPad reloading with an empty cart also takes down the
+first iPad's live ticket, which that iPad puts back on its next priced
+change or its own return.
+
 **A screen that goes says so at once** (T206): the display's SSE stream
 closing is the signal, so a Safari tab shut on the counter reaches the
 teacher's mark as `disconnected` in a second rather than in up to 75

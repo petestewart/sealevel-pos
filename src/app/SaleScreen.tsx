@@ -12130,6 +12130,12 @@ export default function SaleScreen(props: {
                 <span className="display-dot" aria-hidden="true" />
                 Showing on the customer screen
               </p>
+            ) : mirror.closedByCustomer ? (
+              /* T244: the student's Close. It stays closed until the
+                 cart changes, so this is the one line that says why. */
+              <p className="sale-display-line" role="status">
+                The customer closed the ticket on their screen.
+              </p>
             ) : null}
 
             {/* T91: the New client create's amber line, in the ticket's

@@ -985,8 +985,15 @@ export async function presentRequest(input: {
  */
 export async function cancelRequest(
   now = Date.now(),
-  opts: { takenOver?: boolean; abandoned?: boolean } = {},
-): Promise<{ cancelled: boolean }> {
+  opts: {
+    takenOver?: boolean;
+    abandoned?: boolean;
+    /** T244: cancel only when what is up passes this test; anything
+     *  else is left exactly where it is and answers `held` (no event is
+     *  pushed, so a student mid-waiver sees nothing happen). */
+    only?: (held: HeldScene, request: DisplayRequest) => boolean;
+  } = {},
+): Promise<{ cancelled: boolean; held: HeldScene | null }> {
   await ensureDisplayLoaded();
   expireIfDue(now);
   const c = state.current;
@@ -994,7 +1001,11 @@ export async function cancelRequest(
     /* Nothing up. Still push idle: a display that somehow held a stale
      * scene must end up where the server says it is. */
     emit("display", "idle", {});
-    return { cancelled: false };
+    return { cancelled: false, held: null };
+  }
+  const held = heldSceneOf(c);
+  if (opts.only !== undefined && !opts.only(held, c)) {
+    return { cancelled: false, held };
   }
   c.status = "cancelled";
   c.completedAt = now;
@@ -1019,7 +1030,88 @@ export async function cancelRequest(
     ...(opts.abandoned === true ? { abandoned: true } : {}),
   });
   emit("display", "idle", {});
-  return { cancelled: true };
+  return { cancelled: true, held };
+}
+
+/**
+ * T244: what a pending request IS, in the words the teacher's screen
+ * and the reset's question use. `live` and `summary` are the two scenes
+ * nobody is in the middle of (a mirror and a thank you); every other
+ * one has a student, or a charge, waiting on it.
+ */
+export type HeldScene =
+  | "live"
+  | "summary"
+  | "approval"
+  | "waiver"
+  | "signup"
+  | "contract";
+
+export function heldSceneOf(r: DisplayRequest): HeldScene {
+  if (r.kind === "register") return "signup";
+  if (r.kind === "waiver") return "waiver";
+  if (r.kind === "contract") return "contract";
+  if (r.payload.mode === "summary") return "summary";
+  if (r.payload.mode === "approve") return "approval";
+  return "live";
+}
+
+/** T244: the two scenes a stale tab, a reset or the student's own Close
+ *  may take down without asking anybody. */
+export function isQuietScene(held: HeldScene | null): boolean {
+  return held === null || held === "live" || held === "summary";
+}
+
+/** T244: the reset's one question, naming what a student is in. */
+export function resetQuestion(held: HeldScene): string {
+  switch (held) {
+    case "signup":
+      return "Someone is signing up on the customer screen. Clear it anyway?";
+    case "waiver":
+      return "A student is reading or signing a waiver on the customer screen. Clear it anyway?";
+    case "contract":
+      return "A student is signing a membership on the customer screen. Clear it anyway?";
+    case "approval":
+      return "A student is being asked to approve a sale on the customer screen. Clear it anyway?";
+    default:
+      return "Clear the customer screen?";
+  }
+}
+
+/**
+ * T244: the student's own Close on a live ticket or a summary. The
+ * display's cookie, this display's CURRENT request by id, and only one
+ * of the two quiet scenes: an approval, a waiver, a sign-up and a
+ * contract each have their own answer and are refused here. The
+ * teacher's iPad is told (`closed`), so its mirror does not put the
+ * same ticket straight back.
+ */
+export async function closeOnDisplay(
+  displayId: string,
+  requestId: string,
+  now = Date.now(),
+): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
+  await ensureDisplayLoaded();
+  expireIfDue(now);
+  const c = state.current;
+  if (c === null || c.id !== requestId || c.displayId !== displayId) {
+    return { ok: false, status: 409, error: "That is not the current request." };
+  }
+  if (c.status !== "pending") {
+    return { ok: false, status: 409, error: "That request is already done." };
+  }
+  const held = heldSceneOf(c);
+  if (held !== "live" && held !== "summary") {
+    return { ok: false, status: 409, error: "Only a ticket can be closed here." };
+  }
+  const done = await cancelRequest(now, {
+    only: (h, r) => h === held && r.id === requestId,
+  });
+  if (!done.cancelled) {
+    return { ok: false, status: 409, error: "That request is already done." };
+  }
+  emit("teacher", "closed", { requestId, mode: held });
+  return { ok: true };
 }
 
 /**

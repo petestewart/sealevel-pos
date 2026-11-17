@@ -46,6 +46,9 @@ export default function TicketScene(props: {
   /** Told when the student has answered, so the screen can move on while
    *  the server catches up. */
   onAnswered?: (approved: boolean) => void;
+  /** T244: the student closed a live ticket or a summary, and the server
+   *  has it; the screen goes back to idle. */
+  onClosed?: () => void;
 }) {
   const t = props.payload;
   const summary = t.mode === "summary";
@@ -61,7 +64,30 @@ export default function TicketScene(props: {
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { requestId, onAnswered } = props;
+  const { requestId, onAnswered, onClosed } = props;
+
+  /* T244: Close, on the live ticket and the summary only. It refuses or
+   * approves nothing: the hub takes this scene down and tells the
+   * teacher's iPad, whose mirror then leaves THIS cart off the screen
+   * until it changes. A refusal (the ticket was replaced a moment ago)
+   * changes nothing here; the stream says what is current. */
+  const [closing, setClosing] = useState(false);
+  const close = useCallback(async () => {
+    if (closing || !requestId) return;
+    setClosing(true);
+    try {
+      const res = await fetch("/api/display/close", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ requestId }),
+      });
+      if (res.ok) onClosed?.();
+    } catch {
+      /* The stream still decides what this screen shows. */
+    } finally {
+      setClosing(false);
+    }
+  }, [closing, requestId, onClosed]);
 
   const answer = useCallback(
     async (approved: boolean) => {
@@ -193,6 +219,17 @@ export default function TicketScene(props: {
             <p className="dticket-receipt">A receipt is on its way by email.</p>
           ) : null}
         </div>
+      ) : null}
+
+      {!approve && requestId ? (
+        <button
+          type="button"
+          className="dscene-btn dticket-close"
+          disabled={closing}
+          onClick={() => void close()}
+        >
+          Close
+        </button>
       ) : null}
     </section>
   );

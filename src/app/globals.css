@@ -8145,6 +8145,15 @@ textarea.reason-note-field:disabled::placeholder {
   opacity: 0.45;
 }
 
+/* T244: the student's Close on a live ticket or a summary. Quiet: an
+ * ordinary surface control, its own width, at the foot of the ticket. */
+.dticket-close {
+  flex: 0 0 auto;
+  align-self: flex-start;
+  min-width: 180px;
+  color: var(--muted);
+}
+
 /* T203: the apology a "Take over" leaves on the customer screen for a
  * few seconds, so a student half way through something is not simply
  * interrupted by the next person's ticket. */
@@ -8271,6 +8280,76 @@ textarea.reason-note-field:disabled::placeholder {
 
 .display-mark-row.away .display-dot {
   background: var(--warn);
+}
+
+/* T244: the mark is a control now (tap it for "Reset customer screen"),
+ * so it is a 64px button drawn exactly like the quiet row it was, plus
+ * the small menu under it. */
+
+.display-mark-wrap {
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+
+button.display-mark-row {
+  width: 100%;
+  min-height: 64px;
+  border: 0;
+  border-bottom: 0;
+  border-radius: 0;
+  text-align: left;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.display-mark-more {
+  margin-left: auto;
+  color: var(--accent);
+}
+
+.display-mark-menu {
+  padding: 8px 20px 16px;
+  border-top: 1px solid var(--line);
+}
+
+.display-reset {
+  display: grid;
+  gap: 8px;
+}
+
+.display-reset-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.display-reset-question,
+.display-reset-line {
+  margin: 0;
+  font-size: 16px;
+  color: var(--ink);
+}
+
+.display-mark-btn {
+  min-height: 64px;
+  padding: 0 20px;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+  font-size: 16px;
+}
+
+.display-mark-btn:disabled {
+  opacity: 0.5;
+  color: var(--muted);
+}
+
+.display-mark-btn-go {
+  border-color: var(--stop);
+  background: var(--stop);
+  color: var(--bg);
 }
 
 /* --- Customer display block, dev drawer settings tab (T200) ---------- */

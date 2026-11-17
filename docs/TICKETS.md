@@ -21251,3 +21251,89 @@ policy, never an API limit: `purchaseaccountcredit` and
       as one checkout with no credit purchase.
 - [ ] Pete: one small card sale on prod against the write-guarded dummy
       client (100042041), read back in Mindbody as a single card sale.
+
+## T244. A stuck customer screen (hotfix)
+
+Pete, live at the counter, 2026-11-17: "when i switched to another app
+and went back to this one, it is stuck on a sales screen even tho the
+cart is empty and no client is attached." He had to unpair and re-pair
+the customer iPad to clear it.
+
+Cause: the live ticket mirror (T201) took its ticket down only when the
+cart emptied AND the tab remembered (`up` in `src/app/useDisplayMirror.ts`)
+that a ticket of its own was up. iPadOS discards a backgrounded Safari tab
+and reloads it on return; the reloaded page has an empty cart and
+`up === false`, so nothing cancelled the old ticket and the hub
+(`src/lib/display.ts`) kept it current for its 30 minute
+`REQUEST_TTL_MS`.
+
+### What was built
+
+- **The teacher's tab reconciles on load and on return.** On mount, on
+  `visibilitychange` to visible, on `pageshow` and when the display
+  (re)connects, an empty cart (or a closed sale screen) sends ONE
+  `POST /api/display/cancel` with `scope: "live"` (throttled to one per
+  two seconds, so a reload sends one). The hub decides
+  (`cancelRequest`'s new `only` test, `heldSceneOf`, `isQuietScene`): a
+  live ticket or a post-sale summary is cancelled; a waiver, a sign-up, a
+  contract or an approval is left alone, answered as a no-op naming what
+  is held, with no event sent to the display. A cart that is not empty is
+  presented again through the mirror's normal path.
+- **"Reset customer screen".** On the deployed counter: tap the customer
+  display mark under the header (now a 64px button reading "Customer
+  display connected" with "Options" on the right), then "Reset customer
+  screen". Also beside Pair and Unpair in the drawer's customer display
+  section. One shared piece, `src/app/ResetDisplay.tsx`, posting
+  `scope: "reset"`: a live ticket, a summary or nothing clears at once
+  and the display goes to its welcome screen; anything a student is in
+  answers 409 `reason: "confirm"` with the question in words ("Someone is
+  signing up on the customer screen. Clear it anyway?", and the waiver,
+  contract and approval equivalents), asked once, then "Clear it". Device
+  session and a signed-in teacher; every reset logs
+  `[display] reset by staff <id>: cleared <scene>`.
+- **"Close" on the customer screen** for the live ticket and the summary
+  (`src/app/display/TicketScene.tsx`, a quiet 64px control), through
+  `POST /api/display/close` under the display's own cookie
+  (`closeOnDisplay`: this display's current request, by id, live or
+  summary only). The hub tells the teacher's stream `closed`; the mirror
+  records that cart's key (`closureKey`: name and lines, never a price,
+  so a price answer landing cannot undo the Close) and does not present
+  it again until the cart changes, and the Cart screen says "The customer
+  closed the ticket on their screen." The approval, waiver, sign-up and
+  contract scenes are unchanged.
+
+Nothing here writes to Mindbody, charges or touches a sale path, and the
+display still imports no `mindbody()`. The plain cancel every other flow
+sends is unchanged.
+
+### Verified
+
+`npx tsc --noEmit -p .` and `npx next build` clean. Driven in Chromium
+(Playwright) against `scripts/training/fake-mindbody.mjs` with a local
+Postgres, a production build, a signed-in teacher and a paired display
+(paired through `/api/admin/display/pair`), 32 checks, all passing:
+
+- a live ticket up, the teacher page RELOADED (empty cart): the display
+  goes idle, with exactly one `scope: "live"` cancel sent;
+- a live ticket up, the page hidden and shown with the cart still full:
+  the display still shows it; and after an out-of-band cancel while
+  "away", the return re-presents it;
+- a self-serve sign-up and a waiver on the display both survive a
+  teacher reload and a hide/show; an approval survives a `scope: "live"`
+  cancel (`held: "approval"`);
+- Reset from the header mark clears a stuck live ticket at once with no
+  question, and asks first over a sign-up, a waiver and an approval,
+  changing nothing until "Clear it";
+- the display's Close goes idle, the teacher sees the line, the same
+  ticket is not presented again after three seconds or a hide/show, and
+  adding an item presents the new ticket and clears the line; Close on a
+  summary goes idle too.
+
+### Limits
+
+- The deployed hub has no per-tab owner, so with two teacher iPads a
+  reload on one (empty cart) also takes down the other's live ticket,
+  which comes back on that iPad's next priced change or its own return.
+- Not seen on a real iPad: a discarded-and-reloaded Safari tab firing
+  these events was simulated (reload, and a dispatched
+  `visibilitychange`), not reproduced on iPadOS.
