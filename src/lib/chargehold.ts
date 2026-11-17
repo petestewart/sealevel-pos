@@ -427,7 +427,11 @@ export async function acknowledgeChargeHold(
     console.log(`[charge-hold] acknowledged id=${id} client=${answer} by staff=${staffId}`);
     return { status: "ok", clientId: answer };
   }
-  if (e.row.kind === "pending") return { status: "pending" };
+  /* T253 final review: a stale pending hold is shown as ambiguous after
+   * PENDING_MAX_MS, but while the request that claimed it is still running
+   * (`owned`), its charge may yet land, so it cannot be acknowledged: an
+   * Understood then would let a new claim through beside a live charge. */
+  if (e.row.kind === "pending" || e.owned) return { status: "pending" };
   if (e.row.acknowledgedAt !== null || e.row.kind === "cleared") {
     return { status: "gone" };
   }
