@@ -78,8 +78,11 @@ balance"). T94's overdraft, in that dialog: a "Charge to account" block
 with "Balance after: -$X.XX" and a 64px control that opens the shared PIN
 pad with the `overdraft` purpose; a match arms it for THAT ticket (client,
 pass, code, total) and the charge sends `method: "credit"` with
-`overdraftToken`. No server change. **T252: that dialog now keeps a
-charge that may have moved money** (see the T249 section).
+`overdraftToken`. No server change. A balance read that failed offers no
+PIN. **T252: that dialog now keeps a charge that may have moved money**
+(see the T249 section), and **T253 moved the authority for that to the
+server**: `/api/checkout` refuses a held client from any iPad (see "A
+charge that may have moved money holds the client").
 
 **T242 (2026-11-17): the unpaid row's "Pay and check in" opens on the
 student's OWN passes** when they hold any that may pay for this visit
@@ -283,7 +286,67 @@ over-long key, the store off or full of flights in progress all charge as
 before, loudly in the log. Nothing below the gate moved, and nothing about
 it is settable from the drawer.
 
+### A charge that may have moved money holds the client, on the SERVER (T253)
+
+**`/api/checkout` refuses any new charge for a client whose last charge
+may have moved money and nobody has acknowledged** (a review of e200b71;
+the main session's decision). T241, T249 and T252 kept that in the
+browser's sessionStorage, which is ONE TAB's: a second iPad, a second
+tab, a closed tab and the Home Screen web app after it is swiped away
+(`appleWebApp.capable`; iOS starts a standalone web app with a fresh
+sessionStorage per launch, and swiping it away is how the counter gets
+reloaded) all saw no hold and could charge the same student again.
+
+- **What makes a hold** (`src/lib/chargehold.ts`): an answer from
+  `/api/checkout` that is ambiguous (the route's flag, a 5xx or 200 it
+  could not read, a route that threw), T103's sold-nothing or a T95/T90
+  partial, and an ambiguous live `/api/purchase-contract`. One per
+  client on the ticket, the payer and every T90 recipient. A definite
+  success, a suppression and a definite refusal make none. Each is
+  logged `[charge-hold] made`.
+- **Where it lives**: `charge_holds` (migration 19: ids, site, kind, the
+  route's sentence with long digit runs struck, the sale id when known,
+  the staff id, created and acknowledged at and by; NO card data;
+  Mindbody has no home for it, so the T29 charter allows it) AND this
+  process's memory, always. Memory refuses even when the table does not
+  answer; a row the table has and memory does not (a restart) refuses
+  too; an acknowledgement in memory is never undone by a row whose
+  update did not land. A second instance with no database does not share
+  memory. A hold lapses after `POS_HOLD_LAPSE_MS` (24 hours), logged.
+- **The refusal**: before T113's gate takes a slot, before any PIN,
+  approval or display card is spent and before any Mindbody call, 409
+  `reason: "held"` with the hold's sentence and `holds`. A key the gate
+  already knows is the same tap arriving again and gets its FIRST answer
+  verbatim (`idemKeyKnown`), hold or no hold. Every charge path goes
+  through `/api/checkout` (the Cart screen, the roster's Pay and check in
+  and its renewal flavor, the display's picks and approvals ride the
+  same two screens); `/api/purchase-contract` refuses a held client's
+  live purchase too (the Test: true rehearsal is not held); `/api/guest`
+  sells a $0 comp and moves no money.
+- **The answer that made holds names them** (`chargeHolds: [{id,
+  clientId}]`), inside T113's record. `GET /api/charge-holds?clientId=`
+  (device session) lists the standing ones; `POST
+  /api/charge-holds/acknowledge {id}` (device session and a signed-in
+  teacher, whose staff id goes on the row and in the log) is the only
+  thing that releases one before it lapses.
+- **The screens ask the server** and keep their tab records as the
+  instant local copy. The roster's Pay and check in asks on every open and
+  shows a server hold like its own record (Close keeps it; Understood
+  acknowledges it). The Cart screen asks when it opens and when the
+  ticket's clients change, and shows every hold for the payer or a T90
+  recipient, and the roster's tab record for them, above the foot with its
+  Understood; Finalize waits on it. A 409 `held` shows the hold. An
+  outcome's own Understood acknowledges the holds its answer named. A tab
+  record whose server holds are gone (acknowledged on another iPad) lets
+  go; one that never reached the server (a request that died in the
+  browser, or still `charging`) waits for its own Understood.
+
 ### A charge that may have moved money outlives the Cart screen (T249)
+
+**Corrected by T253**: everything below is ONE TAB's sessionStorage. It
+survives a reload and a sign-out in that tab and NOT a second iPad, a
+second tab, a closed tab or a Home Screen relaunch, which is why the
+server now holds the client (above).
 
 `SaleScreen` renders nothing when closed and `PaymentPanel` unmounts with
 it, while the CART survives, so from 2026-09-14 until T249 a T103
@@ -340,8 +403,13 @@ with Close and Understood (Close keeps it; Understood on a Cart record
 takes its stage the way that screen's does, a part-sold lock stays). The
 nav bar's Profile, where Sign out is, waits on `closeWhy` like Sign-in,
 and sessionStorage outlives a sign-out in the tab, so a record surfaces
-after the next sign-in. "Use this pass" moves no money and keeps T242's
-own lock.
+after the next sign-in (in that tab only: T253's server hold is what
+another iPad or a relaunch sees). "Use this pass" moves no money and
+keeps T242's own lock. The T253 review also made the Cart record keep
+the clients it was tapped for even if the client is then detached, and
+the roster's view of a Cart record shows its sale id and T103 summary.
+`attach-failed` is decided in the browser (the sale stood, the pass did
+not attach), so it is a tab record only and makes no server hold.
 
 ### A sold pass can come with a place (T219)
 
@@ -853,7 +921,8 @@ validates with `parseTypedCard` and holds it in `src/lib/displaycard.ts`:
 memory only. **It belongs to the client, the teacher and the TAB whose
 ticket it was typed on** (T241 review): every ticket present carries a
 per-tab presenter id (`src/app/presenter.ts`, kept in sessionStorage so
-a reload or a tab eviction is still the same owner) on the request's
+a reload of the same tab is still the same owner; a Home Screen relaunch
+starts a fresh sessionStorage and is a new owner, T253) on the request's
 server-only half beside the staff id. Another tab's present no longer
 takes over a live ticket in place (it is "busy"). A ticket that has gone
 two minutes without a present is retired, which is kept for an iPad that
@@ -907,8 +976,10 @@ result's own Understood** (third review: a tile tap, a client change or
 a new ticket does not dismiss it), the fetch itself failing is handled
 the same way, and the outcome is kept in sessionStorage (no card data:
 that the last charge needs checking, when, and the request id) so a
-reload shows it again with the display's choices held; T249 widened
-that record (see its own section near the top). "A different card" stays offered
+reload OF THAT TAB shows it again with the display's choices held; T249
+widened that record and T253 put the authority on the server, since a
+Home Screen relaunch starts with an empty sessionStorage (see both
+sections near the top). "A different card" stays offered
 while a typed card is the tender, and choices are offered on an empty
 tender too. For 1.5 seconds after a pick moves the tender, the charge
 control ignores taps with the sentence highlighted (`settling` on

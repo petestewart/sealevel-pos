@@ -77,7 +77,14 @@ import {
   substituteSentence,
   type ResolvedSubstitute,
 } from "@/lib/substitute";
-import { beginIdempotent } from "@/lib/idemstore";
+import { beginIdempotent, idemKeyKnown } from "@/lib/idemstore";
+import {
+  heldSentence,
+  recordChargeHolds,
+  standingChargeHolds,
+  type ChargeHold,
+  type ChargeHoldKind,
+} from "@/lib/chargehold";
 import {
   DISPLAY_CARD_GONE,
   claimDisplayCard,
@@ -541,6 +548,34 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
   }
 
+  /* T253: a charge for any client on this ticket that may have moved
+   * money, and that no teacher has acknowledged, holds every NEW charge
+   * for them: refused here, before T113's gate takes a slot, before any
+   * PIN or approval is spent and before any Mindbody call. A key the gate
+   * already holds is the same tap arriving again, and gets its first
+   * answer from the gate verbatim, hold or no hold. See
+   * src/lib/chargehold.ts. */
+  const ticketClients = chargeClientIds(payload);
+  if (!idemKeyKnown(request)) {
+    const holds = await standingChargeHolds(ticketClients);
+    if (holds.length > 0) {
+      console.warn(
+        `[charge-hold] refused a charge: client(s) ${holds
+          .map((h) => h.clientId)
+          .join(",")} held by ${holds.map((h) => h.id).join(",")} staff=${session.staffId}`,
+      );
+      return NextResponse.json(
+        {
+          error: heldSentence(holds),
+          reason: "held",
+          stage: "held",
+          holds,
+        },
+        { status: 409 },
+      );
+    }
+  }
+
   /* T113: the one new gate, and everything below it is unchanged. The
    * tap's own key decides whether this is a fresh tap or the same tap
    * arriving twice; a key already answered replays that answer and sends
@@ -609,8 +644,17 @@ export async function POST(request: Request) {
       writes = traced.writes;
     } catch (err) {
       if (displayCard !== null) settleDisplayCard(displayCard.requestId, true);
+      /* T253: a route that threw is an unknown outcome. */
+      await holdAfterCheckout(null, ticketClients, String(session.staffId));
       throw err;
     }
+    /* T253: an answer that may have moved money holds these clients, and
+     * says which holds it made, so the iPad that tapped can acknowledge
+     * exactly those. Inside T113's record, so a replay carries them too. */
+    ran = withHolds(
+      ran,
+      await holdAfterCheckout(ran, ticketClients, String(session.staffId)),
+    );
     /* T241 review: spent by every answer that asked Mindbody to write
      * anything (sent, suppressed or refused alike: a rehearsal is a POST
      * too), and kept only for a refusal that provably asked nothing, our
@@ -639,6 +683,98 @@ export async function POST(request: Request) {
   } catch (err) {
     return gate.recordThrow(err);
   }
+}
+
+/**
+ * T253: every client a charge is for: the payer and each T90 recipient.
+ * Read off the raw body, before any validation, because the hold check
+ * runs first; a body with no usable ids holds nobody (the house client is
+ * a client id like any other, and a hold on it is harmless).
+ */
+function chargeClientIds(payload: any): string[] {
+  const ids = new Set<string>();
+  const payer = typeof payload?.clientId === "string" ? payload.clientId.trim() : "";
+  if (payer !== "") ids.add(payer);
+  if (Array.isArray(payload?.items)) {
+    for (const line of payload.items) {
+      const id =
+        typeof line?.forClientId === "string" ? line.forClientId.trim() : "";
+      if (id !== "") ids.add(id);
+    }
+  }
+  return [...ids];
+}
+
+/**
+ * T253: what /api/checkout answered, read for a hold. Ambiguous (the
+ * route's own flag, a 5xx it could not put words to, or a route that
+ * threw: `res` null), sold-nothing (T103) and partial (T95/T90) hold every
+ * client on the ticket; anything else holds nobody. Reads a CLONE, so the
+ * answer that goes back (and that T113 keeps) is untouched.
+ */
+async function holdAfterCheckout(
+  res: Response | null,
+  clientIds: string[],
+  staffId: string,
+): Promise<{ holds: ChargeHold[]; body: any }> {
+  let body: any = null;
+  try {
+    if (clientIds.length === 0) return { holds: [], body: null };
+    if (res !== null) {
+      body = await res.clone().json().catch(() => null);
+    }
+    /* A 4xx with no readable body is a refusal; anything else unreadable
+     * (a 200 or a 5xx) may have charged. */
+    const unreadable =
+      res === null || (body === null && (res.ok || res.status >= 500));
+    const kind: ChargeHoldKind | null =
+      body?.soldNothing === true
+        ? "sold-nothing"
+        : body?.partial === true
+          ? "partial"
+          : unreadable || body?.ambiguous === true
+            ? "ambiguous"
+            : null;
+    if (kind === null) return { holds: [], body };
+    const holds = await recordChargeHolds({
+      clientIds,
+      kind,
+      message:
+        res === null
+          ? "The checkout stopped before it could say what happened."
+          : (body?.error ?? null),
+      saleId: body?.saleId ?? null,
+      staffId,
+      route: "/api/checkout",
+    });
+    return { holds, body };
+  } catch (err) {
+    console.error(
+      `[charge-hold] could not read the checkout's answer for a hold: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return { holds: [], body };
+  }
+}
+
+/** T253: the answer, with the holds it made named on it (`chargeHolds`,
+ *  ids and clients only). Any other answer goes back untouched. */
+function withHolds(
+  res: Response,
+  made: { holds: ChargeHold[]; body: any },
+): Response {
+  if (made.holds.length === 0 || made.body === null || typeof made.body !== "object") {
+    return res;
+  }
+  const headers = new Headers(res.headers);
+  headers.delete("content-length");
+  headers.set("content-type", "application/json");
+  return new NextResponse(
+    JSON.stringify({
+      ...made.body,
+      chargeHolds: made.holds.map((h) => ({ id: h.id, clientId: h.clientId })),
+    }),
+    { status: res.status, headers },
+  );
 }
 
 /**

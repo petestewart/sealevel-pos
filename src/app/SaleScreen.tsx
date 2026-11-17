@@ -35,7 +35,17 @@ import type {
   TenderOffer,
 } from "@/lib/displayticket";
 import { IDEMPOTENCY_HEADER, newIdempotencyKey } from "@/lib/idemkey";
-import { CART_HELD_KEY } from "./heldcharge";
+import {
+  acknowledgeServerHold,
+  CART_HELD_KEY,
+  fetchServerHolds,
+  holdIdsFrom,
+  readRosterHeld,
+  serverHoldsFrom,
+  writeRosterHeld,
+  type RosterHeld,
+  type ServerHold,
+} from "./heldcharge";
 
 import {
   COMP_DETAIL_MAX,
@@ -2008,6 +2018,10 @@ interface HeldRecord {
    *  recipient), so the roster's "Pay and check in" holds THOSE students
    *  while an outcome here waits (src/app/heldcharge.ts). Ids only. */
   clientIds: string[];
+  /** T253: the server holds this outcome made (the checkout answer's
+   *  `chargeHolds`), so its Understood acknowledges them for every iPad,
+   *  and a restore whose holds were acknowledged elsewhere lets go. */
+  serverHoldIds?: string[];
 }
 
 /** T252: the clients a ticket is for, for the record above. */
@@ -2640,6 +2654,25 @@ function PaymentPanel(props: {
    *  own: after a reload the cart and its client are gone, and the record
    *  must go on holding the student it was about on the roster. */
   const heldClients = useRef<string[]>([]);
+  /**
+   * T253: the server's holds. `ownHoldIds` are the ones THIS screen's
+   * outcome made (its Understood acknowledges them); `ticketHolds` are
+   * every standing hold for a client on this ticket, the payer and each
+   * T90 recipient, read when the screen opens and whenever those clients
+   * change, so a hold made on another iPad, in another tab or before a
+   * Home Screen relaunch is shown with its Understood BEFORE Finalize,
+   * rather than met as a refusal. `ticketLocal` is the roster dialog's
+   * own tab record for those clients (T252), shown the same way.
+   */
+  const [ownHoldIds, setOwnHoldIds] = useState<string[]>([]);
+  const ownHoldIdsRef = useRef<string[]>([]);
+  ownHoldIdsRef.current = ownHoldIds;
+  const [ticketHolds, setTicketHolds] = useState<ServerHold[]>([]);
+  const [ticketLocal, setTicketLocal] = useState<RosterHeld[]>([]);
+  const [holdAckBusy, setHoldAckBusy] = useState(false);
+  /** Whether a hold on a client of this ticket stands (shown above the
+   *  foot): Finalize waits on its Understood. */
+  const ticketHeld = ticketHolds.length > 0 || ticketLocal.length > 0;
   /** Third review (6): the record is not written until the mount's
    *  restore below has read it. */
   const outcomeRestored = useRef(false);
@@ -3626,6 +3659,9 @@ function PaymentPanel(props: {
     !charging &&
     /* T241 third review: never while an unknown outcome is showing. */
     !outcomeOpen &&
+    /* T253: nor while a client on this ticket is held by a charge that
+       may have gone through, here or on any iPad. */
+    !ticketHeld &&
     /* T43 review: never while the reason dialog is open. The scrim covers
        the Charge button, but a keyboard Tab leaves the dialog and lands on
        it, and Enter there charged the tender the teacher was in the middle
@@ -3729,8 +3765,9 @@ function PaymentPanel(props: {
       clientIds: [
         ...new Set([...heldClients.current, ...ticketClients(client, cart)]),
       ],
+      serverHoldIds: ownHoldIds,
     });
-  }, [heldStage, result, partialLock, holdingGiftIds, cart, restoreDone, client]);
+  }, [heldStage, result, partialLock, holdingGiftIds, cart, restoreDone, client, ownHoldIds]);
   /* The restore, once per mount, AFTER the writer so the writer skips
    * the mount. A reopen in the same page brings each outcome back as
    * itself; after a reload it says so, and a charge that was still in
@@ -3748,6 +3785,11 @@ function PaymentPanel(props: {
         heldClients.current = Array.isArray(saved.clientIds)
           ? saved.clientIds.filter((c): c is string => typeof c === "string")
           : [];
+        if (Array.isArray(saved.serverHoldIds)) {
+          setOwnHoldIds(
+            saved.serverHoldIds.filter((c): c is string => typeof c === "string"),
+          );
+        }
         const when =
           typeof saved.at === "number"
             ? new Date(saved.at).toLocaleTimeString([], {
@@ -3830,6 +3872,89 @@ function PaymentPanel(props: {
     /* Once per mount, on the cart as it stood when the screen opened. */
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /* ---------------- T253: the server's holds on this ticket -----------
+   * Read once the restore has run (so this screen's own holds are known
+   * and not shown twice), and again whenever the ticket's clients change.
+   * A server that does not answer leaves what was last read; the route
+   * refuses a held client whatever this screen believes. An outcome on
+   * THIS screen whose holds the server no longer has was acknowledged on
+   * another iPad, and lets go here too; so does a roster record. */
+  const ticketClientKey = [...ticketClients(client, cart)].sort().join(",");
+  const loadTicketHolds = useCallback(async () => {
+    const ids = ticketClientKey === "" ? [] : ticketClientKey.split(",");
+    const own = ownHoldIdsRef.current;
+    const askIds = [...new Set([...ids, ...heldClients.current])];
+    if (askIds.length === 0) {
+      /* Nobody on the ticket and no outcome naming anybody: nothing to
+       * ask, and nothing here may be released on a question not asked. */
+      setTicketHolds([]);
+      setTicketLocal([]);
+      return;
+    }
+    const standing = await fetchServerHolds(askIds);
+    if (standing === null) return;
+    const isStanding = (id: string) => standing.some((h) => h.id === id);
+    let local = readRosterHeld().filter((r) => ids.includes(r.clientId));
+    for (const r of local) {
+      const sids = r.serverHoldIds ?? [];
+      if (r.stage !== "charging" && sids.length > 0 && !sids.some(isStanding)) {
+        writeRosterHeld(r.clientId, null);
+      }
+    }
+    local = readRosterHeld().filter((r) => ids.includes(r.clientId));
+    setTicketLocal(local);
+    setTicketHolds(standing.filter((h) => !own.includes(h.id)));
+    if (own.length > 0 && !own.some(isStanding)) {
+      /* Acknowledged elsewhere: this screen's outcome is answered. */
+      setOwnHoldIds([]);
+      setResult((cur) =>
+        cur !== null &&
+        (cur.kind === "ambiguous" ||
+          cur.kind === "sold-nothing" ||
+          cur.kind === "partial")
+          ? null
+          : cur,
+      );
+    }
+  }, [ticketClientKey]);
+  useEffect(() => {
+    if (!restoreDone) return;
+    void loadTicketHolds();
+  }, [restoreDone, loadTicketHolds]);
+
+  /** Understood on a hold read from the server: acknowledged there, for
+   *  every iPad, then read again. */
+  const acknowledgeTicketHold = async (ids: string[], localClient?: string) => {
+    if (holdAckBusy) return;
+    setHoldAckBusy(true);
+    try {
+      for (const id of ids) await acknowledgeServerHold(id);
+      if (localClient !== undefined) writeRosterHeld(localClient, null);
+      await loadTicketHolds();
+    } finally {
+      setHoldAckBusy(false);
+    }
+  };
+
+  /** Understood on THIS screen's own outcome: the result goes, as it
+   *  always did, and the holds it made are acknowledged on the server. */
+  const understoodResult = () => {
+    const ids = ownHoldIdsRef.current;
+    setResult(null);
+    setOwnHoldIds([]);
+    if (ids.length > 0) {
+      void (async () => {
+        for (const id of ids) await acknowledgeServerHold(id);
+        await loadTicketHolds();
+      })();
+    }
+  };
+  const ticketNameOf = (id: string): string =>
+    client !== null && client.id === id
+      ? client.name
+      : (cart.find((l) => l.forClient?.id === id)?.forClient?.name ??
+        "this client");
 
   /**
    * T249: why the Cart screen may not be closed right now, reported up
@@ -4468,7 +4593,11 @@ function PaymentPanel(props: {
      * back as a charge that needs checking. The writer effect keeps it
      * from the next render on; this is the moment before that render. */
     heldAt.current = Date.now();
-    heldClients.current = [];
+    /* T253 review: seeded with THIS ticket's clients at the tap and never
+     * shrunk until the record is gone, so detaching or switching the
+     * client after an outcome cannot unname the student it was about. */
+    heldClients.current = ticketClients(client, cart);
+    setOwnHoldIds([]);
     uncertainRequest.current = typedCard?.displayRequestId ?? null;
     if (outcomeRestored.current) {
       writeHeldRecord({
@@ -4486,6 +4615,7 @@ function PaymentPanel(props: {
         lock: null,
         ticket: null,
         clientIds: ticketClients(client, cart),
+        serverHoldIds: [],
       });
     }
     inFlight.current = true;
@@ -4588,6 +4718,10 @@ function PaymentPanel(props: {
       } catch {
         /* fall through to the status-code handling below */
       }
+      /* T253: the holds this answer made on the server, which this
+       * outcome's Understood acknowledges for every iPad. */
+      const madeHolds = holdIdsFrom(body);
+      if (madeHolds.length > 0) setOwnHoldIds(madeHolds);
       /* Any answer carrying the live balance refreshes the credit gate:
        * a method-stage refusal ("credit covers this") and the split
        * failure both name the number the next decision must be made on. */
@@ -4923,6 +5057,12 @@ function PaymentPanel(props: {
           message: String(body?.error ?? "The charge did not answer."),
         });
         onClientDataStale();
+      } else if (res.status === 409 && body?.reason === "held") {
+        /* T253: refused because the server holds a client on this ticket
+         * (a charge that may have gone through, from any iPad). Nothing
+         * was charged; the hold is shown above Finalize with its
+         * Understood, which is the way on. */
+        setTicketHolds(serverHoldsFrom(body?.holds));
       } else if (
         res.status === 401 &&
         body?.reason === "teacher" &&
@@ -6027,6 +6167,8 @@ function PaymentPanel(props: {
       ? "The customer just changed how they are paying"
     : outcomeOpen
       ? "The last charge needs checking first. Tap Understood when you have."
+    : ticketHeld
+      ? "A charge for a client on this ticket may have gone through. Read it above and tap Understood."
     : charging
       ? "Charging..."
       : partialLock !== null
@@ -6490,6 +6632,81 @@ function PaymentPanel(props: {
                 <p className="muted-note">{NEEDS_HOUSE_CLIENT_LINE}</p>
               ) : null}
 
+              {/* T253: a client on this ticket held by a charge that may
+                  have gone through, on this iPad or any other (the
+                  server's record) or in the roster's own tab record.
+                  Shown before Finalize, which waits on its Understood. */}
+              {ticketHolds.map((h) => (
+                <div key={h.id} className="sale-stop pay-split" role="alert">
+                  <p className="pay-split-head">
+                    {`A charge for ${ticketNameOf(h.clientId)} at ${new Date(
+                      h.createdAt,
+                    ).toLocaleTimeString([], {
+                      hour: "numeric",
+                      minute: "2-digit",
+                    })} ${
+                      h.kind === "sold-nothing"
+                        ? "took a payment and sold nothing"
+                        : h.kind === "partial"
+                          ? "was only partly sold"
+                          : "may or may not have gone through"
+                    }.`}
+                  </p>
+                  {h.message ? (
+                    <p className="pay-split-why">{h.message}</p>
+                  ) : null}
+                  {h.saleId ? (
+                    <p className="pay-split-why">{`Sale ${h.saleId}.`}</p>
+                  ) : null}
+                  <p className="pay-split-why">
+                    Check it in Mindbody before charging them again.
+                    Finalize Sale waits until you tap Understood.
+                  </p>
+                  <button
+                    className="class-change pay-dismiss"
+                    disabled={holdAckBusy}
+                    onClick={() => void acknowledgeTicketHold([h.id])}
+                  >
+                    Understood
+                  </button>
+                </div>
+              ))}
+              {ticketLocal.map((r) => (
+                <div
+                  key={`local-${r.clientId}`}
+                  className="sale-stop pay-split"
+                  role="alert"
+                >
+                  <p className="pay-split-head">
+                    {r.stage === "charging"
+                      ? `A charge for ${r.name} from Pay and check in had not answered when it was last seen. It may have gone through.`
+                      : r.stage === "sold-nothing"
+                        ? `A charge for ${r.name} from Pay and check in took a payment and sold nothing.`
+                        : r.stage === "attach-failed"
+                          ? `${r.name} was charged from Pay and check in, but the pass was not attached to the visit.`
+                          : `A charge for ${r.name} from Pay and check in may or may not have gone through.`}
+                  </p>
+                  {r.message && r.stage !== "charging" ? (
+                    <p className="pay-split-why">{r.message}</p>
+                  ) : null}
+                  <p className="pay-split-why">
+                    Check it in Mindbody before charging them again.
+                  </p>
+                  <button
+                    className="class-change pay-dismiss"
+                    disabled={holdAckBusy}
+                    onClick={() =>
+                      void acknowledgeTicketHold(
+                        r.serverHoldIds ?? [],
+                        r.clientId,
+                      )
+                    }
+                  >
+                    Understood
+                  </button>
+                </div>
+              ))}
+
               {result?.kind === "suppressed" ? (
                 /* Suppression is never success: amber, no check, the
                    cart and the tender untouched. A dry run takes the
@@ -6554,7 +6771,7 @@ function PaymentPanel(props: {
                     }
                     onClick={() => {
                       if (holdingGiftIds) return;
-                      setResult(null);
+                      understoodResult();
                     }}
                   >
                     Understood
@@ -6615,7 +6832,7 @@ function PaymentPanel(props: {
                   ) : null}
                   <button
                     className="class-change pay-dismiss"
-                    onClick={() => setResult(null)}
+                    onClick={understoodResult}
                   >
                     Understood
                   </button>
@@ -6627,7 +6844,7 @@ function PaymentPanel(props: {
                   {result.message ? ` (${result.message})` : ""}
                   <button
                     className="class-change pay-dismiss"
-                    onClick={() => setResult(null)}
+                    onClick={understoodResult}
                   >
                     Understood
                   </button>

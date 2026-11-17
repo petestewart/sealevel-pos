@@ -442,9 +442,18 @@ const server = http.createServer((req, res) => {
   });
 });
 
+/* T253: a driver can make the next N real (not Test) checkouts answer a
+ * 500, which the app reads as an unknown outcome, by POSTing
+ * /__fake/fail-checkout?n=1. Not part of any Mindbody API. */
+let failCheckouts = 0;
+
 function handle(method, path, q, body, res) {
   console.log(`[fake-mb] ${method} ${path}${q.size ? "?" + q.toString().slice(0, 120) : ""}`);
   switch (path) {
+    case "/__fake/fail-checkout": {
+      failCheckouts = Number(q.get("n") ?? 1) || 0;
+      return send(res, 200, { failCheckouts });
+    }
     case "/usertoken/issue": {
       const u = String(body.Username ?? "").toLowerCase();
       if (logins[u] && body.Password) {
@@ -686,6 +695,10 @@ function handle(method, path, q, body, res) {
     case "/sale/giftcardbalance":
       return send(res, 200, { BarcodeId: one(q, "barcodeId"), RemainingBalance: 0 });
     case "/sale/checkoutshoppingcart": {
+      if (body.Test !== true && failCheckouts > 0) {
+        failCheckouts -= 1;
+        return send(res, 500, { Error: { Message: "Internal error (fake)", Code: "InternalError" } });
+      }
       const p = priceCart(body);
       for (const l of p.lines) {
         const why = clientRefusals[`${body.ClientId}:${l.found?.ProductId}`];

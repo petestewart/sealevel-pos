@@ -58,14 +58,20 @@ import { actorFallbackLine } from "./actornote";
 import ApprovalDialog, { type ApprovalArmed } from "./ApprovalDialog";
 import {
   acknowledgeCartHeld,
+  acknowledgeServerHold,
+  fetchServerHolds,
+  heldFromServer,
+  holdIdsFrom,
   readCartHeld,
   readRosterHeld,
   ROSTER_PAGE_ID,
+  serverHoldsFrom,
   storableSentence,
   writeRosterHeld,
   type HeldCharge,
   type RosterHeld,
   type RosterHeldStage,
+  type ServerHold,
 } from "./heldcharge";
 import WaiverOverrideDialog, {
   type WaiverOverrideArmed,
@@ -1052,7 +1058,12 @@ function heldHeadline(held: HeldCharge, name: string): string {
           minute: "2-digit",
         })}`
       : "";
-  const where = held.source === "cart" ? "on the Cart screen" : "from this iPad";
+  const where =
+    held.source === "cart"
+      ? "on the Cart screen"
+      : held.source === "server"
+        ? "at the counter"
+        : "from this iPad";
   switch (held.stage) {
     case "charging":
       return `A charge for ${name} ${where}${when} had not answered when ${
@@ -1416,6 +1427,28 @@ function FrontDesk({
   useEffect(() => {
     setRosterHeld(readRosterHeld());
     setCartHeld(readCartHeld());
+  }, []);
+  /**
+   * T253: the SERVER's holds for the dialog's client, asked on every open
+   * (and after an Understood or a refused charge). The authority: the
+   * tab's records above cannot see another iPad, another tab or a Home
+   * Screen relaunch. `holds` null is "the server did not answer", when
+   * the tab's records decide alone (and /api/checkout still refuses).
+   */
+  const [payServerHolds, setPayServerHolds] = useState<{
+    clientId: string;
+    holds: ServerHold[] | null;
+  } | null>(null);
+  const [payAckBusy, setPayAckBusy] = useState(false);
+  const [payAckNote, setPayAckNote] = useState<string | null>(null);
+  const loadPayServerHolds = useCallback(async (clientId: string) => {
+    const holds = await fetchServerHolds([clientId]);
+    setPayServerHolds((cur) =>
+      /* Only for the client the dialog is still on. */
+      payDialogRef.current?.entry.clientId === clientId
+        ? { clientId, holds }
+        : cur,
+    );
   }, []);
   const [payPriceError, setPayPriceError] = useState<string | null>(null);
   /**
@@ -3941,7 +3974,14 @@ function FrontDesk({
       /* T252: what the tab holds now, the Cart screen's record included. */
       setRosterHeld(readRosterHeld());
       setCartHeld(readCartHeld());
+      /* T253: and what the server holds, which every iPad shares. */
+      setPayServerHolds({ clientId: entry.clientId, holds: null });
+      setPayAckNote(null);
       setPayDialog({ entry, classId: activeId, flavor });
+      void fetchServerHolds([entry.clientId]).then((holds) => {
+        if (payGen.current !== gen) return;
+        setPayServerHolds({ clientId: entry.clientId, holds });
+      });
       /* T242: the student's own passes come first, when they hold any
        * that may pay for this visit. Only the unpaid flavor: the
        * renewal offer sells the next pack to a visit already paid. The
@@ -7052,26 +7092,67 @@ function FrontDesk({
    * This dialog's own charge in flight is not a hold on itself (its stage
    * locks everything already).
    */
+  /* T253: what the server holds for this client, or null while it has
+   * not answered (or could not). */
+  const payServerHere: ServerHold[] | null =
+    payDialog !== null &&
+    payServerHolds !== null &&
+    payServerHolds.clientId === payDialog.entry.clientId
+      ? payServerHolds.holds
+      : null;
+  /** A tab record whose server holds are all gone was acknowledged on
+   *  another iPad (or tab): released here too. One that never reached the
+   *  server (no ids, or still charging) stays until its own Understood. */
+  const payLocalReleased = (ids: string[] | undefined): boolean =>
+    payServerHere !== null &&
+    ids !== undefined &&
+    ids.length > 0 &&
+    ids.every((id) => !payServerHere.some((h) => h.id === id));
+  const payOwnRecord =
+    payDialog !== null
+      ? (rosterHeld.find((r) => r.clientId === payDialog.entry.clientId) ??
+        null)
+      : null;
+  const payCartRecord =
+    payDialog !== null &&
+    cartHeld !== null &&
+    (cartHeld.clientIds === null ||
+      cartHeld.clientIds.includes(payDialog.entry.clientId))
+      ? cartHeld.held
+      : null;
+  const payOwnReleased =
+    payOwnRecord !== null &&
+    payOwnRecord.stage !== "charging" &&
+    payLocalReleased(payOwnRecord.serverHoldIds);
+  const payCartReleased =
+    payCartRecord !== null &&
+    payCartRecord.stage !== "charging" &&
+    payLocalReleased(payCartRecord.serverHoldIds);
+  useEffect(() => {
+    if (payDialog === null) return;
+    if (payOwnReleased) {
+      setRosterHeld(writeRosterHeld(payDialog.entry.clientId, null));
+    }
+    if (payCartReleased && !saleOpen) {
+      acknowledgeCartHeld();
+      setCartHeld(readCartHeld());
+    }
+  }, [payOwnReleased, payCartReleased, payDialog, saleOpen]);
   const payHeld: HeldCharge | null = (() => {
     if (payDialog === null) return null;
-    const cid = payDialog.entry.clientId;
-    const own = rosterHeld.find((r) => r.clientId === cid);
-    if (own !== undefined) {
+    if (payOwnRecord !== null && !payOwnReleased) {
       return {
         source: "roster",
-        stage: own.stage,
-        message: own.message,
-        at: own.at,
-        samePage: own.page === ROSTER_PAGE_ID,
+        stage: payOwnRecord.stage,
+        message: payOwnRecord.message,
+        at: payOwnRecord.at,
+        samePage: payOwnRecord.page === ROSTER_PAGE_ID,
+        serverHoldIds: payOwnRecord.serverHoldIds ?? [],
       };
     }
-    if (
-      cartHeld !== null &&
-      (cartHeld.clientIds === null || cartHeld.clientIds.includes(cid))
-    ) {
-      return cartHeld.held;
-    }
-    return null;
+    if (payCartRecord !== null && !payCartReleased) return payCartRecord;
+    const first = payServerHere?.[0];
+    return first !== undefined ? heldFromServer(first) : null;
   })();
   /** Whether the dialog draws the record in place of its views: not while
    *  its own run is on the wire, and not over the outcome that run left
@@ -7104,8 +7185,12 @@ function FrontDesk({
     payTotal > 0 &&
     payProfile !== null &&
     !payProfile.loading;
+  /* T253 review: a live balance read that FAILED leaves the roster's
+   * figure, which may be stale: no "balance after" is computed on it and
+   * no PIN is offered until a read answers. */
+  const payBalanceUnread = payProfile !== null && payProfile.error !== null;
   const payOverdraftAfter =
-    payOverdraftOffered && payTotal !== null
+    payOverdraftOffered && payTotal !== null && !payBalanceUnread
       ? Math.round(((payBalance ?? 0) - payTotal) * 100) / 100
       : null;
 
@@ -7146,7 +7231,11 @@ function FrontDesk({
      * checking, never as a fresh Charge. A definite answer removes it; an
      * outcome that may have moved money replaces it until its Understood. */
     const heldAt = Date.now();
-    const hold = (stage: RosterHeldStage | null, message: string | null = null) =>
+    const hold = (
+      stage: RosterHeldStage | null,
+      message: string | null = null,
+      serverHoldIds: string[] = [],
+    ) =>
       setRosterHeld(
         writeRosterHeld(
           entry.clientId,
@@ -7161,6 +7250,7 @@ function FrontDesk({
                 message: storableSentence(message),
                 at: heldAt,
                 page: ROSTER_PAGE_ID,
+                serverHoldIds,
               },
         ),
       );
@@ -7249,7 +7339,7 @@ function FrontDesk({
         const unread = chargeRes.ok
           ? "The server answered but the outcome could not be read."
           : `The server's answer (HTTP ${chargeRes.status}) carried no readable outcome.`;
-        hold("ambiguous", unread);
+        hold("ambiguous", unread, holdIdsFrom(chargeBody, entry.clientId));
         setPayOutcome({ kind: "charge-ambiguous", message: unread });
         return;
       }
@@ -7273,12 +7363,16 @@ function FrontDesk({
             chargeBody?.error ??
               "The payment went through and nothing was sold.",
           );
-          hold("sold-nothing", said);
+          hold("sold-nothing", said, holdIdsFrom(chargeBody, entry.clientId));
           setPayOutcome({ kind: "sold-nothing", message: said });
           return;
         }
         if (chargeBody?.ambiguous === true) {
-          hold("ambiguous", String(chargeBody?.error ?? "") || null);
+          hold(
+            "ambiguous",
+            String(chargeBody?.error ?? "") || null,
+            holdIdsFrom(chargeBody, entry.clientId),
+          );
           setPayOutcome({
             kind: "charge-ambiguous",
             message: String(chargeBody?.error ?? ""),
@@ -7287,6 +7381,17 @@ function FrontDesk({
         }
         /* A definite refusal: the record goes with it. */
         hold(null);
+        /* T253: refused because the SERVER holds this client (a charge
+         * that may have gone through, from any iPad). Nothing was
+         * charged; the dialog shows that hold with its Understood in
+         * place of Charge, rather than a refusal to retry. */
+        if (chargeRes.status === 409 && chargeBody?.reason === "held") {
+          setPayServerHolds({
+            clientId: entry.clientId,
+            holds: serverHoldsFrom(chargeBody?.holds),
+          });
+          return;
+        }
         /* A definite refusal: nothing was charged, nothing else
          * happened, and saying so is what makes a retry safe. A refusal
          * that names the live balance (a credit payment over it)
@@ -8099,13 +8204,34 @@ function FrontDesk({
    * with its ticket). Not while the Cart screen is open: its panel owns
    * that record then, and it covers this dialog anyway.
    */
-  const acknowledgePayHeld = () => {
-    if (payDialog === null || payHeld === null || saleOpen) return;
-    if (payHeld.source === "roster") {
-      setRosterHeld(writeRosterHeld(payDialog.entry.clientId, null));
-    } else {
-      acknowledgeCartHeld();
-      setCartHeld(readCartHeld());
+  const acknowledgePayHeld = async () => {
+    if (payDialog === null || payHeld === null || saleOpen || payAckBusy) return;
+    const cid = payDialog.entry.clientId;
+    const held = payHeld;
+    setPayAckBusy(true);
+    setPayAckNote(null);
+    try {
+      /* T253: the server's holds behind it first: those are what refuse
+       * every iPad's next charge. */
+      let failed = false;
+      for (const id of held.serverHoldIds ?? []) {
+        if (!(await acknowledgeServerHold(id))) failed = true;
+      }
+      if (held.source === "server" && failed) {
+        setPayAckNote(
+          "The server did not take the Understood. Try again in a moment.",
+        );
+        return;
+      }
+      if (held.source === "roster") {
+        setRosterHeld(writeRosterHeld(cid, null));
+      } else if (held.source === "cart") {
+        acknowledgeCartHeld();
+        setCartHeld(readCartHeld());
+      }
+      await loadPayServerHolds(cid);
+    } finally {
+      setPayAckBusy(false);
     }
   };
 
@@ -11505,6 +11631,14 @@ function FrontDesk({
                   payHeld.stage !== "charging" ? (
                     <p className="pay-split-why">{payHeld.message}</p>
                   ) : null}
+                  {/* T253 review: what the Cart screen would have shown
+                      before its Understood, the sale and T103's line. */}
+                  {payHeld.summary ? (
+                    <p className="pay-split-why">{payHeld.summary}</p>
+                  ) : null}
+                  {payHeld.saleId ? (
+                    <p className="pay-split-why">{`Sale ${payHeld.saleId}.`}</p>
+                  ) : null}
                   <p className="pay-split-why">
                     {payHeld.stage === "sold-nothing"
                       ? "Do not charge again. Check the sale in Mindbody first."
@@ -11517,15 +11651,21 @@ function FrontDesk({
                   Nothing can be charged, comped or checked in from here
                   until you tap Understood.
                 </p>
+                {payAckNote !== null ? (
+                  <p className="sale-stop" role="status">
+                    {payAckNote}
+                  </p>
+                ) : null}
                 <div className="modal-actions">
                   <button className="modal-cancel" onClick={closePayDialog}>
                     Close
                   </button>
                   <button
                     className="modal-confirm pay-charge"
-                    onClick={acknowledgePayHeld}
+                    disabled={payAckBusy}
+                    onClick={() => void acknowledgePayHeld()}
                   >
-                    Understood
+                    {payAckBusy ? "One moment..." : "Understood"}
                   </button>
                 </div>
               </>
@@ -11862,7 +12002,16 @@ function FrontDesk({
                 where it is TRUE (the balance does not reach the total),
                 with what it leaves on the account, and the teacher's PIN
                 as the one way to choose it. */}
-            {payOverdraftOffered && payOverdraftAfter !== null ? (
+            {payOverdraftOffered && payBalanceUnread ? (
+              <div className="pay-overdraft">
+                <p className="pay-overdraft-head">Charge to account</p>
+                <p className="pay-overdraft-note">
+                  The account balance could not be read, so the account
+                  cannot be charged past it from here. Close and open this
+                  again to read it.
+                </p>
+              </div>
+            ) : payOverdraftOffered && payOverdraftAfter !== null ? (
               <div
                 className={
                   payOverdraftArmed ? "pay-overdraft armed" : "pay-overdraft"
@@ -11986,7 +12135,11 @@ function FrontDesk({
             (payOutcome?.kind === "charge-ambiguous" ||
               payOutcome?.kind === "sold-nothing" ||
               payOutcome?.kind === "attach-failed") ? (
-              <button className="pay-method-switch" onClick={acknowledgePayHeld}>
+              <button
+                className="pay-method-switch"
+                disabled={payAckBusy}
+                onClick={() => void acknowledgePayHeld()}
+              >
                 Understood
               </button>
             ) : null}
@@ -12135,7 +12288,8 @@ function FrontDesk({
             if (
               payTotal === null ||
               paySelectedId === null ||
-              !payOverdraftOffered
+              !payOverdraftOffered ||
+              payBalanceUnread
             ) {
               return;
             }

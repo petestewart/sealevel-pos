@@ -22772,3 +22772,73 @@ with no Charge or free entry, and its Understood released it. Again with
 the staff session ended (`/api/teacher/signout`) and a reload: the gate,
 sign in, and the dialog was still held. An ordinary sale afterwards
 closed, checked Taylor in and left no record.
+
+### T253: the hold moves to the server (review of e200b71, 2026-11-17)
+
+The review found e200b71 not safe to merge, and the main session decided:
+"the authority for 'a charge for this client may have moved money' moves
+to the SERVER, because sessionStorage is per tab: a second iPad, a second
+tab, a closed tab and, very likely, the Home Screen web app after it is
+swiped away (layout.tsx sets appleWebApp.capable; iOS gives a standalone
+web app a fresh sessionStorage per launch, and swiping the app away is
+exactly how Pete reloads) all see no hold today." Plus four findings:
+the Cart screen ignored the roster's record (HIGH); the tap reset the
+Cart record's clients, so detaching the client after an outcome unnamed
+the student (MEDIUM); the roster's Understood on a Cart record released
+it without showing its sale id or summary (LOW-MEDIUM); and the overdraft
+block computed "Balance after" on a balance whose read had failed
+(minor).
+
+- [x] `charge_holds` (migration 19) plus an in-memory map, one hold per
+      client on a ticket whose `/api/checkout` answer was ambiguous (flag,
+      unreadable 5xx or 200, a thrown route), sold-nothing or partial, and
+      on an ambiguous live `/api/purchase-contract`. No card data.
+- [x] `/api/checkout` refuses a held client 409 `reason: "held"` before
+      T113's gate takes a slot and before any token, approval, display
+      card or Mindbody call; a key the gate knows replays its first answer
+      verbatim. `/api/purchase-contract` refuses a held client's live
+      purchase. `/api/guest` moves no money.
+- [x] `GET /api/charge-holds?clientId=` and `POST
+      /api/charge-holds/acknowledge`; a hold lapses after 24 hours.
+- [x] The roster dialog asks on open; the Cart screen asks on open and on
+      a client change and shows server holds and roster records for every
+      client on the ticket with Understood before Finalize; a 409 `held`
+      shows the hold; an outcome's Understood acknowledges its holds.
+- [x] The tap seeds the Cart record's clients; the roster shows a Cart
+      record's sale id and summary; an unread balance offers no PIN.
+
+**Done (2026-11-17).** As above; `src/lib/chargehold.ts`, the two routes
+under `src/app/api/charge-holds/`, `idemKeyKnown` in
+`src/lib/idemstore.ts`, `holdAfterCheckout` and `withHolds` in the
+checkout route, and the screens through `src/app/heldcharge.ts`. A tab
+record whose server holds are gone (acknowledged on another iPad) lets
+go; one that never reached the server, or is still `charging`, waits for
+its own Understood. `attach-failed` stays a tab record: the sale stood
+and the browser alone knows the pass did not attach. The training fake
+answers the next N real checkouts 500 after `POST
+/__fake/fail-checkout?n=N`, which the route reads as unknown.
+
+Verified: tsc and next build clean. Chromium against the fake, app :3250,
+fake :4250, database `pos250`: iPad A (Maya) charged Taylor Brooks from
+Pay and check in with Mindbody answering 500: the route answered 502
+ambiguous naming its hold, and `charge_holds` held one open row (columns:
+id, site, client_id, kind, message, sale_id, staff_id, route, created_at,
+acknowledged_at, acknowledged_by). iPad B (its own context, unlocked and
+signed in as Jordan, no tab record): Pay and check in showed the hold
+with no Charge or free entry; a fresh checkout straight at the route got
+409 `held` ("A charge for this client at 10:19 PM may or may not have
+gone through, and nobody has checked it yet. ..."); the Cart screen for
+Taylor showed the hold above the foot with Finalize off. The original key
+replayed returned its first 502 body byte for byte. A reloaded and a
+fresh context (the relaunch) were both held. Another student's sale went
+through meanwhile. With the table renamed away (the store not answering),
+memory still refused, and a new unknown charge then made a memory-only
+hold that refused the next. Understood on B: Charge came back on B, the
+row named staff 100000202, and A (its tab record let go) and the fresh
+context were released. A hold survived a server restart (from the table)
+and an acknowledgement released it. A failed balance read showed "The
+account balance could not be read" with no PIN. The T250 and T252 drives
+were re-run unchanged and passed, the approval drive included. Not
+driven: the roster's view of a Cart sold-nothing record with a sale id
+(built, shown only when the record has one), a T90 partial's per-recipient
+holds (the code holds every client id on the ticket), the lapse.

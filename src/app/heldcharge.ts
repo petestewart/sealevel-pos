@@ -20,10 +20,15 @@
  *   answer, replaced by an outcome that may have moved money, and kept
  *   until that outcome's own Understood. One per client.
  *
- * Both live in sessionStorage: the tab's, so they survive a reload, an
- * eviction and a sign-out in the same tab. Neither holds card data: a
+ * Both live in sessionStorage: ONE tab's, so they survive a reload and a
+ * sign-out in that tab and nothing else (not a second iPad, a second tab,
+ * a closed tab or a Home Screen relaunch, which starts with an empty
+ * sessionStorage). T253 made the SERVER the authority
+ * (src/lib/chargehold.ts: /api/checkout refuses a held client from any
+ * iPad); these stay as the instant local copy, and the helpers below ask
+ * the server and acknowledge its holds. Neither holds card data: a
  * client id, a visit id, a name the roster shows, a stage, the route's
- * sentence (long digit runs struck) and a time.
+ * sentence (long digit runs struck), hold ids and a time.
  */
 
 export const CART_HELD_KEY = "pos_uncertain_charge";
@@ -48,17 +53,125 @@ export interface RosterHeld {
   message: string | null;
   at: number;
   page: string;
+  /** T253: the server's holds this outcome made, when its answer named
+   *  them. A record whose holds the server no longer has (acknowledged on
+   *  another iPad) is released; one that never reached the server stays
+   *  until its own Understood. */
+  serverHoldIds?: string[];
 }
 
 /** What a standing record says, for the roster dialog to show in place of
  *  Charge. `source` says which screen wrote it, and so whose Understood
  *  clears it. */
 export interface HeldCharge {
-  source: "roster" | "cart";
+  source: "roster" | "cart" | "server";
   stage: RosterHeldStage;
   message: string | null;
   at: number | null;
   samePage: boolean;
+  /** The sale it names, when known (T103's sale id). */
+  saleId?: string | null;
+  /** T103's own summary line, from the Cart screen's record. */
+  summary?: string | null;
+  /** The server holds behind it: the hold itself for "server", the ones
+   *  the outcome made for a local record. */
+  serverHoldIds?: string[];
+}
+
+/* ---------- T253: the server's holds ---------------------------------- */
+
+/** One hold as GET /api/charge-holds answers it. */
+export interface ServerHold {
+  id: string;
+  clientId: string;
+  kind: "ambiguous" | "sold-nothing" | "partial";
+  message: string | null;
+  saleId: string | null;
+  createdAt: number;
+}
+
+export function serverHoldsFrom(raw: unknown): ServerHold[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter(
+      (h: any) =>
+        h !== null &&
+        typeof h === "object" &&
+        typeof h.id === "string" &&
+        typeof h.clientId === "string",
+    )
+    .map((h: any) => ({
+      id: h.id,
+      clientId: h.clientId,
+      kind:
+        h.kind === "sold-nothing" || h.kind === "partial" ? h.kind : "ambiguous",
+      message: typeof h.message === "string" ? h.message : null,
+      saleId: typeof h.saleId === "string" ? h.saleId : null,
+      createdAt: typeof h.createdAt === "number" ? h.createdAt : Date.now(),
+    }));
+}
+
+/** The standing holds for these clients, or null when the server did not
+ *  answer (the local records then decide alone). */
+export async function fetchServerHolds(
+  clientIds: string[],
+): Promise<ServerHold[] | null> {
+  const ids = [...new Set(clientIds.filter((c) => c !== ""))];
+  if (ids.length === 0) return [];
+  try {
+    const res = await fetch(
+      `/api/charge-holds?clientId=${ids.map(encodeURIComponent).join(",")}`,
+    );
+    if (!res.ok) return null;
+    const body = await res.json().catch(() => null);
+    return body === null ? null : serverHoldsFrom(body.holds);
+  } catch {
+    return null;
+  }
+}
+
+/** Understood, on the server: one hold, by id. True when it is gone. */
+export async function acknowledgeServerHold(id: string): Promise<boolean> {
+  try {
+    const res = await fetch("/api/charge-holds/acknowledge", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/** The hold ids a checkout answer named (`chargeHolds`), for one client
+ *  or for all. */
+export function holdIdsFrom(body: unknown, clientId?: string): string[] {
+  const list = (body as { chargeHolds?: unknown } | null)?.chargeHolds;
+  if (!Array.isArray(list)) return [];
+  return list
+    .filter(
+      (h: any) =>
+        typeof h?.id === "string" &&
+        (clientId === undefined || h?.clientId === clientId),
+    )
+    .map((h: any) => String(h.id));
+}
+
+/** A server hold, as the roster dialog shows a record. */
+export function heldFromServer(h: ServerHold): HeldCharge {
+  return {
+    source: "server",
+    stage: h.kind === "ambiguous" ? "ambiguous" : "sold-nothing",
+    message:
+      h.kind === "partial" && h.message === null
+        ? "Part of the ticket was sold and part was not."
+        : h.message,
+    at: h.createdAt,
+    samePage: false,
+    saleId: h.saleId,
+    serverHoldIds: [h.id],
+  };
 }
 
 /** A sentence off the server, kept as shown, less any run of digits long
@@ -113,6 +226,8 @@ export function readCartHeld(): {
   held: HeldCharge;
   clientIds: string[] | null;
 } | null {
+  /* T253: with the sale id, T103's summary and the server holds the
+   * outcome made, so the roster shows what the Cart screen would have. */
   try {
     const raw = window.sessionStorage.getItem(CART_HELD_KEY);
     if (raw === null) return null;
@@ -144,6 +259,11 @@ export function readCartHeld(): {
               : null,
         at: typeof saved.at === "number" ? saved.at : null,
         samePage: false,
+        saleId: typeof saved.saleId === "string" ? saved.saleId : null,
+        summary: typeof saved.summary === "string" ? saved.summary : null,
+        serverHoldIds: Array.isArray(saved.serverHoldIds)
+          ? saved.serverHoldIds.filter((x): x is string => typeof x === "string")
+          : [],
       },
       clientIds,
     };

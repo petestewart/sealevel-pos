@@ -3,6 +3,12 @@ import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 
 import {
+  heldSentence,
+  recordChargeHolds,
+  standingChargeHolds,
+} from "@/lib/chargehold";
+
+import {
   actorFields,
   requireActor,
   runAsActor,
@@ -170,6 +176,20 @@ export async function POST(request: Request) {
     );
   }
   const test = payload?.test === true;
+  /* T253: a live purchase is a charge like any other, so a client held by
+   * a charge that may have moved money (see src/lib/chargehold.ts) is
+   * refused here too, before any Mindbody call and before a signature or
+   * a PIN is spent. The Test: true rehearsal charges nothing and is not
+   * held, so the dialog can still show the price. */
+  if (!test) {
+    const holds = await standingChargeHolds([clientId]);
+    if (holds.length > 0) {
+      return NextResponse.json(
+        { error: heldSentence(holds), reason: "held", stage: "held", holds },
+        { status: 409 },
+      );
+    }
+  }
   /* T99: the chosen start date. Absent, or today's own key, is today's
    * behaviour exactly. A bad one never reaches Mindbody. */
   const rawStart = payload?.startDate;
@@ -644,6 +664,18 @@ export async function POST(request: Request) {
         return gone;
       }
       const ambiguous = isAmbiguous(err);
+      /* T253: a membership that MAY have started holds the client. */
+      if (ambiguous) {
+        await recordChargeHolds({
+          clientIds: [clientId],
+          kind: "ambiguous",
+          message:
+            "The membership purchase did not answer. The contract MAY have been started.",
+          saleId: null,
+          staffId: String(session.staffId),
+          route: "/api/purchase-contract",
+        }).catch(() => undefined);
+      }
       await fileReceipt(
         ambiguous
           ? `ambiguous: ${errMessage(err)}`
