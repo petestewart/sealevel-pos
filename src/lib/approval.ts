@@ -197,8 +197,10 @@ export async function contractRequiresSignature(): Promise<ConfirmSetting> {
  * Read and stored exactly like T205's `contract_requires_signature`, and
  * DEFAULT ON like it: `app_settings`, admin-edited through PUT
  * /api/admin/display-typed-card, shown to everyone, the environment
- * deciding when the store does not answer, where only `false` or `0`
- * turn it off.
+ * deciding when there is no stored answer, where only `false` or `0`
+ * turn it off. Since T249 a store that goes QUIET keeps the last answer
+ * it gave, as T207's setting does, because this one's environment
+ * default is the looser side.
  *
  * Unlike T203 and T205 this is not a rail and does not relax one. Off,
  * the server REMOVES a way to pay ("A different card" is never offered,
@@ -227,6 +229,18 @@ function displayCardFromEnv(): boolean {
 
 let displayCardWarnedUnreadAt = 0;
 
+/**
+ * T249 (T241 review residual): the last answer the store actually GAVE
+ * in this process, and null once it has answered that there is no row.
+ * T207's idiom for `signup_mode`, and for its reason: the environment's
+ * answer here defaults ON, so a studio that stored "off" and has a
+ * database blip would quietly start offering "A different card" again,
+ * which is the looser direction nobody asked for. A blip keeps the
+ * loaded value; the environment decides only when this process has never
+ * had an answer.
+ */
+let displayCardLastAnswered: boolean | null = null;
+
 /** Whether a student may type a card on the customer screen, read per
  *  request, bounded and never throwing. */
 export async function displayTypedCardAllowed(): Promise<ConfirmSetting> {
@@ -235,19 +249,34 @@ export async function displayTypedCardAllowed(): Promise<ConfirmSetting> {
     value: null,
   }));
   if (!answer.answered) {
+    const held = displayCardLastAnswered;
     const now = Date.now();
     if (now - displayCardWarnedUnreadAt >= 60_000) {
       displayCardWarnedUnreadAt = now;
       console.warn(
         `[display-typed-card] the stored setting could not be read; ` +
-          `${DISPLAY_CARD_ENV_VAR} in the server environment decides ` +
-          `(${displayCardFromEnv() ? "on" : "off"}).`,
+          (held !== null
+            ? `keeping the last stored value (${held ? "on" : "off"}).`
+            : `${DISPLAY_CARD_ENV_VAR} in the server environment decides ` +
+              `(${displayCardFromEnv() ? "on" : "off"}).`),
       );
     }
-    return { on: displayCardFromEnv(), source: "env" };
+    return held !== null
+      ? { on: held, source: "setting" }
+      : { on: displayCardFromEnv(), source: "env" };
   }
-  if (answer.value === "true") return { on: true, source: "setting" };
-  if (answer.value === "false") return { on: false, source: "setting" };
+  if (answer.value === "true") {
+    displayCardLastAnswered = true;
+    return { on: true, source: "setting" };
+  }
+  if (answer.value === "false") {
+    displayCardLastAnswered = false;
+    return { on: false, source: "setting" };
+  }
+  /* No row, or a row naming neither word: the environment decides, and
+   * the memory goes with it, so a row an admin DELETED cannot come back
+   * on the next blip. */
+  displayCardLastAnswered = null;
   return { on: displayCardFromEnv(), source: "env" };
 }
 

@@ -7,6 +7,7 @@ import {
   staffSessionEndedResponse,
 } from "@/lib/actor";
 import { requireSession } from "@/lib/auth";
+import { mindbodyHttpStatus } from "@/lib/mindbody";
 
 import { setVisitService } from "@/lib/roster";
 
@@ -54,6 +55,10 @@ export async function POST(request: Request) {
     return NextResponse.json({
       ok: true,
       suppressed: run.result.suppressed,
+      /* T242 review: which pass Mindbody says the visit now carries, when
+       * its answer says; the "Pay and check in" dialog checks in only when
+       * it is the pass asked for. */
+      appliedClientServiceId: run.result.appliedClientServiceId,
       ...actorFields(run),
     });
   } catch (err) {
@@ -62,9 +67,19 @@ export async function POST(request: Request) {
      * the gate comes back. */
     const gone = staffSessionEndedResponse(err);
     if (gone) return gone;
+    /* T242 review: a 4xx is Mindbody REFUSING the change, which provably
+     * did not happen; anything else (a 5xx, the 20 second timeout, a dead
+     * transport) may have landed, and the caller must not read it as a
+     * refusal. Told apart by status and `reason`; the message is
+     * Mindbody's sentence either way. */
+    const status = mindbodyHttpStatus(err);
+    const refused = status !== null && status >= 400 && status < 500;
     return NextResponse.json(
-      { error: err instanceof Error ? err.message : String(err) },
-      { status: 502 },
+      {
+        error: err instanceof Error ? err.message : String(err),
+        ...(refused ? { reason: "refused" } : {}),
+      },
+      { status: refused ? 409 : 502 },
     );
   }
 }
