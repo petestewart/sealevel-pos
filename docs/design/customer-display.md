@@ -733,6 +733,46 @@ it ships (D-B2).
 
 ---
 
+## Scene 5: "Your passes" (T242)
+
+Pete, 2026-11-17: "the ipad can display what they have, but the teacher
+or the student should be able to select using it. no need to have to wait
+on the student for that."
+
+When the roster's "Pay and check in" dialog opens on the student's own
+passes (the passes Mindbody would accept for this visit, each asked with a
+`Test: true` `updateclientvisit`), the teacher's iPad puts the same list on
+the display: each pass's name, classes left and expiry, and a 64px "Use
+this pass". It is NOT a wait and NOT an approval: no money moves, the
+teacher's own "Use this pass and check in" works the whole time, and the
+first tap from either side wins.
+
+- **No ids on the display.** The present carries each pass's ClientService
+  id; the server makes a random key per pass for this one scene, sends the
+  display the key, the name, the count (under 100, so T14's fake unlimited
+  never shows) and the day, and keeps the key-to-id map on the request's
+  server-only half.
+- **One offer, one pick.** `POST /api/display/pass {requestId, key}` (the
+  display cookie alone) is refused unless the key is on the stored offer
+  and the scene is still offering. A pick moves the scene to "One moment"
+  in the hub at once, so a second tap from either side cannot pick again,
+  and tells the teacher's iPad (`pass-pick` on its stream, and its poll of
+  `GET /api/display/passes`) which ClientService the key stood for.
+- **The writes are the teacher's iPad's**, through `/api/visit-payment`
+  and `/api/checkin`, under the teacher's token, for a pass that iPad's own
+  list shows. A pick that arrives while the teacher's own tap is running is
+  dropped without a word.
+- **Modes, in place.** `offer`, `working` ("One moment. Checking you in
+  with ..."), `done` ("Done. You are checked in with ...") and `help`
+  ("Please see the front desk", when the assignment or the check-in did not
+  land). The tab that put the scene up replaces it in place; anything else
+  meets the ordinary "busy" rule. The offer holds five minutes at most,
+  "One moment" a minute, `done` and `help` the summary's eight seconds.
+- **It comes down** when the dialog closes or the teacher taps "Buy a pass
+  instead" (cancelled by request id, so nothing else on the screen is
+  touched). If the screen is busy or not connected, the dialog works
+  exactly the same without it, and says nothing.
+
 ## Data, in one place
 
 New tables, all charter-clean (ours, captured on our screen, nothing

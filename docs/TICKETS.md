@@ -22055,3 +22055,208 @@ said):
   with the same results. No server log and no database dump holds the
   card number.
 
+## T242. "Pay and check in" offers the passes the student already has (Pete, 2026-11-17)
+
+Pete: "when the client has a pass and they have not paid for a class, if
+the teacher clicks the [unpaid] button they get a PAY AND CHECK IN modal.
+there should be an option to use one of their exisiting passes when they
+have one. it should only show the pass(es) with a button to confirm they
+want to use it. there can also be a button for purchase a pass in case
+they want to save it and get a different one. the ipad can display what
+they have, but the teacher or the student should be able to select using
+it. no need to have to wait on the student for that."
+
+T13/T14 built the write (`POST /client/updateclientvisit` with
+`{VisitId, ClientServiceId}`, `setVisitService` in `src/lib/roster.ts`,
+`/api/visit-payment`) and put it behind the roster row's Change dropdown.
+The unpaid row's tap now opens T25's Pay and check in dialog, which only
+sells, so a student holding a usable pass is offered a purchase.
+
+### To do
+
+- [x] **The dialog opens on the student's own passes when they have one.**
+      When the client holds at least one current pass for this visit, the
+      dialog shows ONLY those passes, each with its name, classes left and
+      expiry (T14's fake-unlimited suppression applies), and one 64px
+      "Use this pass and check in" per pass. Below them, one 64px "Buy a
+      pass instead" opens the dialog's existing purchase view, unchanged
+      (credit default, card switch, promotion code, approval). A client
+      with no usable pass sees the purchase view exactly as today.
+- [x] **Only passes Mindbody would accept for THIS visit are shown.** A
+      pass can be current and still not cover the class (another program,
+      a membership restriction). Ask Mindbody, not our own rules: the same
+      `updateclientvisit` with `Test: true` (client.yml UpdateClientVisitRequest
+      documents `Test`), one per candidate pass, in parallel, on the
+      service account, the way T221 asks per pass. A 4xx hides that pass;
+      a suppressed check, a 5xx or a dead transport leaves it SHOWN (the
+      real write's refusal is the backstop, said in Mindbody's words).
+      If `Test` turns out to be ignored by this endpoint, say so and fall
+      back to showing every current pass with remaining classes.
+- [x] **"Use this pass and check in"** assigns the pass through the existing
+      `/api/visit-payment` route, then checks the visit in through the
+      existing `/api/checkin` route, under the teacher's token, so dry run,
+      the write guard, T49 attribution, the T211 waiver gate and the full
+      class rule all apply unchanged. Check-in stays pessimistic: the row
+      spins until both answer. A refusal of the assignment checks nobody
+      in and shows Mindbody's sentence; a suppressed assignment says so and
+      does not pretend to check in. No money moves, so no approval is
+      asked, whatever T203's setting.
+- [x] **The customer iPad shows what they have, and the student may pick.**
+      While the dialog is on the passes view and a display is paired, the
+      display shows "Your passes" for this student (names, classes left,
+      expiry; no ids) with a 64px "Use this pass" per pass. A student's tap
+      is a pick like T241's: an opaque key from the list the TEACHER's iPad
+      offered, checked by the server, delivered through the same shared
+      piece, acted on by the teacher's iPad, which then runs the same two
+      writes. The display adds no write path to Mindbody. **Nobody waits on
+      the student**: the teacher's buttons work the whole time, and the
+      first tap from either side wins; the other side then reads "Done".
+      Closing the dialog, or "Buy a pass instead", takes the passes scene
+      down. If the customer screen is busy (another scene holds it), the
+      teacher's dialog works exactly the same without it.
+- [x] Docs: CLAUDE.md (the roster's unpaid row; the display's new scene),
+      docs/design/customer-display.md, and this ticket's Done note.
+- [x] `tsc --noEmit` and `next build` clean; driven in Chromium against the
+      fake with a paired display: a client with two usable passes and one
+      that does not cover the class sees the two; the teacher's tap assigns
+      and checks in; the student's tap does the same; "Buy a pass instead"
+      reaches the purchase view; a client with no pass sees the purchase
+      view; a refused assignment checks nobody in.
+- [ ] Pete: once live, use it once on the write-guarded dummy client and
+      confirm in Mindbody that the visit shows the chosen pass, signed in,
+      and the pass's remaining count went down by one.
+
+### Done (2026-11-17)
+
+**The dialog.** An unpaid row's tap opens "Pay and check in" on the
+student's own passes when they hold any Mindbody would take for this visit:
+the pass's name, its facts line (`PassFactsLine`, so T14's fake-unlimited
+and the single-visit rules apply), and one 64px "Use this pass and check
+in" per pass, then one 64px "Buy a pass instead" and Cancel. Nothing else:
+no catalog, no tender, no free entry. "Buy a pass instead" shows T25's
+purchase view as it was (credit default, card switch, promotion code,
+approval). A client with no candidate pass in the roster's background
+sweep opens straight on the purchase view with no wait; otherwise the
+dialog reads "Checking which of their passes cover this class..." until
+`GET /api/visit-passes` answers (a fraction of a second against the fake),
+and falls to the purchase view when nothing is usable. A read that fails
+falls to the purchase view too, with one line saying the passes could not
+be checked and that the row's payment chevron still lists them.
+
+One change to the purchase view's timing, not its content: the default
+selection, and with it the Test pricing and T221's availability check, now
+wait until the purchase view is showing. A teacher who uses a pass costs no
+Test pricing; for a client with no pass the purchase view starts exactly as
+before.
+
+**Which passes.** `src/lib/visitpasses.ts`: the client's current passes
+(`fetchPasses`, unchanged), less guest passes (T69) and passes with no
+class left, each asked of Mindbody with `POST /client/updateclientvisit
+{VisitId, ClientServiceId, Test: true}` (client.yml
+UpdateClientVisitRequest, "validated, but not committed"), in parallel, on
+the service account, with the client id for the write guard. A 4xx hides
+the pass (logged with Mindbody's sentence). A suppressed check (dry run or
+the write guard: a Test call is still a POST, as T221's Test pricing is), a
+5xx, a dead transport and a refusal of the CALLER (a 401/403 or the
+permission wording, `isActorRefusal`) leave it shown, and the real write's
+refusal is the backstop.
+
+**Whether Test is honoured.** Against the fake: yes, once the fake was
+taught to (the committed fake now answers `Test: true` on this endpoint
+without changing anything; it used to assign the pass). Against real
+Mindbody: never seen. Because an ignored Test would make each check a real
+assignment, the first check in each server process is guarded: the visit
+is read (`visitPayment`, the class's visit list), ONE candidate is asked
+alone, the visit is read again, and only then are the rest asked. A visit
+that was unpaid and now carries a pass means Test was ignored: it is logged
+`[visit-passes] TEST IGNORED`, the dialog says Mindbody may already have
+put a pass on the visit, and every later open in that process skips the
+checks and shows every current pass with classes left (the ticket's
+fallback). A visit still unpaid marks Test honoured for the process and
+the extra reads stop. So at worst one real assignment, once, which the
+teacher is told about.
+
+**Use this pass and check in.** `/api/visit-payment` then `/api/checkin`,
+the existing routes, under the teacher's token (dry run, the write guard,
+T49 attribution, and T211's armed waiver override on the check-in, read
+once with `takeWaiverOverride` as the charge path does). The button and the
+row spin until both answer (`payStage` locks the dialog shut, `busy` spins
+the row); `payFlight`, the same single flight the charge uses, makes the
+first tap from either side win. A refused assignment shows "Mindbody did
+not take the pass: <its sentence> Nobody was checked in." and no check-in
+is sent. A suppressed one says "Dry run: the pass was not assigned and
+nobody was checked in." (or the write guard's words). A check-in that fails
+after the pass landed says so and leaves the row's own tap to finish it.
+Success closes the dialog with "Done: <name> is checked in with <pass>."
+No checkout, no approval, whatever `customer_confirms_sale` says. T26's
+renewal offer is not chained from this path.
+
+**The customer iPad.** A new scene kind, `passes` ("Your passes"), put up
+once per open when the passes view has passes and a display is connected.
+`/api/display/present` builds it: the teacher's iPad sends each pass's
+ClientService id with its name, count and expiry; the server gives each a
+random key, sends the display only `{key, name, remaining, expires}`
+(`readPassesPayload`, field by field, counts of 100 and over dropped) and
+keeps the key-to-id map on the request's server-only half. The student's
+64px "Use this pass" posts `{requestId, key}` to `POST /api/display/pass`
+(display cookie only), `choosePass` checks the key against the stored offer
+and the scene still offering, moves the scene to "One moment" at once (so a
+second tap from either side cannot pick again), and emits `pass-pick` to
+the teacher's stream with the id the key stood for. The teacher's iPad
+hears it through `useTenderPick` (new `applyPass`, fed by the stream the
+waiver block already holds and a 1.5 second poll of `GET
+/api/display/passes`; acted on once per pick id, only for this tab's
+scene, and only for a pass its own list shows), says "Sofia chose 10 Class
+Series on the customer screen. Checking them in." and runs the same two
+writes. The scene then reads "Done" (or "Please see the front desk" when
+the writes did not land) for the summary's eight seconds. Closing the
+dialog and "Buy a pass instead" cancel it by request id. A busy screen
+leaves the dialog working exactly as without one. The scene is replaced in
+place only by the tab that put it up, and the hub's owner-checked cancel
+covers it. Nothing under `/api/display/` or in `src/lib/display.ts` calls
+Mindbody.
+
+**Verified** against a scratch copy of the fake (Taylor Brooks with a 10
+Class Series and a Month Unlimited that cover the class and a 5 Class
+Series from a "Workshops" program the scratch refuses; Sofia Marquez with
+two covering passes; Liam O'Connell with one; Quinn Delgado with none;
+Noah Bennett with a pass whose Test answers 500 and whose real write is
+refused 400), a local Postgres, `next build`, the built app, a paired
+display, and "customer approves each sale" ON, driven in Chromium:
+
+- Taylor: three Test checks on the service account (two 200, the
+  Workshops pass 400); the dialog showed the two covering passes and the
+  display "Taylor, your passes" with the same two. "Buy a pass instead"
+  showed the purchase list and "Charge $25.00 and check in", and the
+  display went back to Ready. No write but the Test calls (and, after Buy
+  instead, the purchase view's own Test pricings).
+- Taylor, the teacher's tap: `updateclientvisit {VisitId, ClientServiceId}`
+  then `{VisitId, SignedIn: true}`, both under Maya's token; the row
+  checked in, the dialog closed with the Done line, the display read
+  "Done. You are checked in with 10 Class Series." No checkout, no
+  approval.
+- Sofia, the student's tap (the assignment held two seconds): the
+  teacher's dialog read "Sofia chose 10 Class Series on the customer
+  screen. Checking them in." with that pass's button spinning and Cancel
+  locked; the display read "One moment", then "Done"; the same two writes
+  under Maya's token; the banner "..., chosen on the customer screen."
+  Before it, a forged key and a raw ClientService id were each refused 409
+  "That is not one of your passes."
+- Liam, first tap wins: the teacher tapped, and a student pick on the same
+  scene while the writes ran was refused 409 "The front desk is already
+  checking you in."; one assignment, one check-in.
+- Quinn: the purchase view at once, nothing on the display.
+- Noah: the pass shown (its check settled nothing), the tap refused with
+  "Mindbody did not take the pass: The pricing option is suspended. Nobody
+  was checked in."; no check-in sent; the display read "Please see the
+  front desk".
+
+`tsc --noEmit` and `next build` clean.
+
+**For Pete.** (1) Use it once live on the write-guarded dummy client, as
+the last box says; the first open in a fresh server process also settles
+whether Mindbody honours `Test` on this endpoint (look for `[visit-passes]
+Test verified` or `TEST IGNORED` in the log). (2) A student holding a pass
+whose last class this is gets no renewal offer from this path (the chip's
+own check-in chains T26's); say if it should. (3) "Check in free (comp)"
+is in the purchase view only, one tap away behind "Buy a pass instead".
