@@ -22422,6 +22422,62 @@ counter, and the main session decided the fix.
 
 Not driven: the one-minute expiry of a pick nobody hears.
 
+**Second review (2026-11-17)**, of 84552ee, after merging main (T238 to
+T241 as squashed in PR #14, including 7cdc0ab; every file both sides
+touched was merged three ways from aeb7412, so both are kept):
+
+1. **Only a 4xx is a refusal** (agreed). `/api/visit-payment` answered 502
+   for everything, and the dialog read any non-ok answer as "refused", so
+   a timed-out assignment that had landed read "Mindbody did not take the
+   pass", left the dialog open to a second pass or a purchase and put the
+   list back on the student's screen. The route now answers 409 `reason:
+   "refused"` for Mindbody's 4xx and keeps 502 for a 5xx, the timeout and
+   a dead transport (its other callers read any non-ok as a failure, as
+   before). The dialog takes "refused" only from that 409 or our own
+   400/401 refusals before any call; a 5xx or an unreadable answer is
+   "unknown": the lock, no re-offer, a roster refresh.
+2. **An already-paid visit blocks everything** (agreed). The visit is now
+   read on every unpaid open, with no-candidate clients too, and in the
+   background when the sweep sends the dialog straight to the purchase
+   view (the view does not change under the teacher's finger). Already
+   paid shows "This booking is already paid with <pass>. Refresh the
+   roster before charging or checking in." in whichever view is open,
+   holds Charge, free entry, "Cart and check in", "Buy a pass instead"
+   and every "Use this pass", and refreshes the roster. Nothing writes
+   while the read is out (the purchase view's Charge already waits for
+   Mindbody's price, so for a client with no passes this is one read, in
+   parallel with the pass read).
+3. **A 404 or 409 from `/api/visit-passes` blocks the same way** (agreed),
+   with the server's sentence plus "Nothing here will write until the
+   roster is refreshed.", and a roster refresh. The doubled punctuation in
+   the "could not be checked" line is fixed.
+4. **The assignment's answer is read** (agreed). `setVisitService` returns
+   `appliedClientServiceId` from UpdateClientVisitResponse.Visit
+   (`ServiceId`, else `Service.Id`); when it names a different pass than
+   the one asked for, the dialog does not check in and says so ("unknown",
+   locked). When the answer names none, the check-in goes ahead as before.
+5. **A visit with no ClientId is refused** (agreed): 409 "Mindbody did not
+   say whose booking this is."
+
+Driven against the scratch fake (main's merge included):
+
+- Dennis Carver: the assignment reached Mindbody and landed, and the
+  browser was answered 502 "The operation was aborted due to timeout".
+  The dialog said the pass may be on the visit and nobody was checked in;
+  "Use this pass" and "Buy a pass instead" were disabled; the display read
+  "Please see the front desk" and was NOT offered the list again (Ready
+  8.5 seconds later); one assignment, no check-in.
+- Quinn Delgado, `/api/visit-passes` answered 409 "belongs to someone
+  else": the purchase view with that sentence, Charge and free entry
+  disabled.
+- Quinn Delgado, the visit paid from elsewhere while the roster still
+  showed it unpaid: the purchase view (no candidate pass) with "This
+  booking is already paid with Month Unlimited. Refresh the roster before
+  charging or checking in.", Charge and free entry disabled; nothing
+  written but the purchase view's Test pricing.
+- The whole first drive again (Taylor, Sofia, Liam, Quinn, Noah, Harper),
+  with the same results; Noah's refusal now arrives as the route's 409.
+
 **For Pete.** (1) Use it once live on the write-guarded dummy client, as
 the last box says. (2) A pass with a membership or other restriction is
 now offered, and Mindbody's refusal of the tap says why; if that turns out

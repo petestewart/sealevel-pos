@@ -1352,6 +1352,10 @@ function FrontDesk({
     loading: boolean;
     passes: VisitPass[] | null;
     error: string | null;
+    /** T242 second review: the server read the visit and it is not this
+     *  client's, or not on the class (its own sentence). Nothing in the
+     *  dialog writes. */
+    blocked: string | null;
     alreadyPaidWith: string | null;
   } | null>(null);
   const [payView, setPayView] = useState<"passes" | "buy">("buy");
@@ -1369,6 +1373,10 @@ function FrontDesk({
   const payPassScene = useRef<string | null>(null);
   const [payPassSceneId, setPayPassSceneId] = useState<string | null>(null);
   const payOwnGen = useRef(0);
+  /** The "Your passes" scene's own generation: bumped by every open and
+   *  close and by "Buy a pass instead", which must stop the offer without
+   *  dropping the visit read that gates every write (payOwnGen). */
+  const payPassGen = useRef(0);
   /** T242 review: bumped to put the offer back on the customer display
    *  after a run that changed nothing (refused or suppressed). */
   const [payOfferRound, setPayOfferRound] = useState(0);
@@ -3849,66 +3857,84 @@ function FrontDesk({
        * already; when it says there is nothing to offer, the
        * purchase view opens at once, exactly as it always did. */
       payOwnGen.current += 1;
+      payPassGen.current += 1;
       const ownGen = payOwnGen.current;
       setPayPassOutcome(null);
       setPayPassBusy(null);
       const swept = passSweepCache.current.get(entry.clientId);
       const visitId = entry.visitId;
-      if (
-        flavor !== "unpaid" ||
-        visitId === null ||
-        opts?.purchaseView === true ||
-        (Array.isArray(swept) && ownPassCandidates(swept) === 0)
-      ) {
+      const classId = activeId;
+      if (flavor !== "unpaid" || visitId === null) {
         setPayView("buy");
         setPayOwn(null);
       } else {
-        setPayView("passes");
-        setPayOwn({
+        /* T242 second review: the visit is ALWAYS read, whichever view
+         * opens, because whose booking it is and whether it is already
+         * paid decide whether this dialog may write at all. Only the VIEW
+         * is skipped to: with nothing in the sweep to offer, the purchase
+         * view opens at once and never turns into the passes view under
+         * the teacher's finger; Charge and free entry wait for this one
+         * read (as Charge already waits for Mindbody's price). */
+        const toBuy =
+          opts?.purchaseView === true ||
+          (Array.isArray(swept) && ownPassCandidates(swept) === 0);
+        setPayView(toBuy ? "buy" : "passes");
+        const base = {
           clientId: entry.clientId,
           visitId,
-          loading: true,
           passes: null,
           error: null,
+          blocked: null,
           alreadyPaidWith: null,
-        });
+        };
+        setPayOwn({ ...base, loading: true });
         fetch(
           `/api/visit-passes?clientId=${encodeURIComponent(entry.clientId)}` +
-            `&visitId=${visitId}&classId=${activeId}`,
+            `&visitId=${visitId}&classId=${classId}`,
         )
           .then(async (r) => {
             const body = await r.json().catch(() => null);
-            if (!r.ok) throw new Error(body?.error ?? `HTTP ${r.status}`);
             if (payOwnGen.current !== ownGen) return;
+            if (!r.ok) {
+              const message = String(body?.error ?? `HTTP ${r.status}`);
+              /* The server read the visit and it is not this client's,
+               * or it is not on the class: nothing here may write. */
+              const blocking = r.status === 404 || r.status === 409;
+              setPayOwn({
+                ...base,
+                loading: false,
+                ...(blocking ? { blocked: message } : { error: message }),
+              });
+              setPayView("buy");
+              if (blocking) void refreshRoster(classId);
+              return;
+            }
             const passes: VisitPass[] = Array.isArray(body?.passes)
               ? body.passes.filter(
                   (p: any) =>
                     typeof p?.id === "number" && typeof p?.name === "string",
                 )
               : [];
+            const paidWith =
+              typeof body?.alreadyPaidWith === "string" && body.alreadyPaidWith
+                ? body.alreadyPaidWith
+                : null;
             setPayOwn({
-              clientId: entry.clientId,
-              visitId,
+              ...base,
               loading: false,
               passes,
-              error: null,
-              alreadyPaidWith:
-                typeof body?.alreadyPaidWith === "string"
-                  ? body.alreadyPaidWith
-                  : null,
+              alreadyPaidWith: paidWith,
             });
             /* Nothing to offer: the purchase view, as today. */
             if (passes.length === 0) setPayView("buy");
+            if (paidWith !== null) void refreshRoster(classId);
           })
           .catch((e) => {
             if (payOwnGen.current !== ownGen) return;
             setPayOwn({
-              clientId: entry.clientId,
-              visitId,
+              ...base,
               loading: false,
-              passes: null,
               error: e instanceof Error ? e.message : String(e),
-              alreadyPaidWith: null,
             });
             setPayView("buy");
           });
@@ -3971,7 +3997,7 @@ function FrontDesk({
           );
       }
     },
-    [activeId, payCatalog],
+    [activeId, payCatalog, refreshRoster],
   );
 
   /** T242: take this dialog's "Your passes" off the customer display, by
@@ -4002,6 +4028,7 @@ function FrontDesk({
     cancelPayApproval();
     /* T242: and "Your passes", if it is up. */
     payOwnGen.current += 1;
+    payPassGen.current += 1;
     dropPassScene();
     setPayOwn(null);
     setPayView("buy");
@@ -4033,11 +4060,14 @@ function FrontDesk({
     ) {
       return;
     }
-    payOwnGen.current += 1;
+    /* T242 second review: nor when the visit is someone else's or
+     * already paid; the purchase view would only sell over it. */
+    if (payOwn?.blocked || payOwn?.alreadyPaidWith) return;
+    payPassGen.current += 1;
     dropPassScene();
     setPayPassOutcome(null);
     setPayView("buy");
-  }, [payStage, dropPassScene, payPassOutcome]);
+  }, [payStage, dropPassScene, payPassOutcome, payOwn]);
 
   /**
    * T26: after a REAL check-in that used a pass's last session, decide
@@ -6844,9 +6874,37 @@ function FrontDesk({
     payOutcome !== null &&
     payOutcome.kind !== "suppressed" &&
     payOutcome.kind !== "charge-failed";
+  /**
+   * T242 second review: why nothing in this dialog may write, in a
+   * sentence, or null. The server read the visit (`/api/visit-passes`,
+   * read for every unpaid open) and it belongs to someone else, is not on
+   * the class, or is already paid: Charge, free entry, "Cart and check
+   * in", "Buy a pass instead" and every "Use this pass" are held until
+   * the roster is refreshed. Only for this dialog's own client and visit.
+   */
+  const payOwnHere =
+    payDialog !== null &&
+    payDialog.flavor === "unpaid" &&
+    payOwn !== null &&
+    payOwn.clientId === payDialog.entry.clientId &&
+    payOwn.visitId === payDialog.entry.visitId
+      ? payOwn
+      : null;
+  const payWriteBlock: string | null =
+    payOwnHere === null
+      ? null
+      : payOwnHere.blocked !== null
+        ? `${payOwnHere.blocked.replace(/\.$/, "")}. Nothing here will write until the roster is refreshed.`
+        : payOwnHere.alreadyPaidWith !== null
+          ? `This booking is already paid with ${payOwnHere.alreadyPaidWith}. Refresh the roster before charging or checking in.`
+          : null;
+  /** And while that one read is still out, nothing writes either: it is
+   *  what says whether the booking is this client's and unpaid. */
+  const payWriteHeld = payWriteBlock !== null || payOwnHere?.loading === true;
   const payChargeable =
     payStage === null &&
     !payMoneyMoved &&
+    !payWriteHeld &&
     payDialog !== null &&
     paySelected !== null &&
     payTotal !== null &&
@@ -7210,7 +7268,7 @@ function FrontDesk({
     payPassOutcome?.kind === "unknown";
   /** Nothing in the passes view may write: locked, or the visit turned
    *  out to be paid already (a stale roster). */
-  const payPassBlocked = payPassLocked || Boolean(payOwn?.alreadyPaidWith);
+  const payPassBlocked = payPassLocked || payWriteBlock !== null;
 
   /** Put a mode of "Your passes" on the customer display, in place, for
    *  this tab. Best effort: the dialog never waits on it. */
@@ -7260,7 +7318,7 @@ function FrontDesk({
     const visitId = entry.visitId;
     if (visitId === null) return;
     payFlight.current = true;
-    const ownGen = payOwnGen.current;
+    const ownGen = payPassGen.current;
     setPayPassBusy(pass.id);
     setPayPassOutcome(null);
     setBusy((b) => (b.includes(entry.clientId) ? b : [...b, entry.clientId]));
@@ -7287,7 +7345,7 @@ function FrontDesk({
        * "Please see the front desk", while this dialog still shows it. */
       if (kind === "refused" || kind === "suppressed") {
         setTimeout(() => {
-          if (payOwnGen.current === ownGen) setPayOfferRound((r) => r + 1);
+          if (payPassGen.current === ownGen) setPayOfferRound((r) => r + 1);
         }, 4_000);
       }
       /* The row shows Mindbody's own answer, whatever this run thinks. */
@@ -7317,12 +7375,45 @@ function FrontDesk({
       const aBody = await ar.json().catch(() => null);
       if (!ar.ok || aBody?.ok !== true) {
         if (ar.status === 401 && aBody?.reason === "staff") setTeacher(null);
-        await failed("refused", String(aBody?.error ?? `HTTP ${ar.status}`));
+        /* T242 second review: only a DEFINITE refusal is "refused": a 4xx
+         * Mindbody answered (409 `reason: "refused"`), or our own route
+         * refusing before any Mindbody call (400, 401). A 5xx, the 20
+         * second timeout or an unreadable answer may have landed, so it
+         * is "unknown": the dialog locks, nothing is offered again, and
+         * the row is refreshed to show what Mindbody now says. */
+        const definite =
+          aBody !== null &&
+          ((ar.status === 409 && aBody?.reason === "refused") ||
+            ar.status === 400 ||
+            ar.status === 401);
+        if (definite) {
+          await failed("refused", String(aBody?.error ?? `HTTP ${ar.status}`));
+        } else {
+          await failed(
+            "unknown",
+            `The answer to the assignment did not come back clearly (${String(
+              aBody?.error ?? `HTTP ${ar.status}`,
+            ).replace(/\.$/, "")}), so the pass may be on this visit. Nobody was checked in; check the row.`,
+          );
+        }
         return;
       }
       noteActor(aBody, entry.clientId);
       if (aBody.suppressed) {
         await failed("suppressed", String(aBody.suppressed));
+        return;
+      }
+      /* T242 second review: Mindbody's answer names the pass the visit
+       * now carries. A different one than asked for (T62 has seen a
+       * booking do this) is not checked in on. */
+      if (
+        typeof aBody.appliedClientServiceId === "number" &&
+        aBody.appliedClientServiceId !== pass.id
+      ) {
+        await failed(
+          "unknown",
+          `Mindbody put a different pass on this visit than ${pass.name}. Nobody was checked in; check the row.`,
+        );
         return;
       }
 
@@ -7375,6 +7466,7 @@ function FrontDesk({
       payGen.current += 1;
       payPriceGen.current += 1;
       payOwnGen.current += 1;
+      payPassGen.current += 1;
       setPayDialog(null);
       setPayOwn(null);
       setPayView("buy");
@@ -7433,7 +7525,7 @@ function FrontDesk({
       : null;
   useEffect(() => {
     if (payPassOfferKey === null || payFlight.current) return;
-    const gen = payOwnGen.current;
+    const gen = payPassGen.current;
     const mark = `${gen}:${payOfferRound}`;
     if (payPassOffered.current === mark) return;
     const dialog = payDialogRef.current;
@@ -7443,7 +7535,7 @@ function FrontDesk({
     void presentPassScene({ mode: "offer", entry: dialog.entry, passes }).then(
       (requestId) => {
         if (requestId === null) return;
-        if (payOwnGen.current !== gen || payFlight.current) {
+        if (payPassGen.current !== gen || payFlight.current) {
           void cancelOnDisplay({ requestId }).catch(() => undefined);
           return;
         }
@@ -7525,7 +7617,8 @@ function FrontDesk({
     !payMoneyMoved &&
     paySelected !== null &&
     payDialog !== null &&
-    payDialog.entry.visitId !== null;
+    payDialog.entry.visitId !== null &&
+    !payWriteHeld;
 
   /** The tap: close the dialog, attach the row's client to the Buy
    *  screen, and remember the check-in the sale is for. Writes nothing;
@@ -7749,7 +7842,13 @@ function FrontDesk({
      * so without the ref a free tap landing in the same tick as a Charge
      * tap could check someone in mid-charge. Same single-flight as the
      * paid gesture. */
-    if (payFlight.current || payStage !== null || !payDialog || payMoneyMoved)
+    if (
+      payFlight.current ||
+      payStage !== null ||
+      !payDialog ||
+      payMoneyMoved ||
+      payWriteHeld
+    )
       return;
     /* The renewal dialog has no free entry: the student is already
      * checked in, so there is nothing to comp. */
@@ -11127,12 +11226,8 @@ function FrontDesk({
                       : ""}
                   </p>
                 )}
-                {payOwn?.alreadyPaidWith ? (
-                  <div className="sale-stop">
-                    This booking is already paid with{" "}
-                    {payOwn.alreadyPaidWith}. Close this and check the row
-                    before using another pass.
-                  </div>
+                {payWriteBlock !== null ? (
+                  <div className="sale-stop">{payWriteBlock}</div>
                 ) : null}
                 {payPassLocked ? (
                   <div className="sale-stop">
@@ -11202,7 +11297,9 @@ function FrontDesk({
                 ) : null}
                 <button
                   className="pay-own-buy"
-                  disabled={payStage !== null || payPassLocked}
+                  disabled={
+                    payStage !== null || payPassLocked || payWriteBlock !== null
+                  }
                   onClick={payBuyInstead}
                 >
                   Buy a pass instead
@@ -11226,9 +11323,17 @@ function FrontDesk({
             payOwn.clientId === payDialog.entry.clientId &&
             payOwn.error !== null ? (
               <p className="pass-note modal-note-gap">
-                Their passes could not be checked ({payOwn.error}). To use one,
-                close this and use the row&apos;s payment chevron.
+                Their passes could not be checked (
+                {payOwn.error.replace(/\.$/, "")}). To use one, close this and
+                use the row&apos;s payment chevron.
               </p>
+            ) : null}
+            {/* T242 second review: the booking is someone else's, gone
+                from the class, or already paid. Charge, free entry and
+                "Cart and check in" are held (payWriteHeld) and this says
+                why. */}
+            {payWriteBlock !== null ? (
+              <div className="sale-stop">{payWriteBlock}</div>
             ) : null}
             {/* The pass to sell. Sorted single-visit first (the default
                 selection's own order), 64px rows, short name with the
@@ -11592,7 +11697,7 @@ function FrontDesk({
             {!payMoneyMoved && payDialog.flavor !== "renewal" ? (
               <button
                 className="pay-free"
-                disabled={payStage !== null}
+                disabled={payStage !== null || payWriteHeld}
                 onClick={freeCheckIn}
               >
                 Check in free (comp)

@@ -54,8 +54,8 @@ export type VisitPasses =
       otherProgram: { id: number; name: string }[];
       /** The pass this visit ALREADY carries, by name, when it carries
        *  one: the roster the dialog opened from was stale (another iPad,
-       *  a reopen a second after a write). Null when the visit is unpaid
-       *  or the visit list was not read (no candidates). */
+       *  a reopen a second after a write). Null when the visit is unpaid.
+       *  The dialog then writes nothing until the roster is refreshed. */
       alreadyPaidWith: string | null;
     }
   | { ok: false; status: number; error: string };
@@ -120,16 +120,15 @@ export async function usablePassesForVisit(input: {
   classId: number;
 }): Promise<VisitPasses> {
   const { clientId, visitId, classId } = input;
-  /* Both reads at once, so a client with passes waits for one round
-   * trip; a client with none is answered as soon as their passes are,
-   * without waiting on the class. */
-  const visitRead = readVisit(classId, visitId);
-  visitRead.catch(() => undefined);
-  const candidates = candidatePasses(await fetchPasses(clientId));
-  if (candidates.length === 0) {
-    return { ok: true, passes: [], otherProgram: [], alreadyPaidWith: null };
-  }
-  const visit = await visitRead;
+  /* Both reads at once: one round trip. The visit is read whatever the
+   * passes say (T242 second review), because whose booking this is and
+   * whether it is already paid decide what the dialog may write at all,
+   * the purchase view included. */
+  const [rawPasses, visit] = await Promise.all([
+    fetchPasses(clientId),
+    readVisit(classId, visitId),
+  ]);
+  const candidates = candidatePasses(rawPasses);
   if (!visit.found) {
     return {
       ok: false,
@@ -137,7 +136,16 @@ export async function usablePassesForVisit(input: {
       error: "That booking is not on this class any more. Refresh the roster.",
     };
   }
-  if (visit.clientId !== null && visit.clientId !== clientId) {
+  /* Second review: a visit Mindbody names no client for is not taken as
+   * this client's. */
+  if (visit.clientId === null) {
+    return {
+      ok: false,
+      status: 409,
+      error: "Mindbody did not say whose booking this is. Refresh the roster.",
+    };
+  }
+  if (visit.clientId !== clientId) {
     console.warn(
       `[visit-passes] refused: visit ${visitId} on class ${classId} belongs ` +
         `to client ${visit.clientId}, not ${clientId}`,

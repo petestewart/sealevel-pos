@@ -89,7 +89,17 @@ nobody checked in, is the backstop. The tap is `/api/visit-payment` then
 `/api/checkin`, the existing routes under the teacher's token,
 pessimistic, no money and no approval; a refused or suppressed assignment
 checks nobody in, and after a failed check-in (or an assignment with no
-answer) nothing else in the dialog writes until the row is checked. The
+answer) nothing else in the dialog writes until the row is checked. Only
+a 4xx is a refusal: `/api/visit-payment` now answers 409 `reason:
+"refused"` for Mindbody's 4xx and 502 for anything else (a 5xx, the
+timeout), which the dialog treats as "may have landed": locked, nothing
+offered again, the roster refreshed. It checks in only when Mindbody's
+answer names the pass asked for (`appliedClientServiceId`, from
+UpdateClientVisitResponse.Visit) or names none. The visit is read on
+EVERY unpaid open, whichever view opens: a visit that is someone else's,
+gone from the class, or already paid holds Charge, free entry, "Cart and
+check in", "Buy a pass instead" and every "Use this pass", with the
+reason and a roster refresh, and nothing writes while that read is out. The
 student may pick on the customer iPad too ("Your passes", below); the
 first tap from either side wins (`payFlight`).
 
