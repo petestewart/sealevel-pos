@@ -749,6 +749,17 @@ function handle(method, path, q, body, res) {
         setTimeout(() => handle(method, path, q, { ...body, __delayed: true }, res), delayCheckouts.ms);
         return;
       }
+      /* T255 review: Stripe's decline test number declines a REAL
+       * checkout with a 400, as a card Mindbody's processor refuses
+       * would, so a split holding several cards can meet a refusal. */
+      if (
+        body.Test !== true &&
+        (body.Payments ?? []).some(
+          (pay) => pay?.Type === "CreditCard" && String(pay?.Metadata?.CreditCardNumber ?? "") === "4000000000000002",
+        )
+      ) {
+        return send(res, 400, { Error: { Message: "Card declined (fake)", Code: "CardDeclined" } });
+      }
       if (body.Test !== true && failCheckouts > 0) {
         failCheckouts -= 1;
         return send(res, 500, { Error: { Message: "Internal error (fake)", Code: "InternalError" } });

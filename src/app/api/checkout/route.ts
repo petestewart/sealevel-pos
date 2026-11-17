@@ -4534,13 +4534,43 @@ async function runCheckout(
        * honest ambiguity and invites no retry. */
       const gone = staffSessionEndedResponse(err);
       if (gone) return gone;
-      const ambiguous = isAmbiguous(err);
+      /* T255 review: a split holding TWO OR MORE cards (the stored card
+       * and/or typed cards) is the one refusal that is not definite.
+       * Nobody has seen whether Mindbody voids card A's authorization
+       * when card B declines in the same checkout (probe B8), and T255 is
+       * what first makes several cards reachable. Until that is known a
+       * 4xx there is answered as ambiguous: T253's hold stands, the
+       * screen says it may have gone through, and nothing invites a
+       * retry. A split with one card or none is unchanged. */
+      const cardLegs = legs.filter(
+        (l) => l.method === "storedcard" || l.method === "typedcard",
+      ).length;
+      const status = mindbodyHttpStatus(err);
+      const multiCardRefusal =
+        cardLegs >= 2 &&
+        !isAmbiguous(err) &&
+        status !== null &&
+        status >= 400 &&
+        status < 500;
+      const ambiguous = isAmbiguous(err) || multiCardRefusal;
+      if (multiCardRefusal) {
+        console.warn(
+          `[split] ${target()} ${cardLegs} card legs refused ${status}; ` +
+            `answered as ambiguous (probe B8): ${JSON.stringify(errMessage(err))}`,
+        );
+      }
       return NextResponse.json(
         {
-          error: ambiguous
-            ? "The charge did not answer. It MAY have gone through. Check " +
-              "the dev drawer or Mindbody before charging again."
-            : errMessage(err),
+          error: multiCardRefusal
+            ? `Mindbody refused the payment: ${errMessage(err).trim().replace(/([^.!?])$/, "$1.")} This ` +
+              "split had more than one card, and whether a card it had " +
+              "already approved was released is not known, so it MAY " +
+              "have been charged. Check Mindbody and the cards before " +
+              "charging again."
+            : ambiguous
+              ? "The charge did not answer. It MAY have gone through. Check " +
+                "the dev drawer or Mindbody before charging again."
+              : errMessage(err),
           stage: "checkout",
           ambiguous,
         },

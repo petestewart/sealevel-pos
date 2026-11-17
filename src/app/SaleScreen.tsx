@@ -3509,9 +3509,17 @@ function PaymentPanel(props: {
 
   const coveredCents = coverage.reduce((sum, c) => sum + c, 0);
   const dueCents = totalCents === null ? null : totalCents - coveredCents;
-  /** Over-tendered cash, which is the teacher's change to hand back. */
+  /** Over-tendered cash, which is the teacher's change to hand back.
+   *  T255 review: CASH lines only. A card, account or gift card line
+   *  whose figure is above what it covers is not change, it is a tender
+   *  that no longer fits the total (`lineReason` refuses it); counting it
+   *  here put "Change $X from the drawer" on the foot and the done screen
+   *  for money nobody handed over. */
   const changeCents = lines.reduce(
-    (sum, line, i) => sum + Math.max(0, line.cents - (coverage[i] ?? 0)),
+    (sum, line, i) =>
+      line.source === "cash"
+        ? sum + Math.max(0, line.cents - (coverage[i] ?? 0))
+        : sum,
     0,
   );
 
@@ -3798,6 +3806,14 @@ function PaymentPanel(props: {
     lines.length > 0 &&
     lines.length <= MAX_TENDER_LINES &&
     new Set(onceLines.map((l) => l.source)).size === onceLines.length &&
+    /* T255 review: every non-cash part pays exactly what it covers, and
+     * something. lineReason says so in words; this is the gate itself,
+     * so a $0.00 take-from part or a figure the total cannot hold never
+     * reaches Charge whatever a reason above it returns. */
+    lines.every(
+      (l, i) =>
+        l.source === "cash" || (l.cents > 0 && (coverage[i] ?? 0) === l.cents),
+    ) &&
     firstLineProblem === null;
 
   const chargeable =
@@ -5765,15 +5781,43 @@ function PaymentPanel(props: {
 
   const padIndex = lines.findIndex((l) => l.id === padFor);
   const padLine = padIndex >= 0 ? lines[padIndex] : undefined;
-  const padCap = padLine === undefined ? null : capFor(padLine.source);
+  /* The OTHER line of a two-line tender, and what Done would recompute it
+   * to. Editing one line moves the other, so the modal says so rather
+   * than calling a part-payment "short". T255: with more parts it is the
+   * one applyPad moves: the newest, or the one before it when the newest
+   * is being edited, against the parts that stay put. */
+  const padNewest = lines[lines.length - 1];
+  const padPartner =
+    lines.length >= 2 && padIndex >= 0 && padNewest !== undefined
+      ? padNewest.id !== padLine?.id
+        ? padNewest
+        : lines[lines.length - 2]
+      : undefined;
+  const padFixed = lines
+    .filter((l) => l.id !== padLine?.id && l.id !== padPartner?.id)
+    .reduce((sum, l) => sum + l.cents, 0);
+  /* T255 review: a non-cash part may be typed only as high as leaves
+   * the part it takes from a cent, the way two parts always did (capFor's
+   * total less one cent). With three or four parts the parts that stay
+   * put count against it too, so a third card can never be typed above
+   * what the others can give up: such a figure used to stand on its row
+   * while the charge sent only what it covered, and the surplus read as
+   * cash change. Cash is never clamped: it is the one source that may be
+   * given more than it owes. */
+  const padCap = ((): number | null => {
+    if (padLine === undefined) return null;
+    const base = capFor(padLine.source);
+    if (base === null || padPartner === undefined || totalCents === null) {
+      return base;
+    }
+    return Math.max(0, Math.min(base, totalCents - padFixed - 1));
+  })();
 
   /** Hold a typed or chipped figure to its source's cap. Cash returns
    *  null from capFor and is therefore never clamped: it is the one
    *  source that may be given more than it owes. */
-  const clampFor = (source: TenderSource, cents: number) => {
-    const cap = capFor(source);
-    return cap === null ? cents : Math.min(cents, cap);
-  };
+  const clampPad = (cents: number) =>
+    padCap === null ? cents : Math.min(cents, padCap);
 
   /** What THIS line has to cover for the due to reach zero, given the
    *  other line as it currently stands. It is the modal's "Amount due"
@@ -5793,21 +5837,6 @@ function PaymentPanel(props: {
         ? padLine.cents
         : parseInt(entry, 10);
 
-  /* The OTHER line of a two-line tender, and what Done would recompute it
-   * to. Editing one line moves the other, so the modal says so rather
-   * than calling a part-payment "short". T255: with more parts it is the
-   * one applyPad moves: the newest, or the one before it when the newest
-   * is being edited, against the parts that stay put. */
-  const padNewest = lines[lines.length - 1];
-  const padPartner =
-    lines.length >= 2 && padIndex >= 0 && padNewest !== undefined
-      ? padNewest.id !== padLine?.id
-        ? padNewest
-        : lines[lines.length - 2]
-      : undefined;
-  const padFixed = lines
-    .filter((l) => l.id !== padLine?.id && l.id !== padPartner?.id)
-    .reduce((sum, l) => sum + l.cents, 0);
   const padRest =
     totalCents === null
       ? null
@@ -5820,9 +5849,16 @@ function PaymentPanel(props: {
         : padPartner.source === "giftcard"
           ? Math.min(padRest, giftCard?.balanceCents ?? 0)
           : padRest;
-  /** Over the due (cash only, since every other source is clamped) is the
-   *  teacher's change; under it, on a single-line tender, is short. */
-  const padSurplus = padDueCents === null ? null : draftCents - padDueCents;
+  /** Over the due is the teacher's change, and only ever on CASH (T255
+   *  review: a non-cash figure is clamped, and if one ever stood above its
+   *  due it would not be change); under it, on a single-line tender, is
+   *  short. */
+  const padSurplus =
+    padDueCents === null
+      ? null
+      : padLine?.source !== "cash" && draftCents > padDueCents
+        ? null
+        : draftCents - padDueCents;
 
   /** One key. Digits accumulate into CENTS, and a clamped source is
    *  clamped on every keystroke, so the entry can never hold an amount
@@ -5837,7 +5873,7 @@ function PaymentPanel(props: {
     if (digits.length > 7) return;
     const typed = digits === "" ? 0 : parseInt(digits, 10);
     if (!Number.isFinite(typed)) return;
-    const clamped = clampFor(padLine.source, typed);
+    const clamped = clampPad(typed);
     setEntry(clamped === typed ? digits : String(clamped));
   };
 
@@ -5846,7 +5882,7 @@ function PaymentPanel(props: {
    *  $20 chip on a $14 card line would only ever be a clamp. */
   const padChip = (cents: number) => {
     if (padLine === undefined) return;
-    setEntry(String(Math.max(0, clampFor(padLine.source, cents))));
+    setEntry(String(Math.max(0, clampPad(cents))));
   };
 
   /** Done: apply what was typed to the line, and close. Nothing typed
@@ -5881,7 +5917,7 @@ function PaymentPanel(props: {
     }
     if (freshLineRef.current === line?.id) freshLineRef.current = null;
     if (line !== undefined && entry !== "") {
-      const cents = clampFor(line.source, parseInt(entry, 10));
+      const cents = clampPad(parseInt(entry, 10));
       /* Editing one line of a two-line tender RECOMPUTES the other as the
        * remainder (clamped by its own rule), so the lines can only ever
        * sum to the server's total. The one exception is a cash line above
@@ -13051,6 +13087,9 @@ export default function SaleScreen(props: {
     ]) {
       const key = itemKey(item.type, item.id);
       if (seen.has(key)) continue;
+      /* T76's staff twins ("TEACHER ...") only when the query asks for
+       * them, so a customer's drink is not found twice. */
+      if (isTeacherItem(item) && !shelfWords.includes("teacher")) continue;
       if (!shelfMatches(shelfWords, item.name, shelfOf(item))) continue;
       seen.add(key);
       items.push(item);

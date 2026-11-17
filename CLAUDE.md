@@ -161,7 +161,13 @@ its amount from the part before it. A line one tap took for the whole
 sale (`whole` on `TenderLine`) follows the total through a discount. A
 card the student typed on the customer iPad still pays the whole sale
 alone. Never met live Mindbody: several `CreditCard` entries in one
-call. Pete's gift card "missing key account" bug is NOT fixed (probe B7).
+call, so **a 4xx on a split with two or more card legs is answered
+AMBIGUOUS** (T253 hold, "may have gone through", no retry) until probe B8
+says whether Mindbody releases card A when card B declines; a split
+with one card or none refuses as before. A non-cash part can be typed
+only as high as leaves the part it takes from a cent, and change on the
+screen is CASH change only. Pete's gift card "missing key account" bug
+is NOT fixed (probe B7).
 
 **`docs/PLAN.md` is the execution plan**: ordered work items, what each one is
 done when, the probes still to run, and the questions blocked on Pete. Start

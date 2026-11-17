@@ -23582,3 +23582,66 @@ merge kept every rule main has and re-applied this ticket on top:
   positive balance.
 - With three or four parts the Finalize button sits below the fold at
   820px tall; the payment column scrolls to it.
+
+### Review of 66c0d45 (2026-11-17)
+
+An independent review found two things, both fixed:
+
+- **A third or fourth part could be typed above what the others could
+  give up.** `applyPad` left the part it takes from unchanged when the
+  remainder came out at zero or below, and the keypad capped each part
+  only at the total less a cent per other part. On a $50 total: stored
+  $30, typed B $10, typed C retyped from $10 to $25 left rows of
+  $30/$10/$25. As the code reads, `lineReason` refuses a non-cash
+  figure that does not match what it covers, which should have kept
+  Finalize dark (the old build was not driven to confirm it, and the
+  review read it as charging $30/$10/$10); either way the foot, the pad
+  ("Change due") and, for any line reduced after it was typed, the done
+  screen read the surplus as "Change $15.00 from the drawer". Now:
+  - the keypad's cap for a non-cash part (`padCap`) is also the total
+    less the parts that stay put less one cent, so the part it takes
+    from keeps at least a cent; `applyPad` and every keystroke clamp to
+    it, and "tops out at" names it;
+  - `tenderValid` itself requires every non-cash part to be above zero
+    and to equal what it covers, not only through `lineReason`;
+  - change is CASH change only (`changeCents`, the pad's "Change due",
+    the foot and the done block's `changeAtTap`). This also fixes a bug
+    already on main: a single card line typed to an amount and then
+    reduced under it by a promotion code or a discount showed
+    "Change $X from the drawer" for money nobody handed over.
+- **A 4xx on a split with two or more cards was "nothing charged".**
+  Nobody has seen whether Mindbody releases card A's authorization when
+  card B declines in the same checkout, and T255 is what first makes
+  several cards reachable. Until probe B8 answers it, the split's catch
+  in `/api/checkout` answers a 4xx (a definite refusal by HTTP status)
+  on a split with two or more `storedcard`/`typedcard` legs as
+  `ambiguous: true`, with Mindbody's sentence and "it MAY have been
+  charged", so T253's hold stands and the screen shows the unknown
+  outcome with Understood and no retry. A split with one card or none
+  refuses exactly as before. Logged `[split] ... answered as ambiguous
+  (probe B8)`.
+- And, small: item search no longer shows T76's "TEACHER ..." twin of a
+  customer item unless the query has the word "teacher". The fake has
+  no TEACHER items, so this one was not driven.
+
+The fake now declines a real checkout carrying a `CreditCard` payment
+numbered 4000000000000002 with a 400.
+
+Driven against the fake after the fix (Chromium, 1180x820):
+
+- $49.66 total: stored card whole, typed B $20.00 (stored $29.66), typed
+  C added at $0.00 and set $10.00 (B $10.00), then C retyped $25.00: the
+  keypad held it at $19.99 ("The card (typed) part becomes $0.01"),
+  rows $29.66 / $0.01 / $19.99, Change $0.00, and the sale went out with
+  exactly those three Payments.
+- The variant (B $20.00, C typed $25.00 on arrival): the same, C held
+  at $19.99, B $0.01, sold as shown.
+- Cash $60.00 on $49.66: "Change due $10.34" on the pad, CHANGE $10.34
+  on the foot, "Change $10.34 from the drawer" on the done block.
+- Cash $20.00 plus the declining typed card: 502 `ambiguous: false`,
+  "Not charged: Card declined (fake)", no hold, Charge live again.
+- Stored card $20.00 plus the declining typed card: 502 `ambiguous:
+  true` with Mindbody's sentence, a hold of kind `ambiguous` for the
+  client in `/api/charge-holds`, the "may or may not have gone through"
+  outcome with Understood, and Finalize dark ("The last charge needs
+  checking first"). No sale in the fake.
