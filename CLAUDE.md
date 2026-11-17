@@ -71,6 +71,38 @@ account (P6) and the Mindbody custom payment method (P7).
 iPad**, and can type their own card there (Pete: "a student shouldnt have
 to hand them their card"). See Customer display below.
 
+**T242 (2026-11-17): the unpaid row's "Pay and check in" opens on the
+student's OWN passes** when they hold any that may pay for this visit
+(Pete: "there should be an option to use one of their exisiting passes
+when they have one"): only those passes, each with a 64px "Use this pass
+and check in", and "Buy a pass instead" for T25's purchase view,
+unchanged. **The list is built from READS ONLY** (`GET /api/visit-passes`,
+`src/lib/visitpasses.ts`, a signed-in teacher, the visit must be this
+client's): current passes with a class left, less guest passes, less a
+pass whose `Program` is known and differs from the class's known
+`ClassDescription.Program` (either unknown keeps the pass). **Never ask
+Mindbody with `Test: true` on `updateclientvisit`**: nobody has seen it
+honoured there, and if it is not, every check is a real reassignment of a
+real student's visit on the service account (the T242 review removed
+exactly that). The real assignment's refusal, in Mindbody's words with
+nobody checked in, is the backstop. The tap is `/api/visit-payment` then
+`/api/checkin`, the existing routes under the teacher's token,
+pessimistic, no money and no approval; a refused or suppressed assignment
+checks nobody in, and after a failed check-in (or an assignment with no
+answer) nothing else in the dialog writes until the row is checked. Only
+a 4xx is a refusal: `/api/visit-payment` now answers 409 `reason:
+"refused"` for Mindbody's 4xx and 502 for anything else (a 5xx, the
+timeout), which the dialog treats as "may have landed": locked, nothing
+offered again, the roster refreshed. It checks in only when Mindbody's
+answer names the pass asked for (`appliedClientServiceId`, from
+UpdateClientVisitResponse.Visit) or names none. The visit is read on
+EVERY unpaid open, whichever view opens: a visit that is someone else's,
+gone from the class, or already paid holds Charge, free entry, "Cart and
+check in", "Buy a pass instead" and every "Use this pass", with the
+reason and a roster refresh, and nothing writes while that read is out. The
+student may pick on the customer iPad too ("Your passes", below); the
+first tap from either side wins (`payFlight`).
+
 **`docs/PLAN.md` is the execution plan**: ordered work items, what each one is
 done when, the probes still to run, and the questions blocked on Pete. Start
 there. `docs/design/front-desk-pos.md` carries the reasoning behind every item
@@ -722,6 +754,31 @@ line amounts and Xs, and the roster dialog's switch. A tender that moves
 by itself under one (a credit line dropped by a refetch, the card lookup
 answering) ends it with one sentence, the way a cart edit does, and
 `endWait` now also ends a present still in flight.
+
+**"Your passes": the student's own passes for an unpaid visit** (T242).
+While the roster's "Pay and check in" dialog shows the student's own
+passes and a display is connected, the display shows a `passes` scene
+(`src/app/display/PassesScene.tsx`, `src/lib/displaypasses.ts`): names,
+classes left and expiry, and a 64px "Use this pass" per pass. **No ids
+reach the display**: `/api/display/present` gives each pass a random key
+and keeps the key-to-ClientService map on the request's server-only half
+(`private.offer`). A tap posts `{requestId, key}` to `POST
+/api/display/pass` (display cookie only); `choosePass` checks the key
+against that stored offer, moves the scene to "One moment" at once (one
+offer, one pick, from either side; it holds a minute at most) and emits
+`pass-pick` to the teacher's
+stream with the id. The teacher's iPad hears it through `useTenderPick`'s
+`applyPass` (the stream the waiver block already holds, plus a 1.5s poll
+of `GET /api/display/passes`, acted on once per pick id, for this tab's
+scene and a pass its own list shows) and runs the same two writes as the
+teacher's tap. **Nobody waits on the student**: the teacher's buttons work
+throughout, and the scene then reads "Done" or "Please see the front
+desk" for the summary's eight seconds; after an assignment that changed
+nothing the list goes back up on the same request, with fresh keys and
+the old pick cleared (a replace back to `offer` always clears it).
+Closing the dialog or "Buy a pass
+instead" cancels it by request id; a busy screen changes nothing on the
+teacher's side. The display still adds no write path to Mindbody.
 
 **The student chooses how to pay** (T241, Pete: "would be better to
 surface a choice to the customer for the payment method if they want to
@@ -1465,7 +1522,15 @@ while `git clone` works, so clone the repo rather than fetching files.
   attached currently gets a confirming tap and goes in for nothing. That is a
   Phase 1 stopgap: Phase 2 should sell the missing pass against the card on
   file and check them in together, keeping free entry as the deliberate
-  exception. See the phasing section of the design doc.
+  exception. See the phasing section of the design doc. (Since T25 the
+  unpaid row's dialog does sell the pass, and since T242 it first offers
+  a pass the student already holds; free entry stays in the purchase
+  view.)
+- **T242 is unverified live, and its list cannot see every rule.** It
+  filters by program only, from reads; a pass Mindbody refuses for
+  another reason (a membership restriction) is offered and the tap is
+  refused in Mindbody's words. Pete's last T242 box is the live run on
+  the dummy client.
 
 - **Card charges are live-proven by use, not by a recorded probe** (Pete,
   2026-11-15: "weve been using the app for months", and typed cards have

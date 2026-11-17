@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { presenterId } from "./presenter";
+import { readPassPick, type PassPick } from "@/lib/displaypasses";
 import {
   choiceTeacherWord,
   isTenderChoice,
@@ -122,6 +123,17 @@ export function useTenderPick(input: {
    * ("The sale is already being charged."). It must never charge.
    */
   apply: (pick: TenderPick) => string | null;
+  /**
+   * T242: a student's pick of one of their OWN passes on "Your passes"
+   * (the roster dialog's passes view), heard through this same piece.
+   * The screen acts on it (assigns the pass and checks in, the same two
+   * writes as the teacher's own tap) and answers with the pass's name
+   * for the sentence, a string reason it was refused, or null to drop it
+   * without a word (the teacher's own tap is already running: first tap
+   * wins). Absent on a screen with no passes view: a pass pick is then
+   * ignored. A pass pick never charges and never moves a tender.
+   */
+  applyPass?: (pick: PassPick) => { name: string } | string | null;
 }): TenderPickApi {
   const [note, setNote] = useState<string | null>(null);
   const [settling, setSettling] = useState(false);
@@ -135,10 +147,40 @@ export function useTenderPick(input: {
   applyRef.current = input.apply;
   const nameRef = useRef(input.firstName);
   nameRef.current = input.firstName;
+  const applyPassRef = useRef(input.applyPass);
+  applyPassRef.current = input.applyPass;
   /** Picks already handled, so the stream and the poll cannot act twice. */
   const seen = useRef<Set<string>>(new Set());
 
   const receive = useCallback((value: unknown) => {
+    const remember = (pickId: string) => {
+      seen.current.add(pickId);
+      if (seen.current.size > 100) {
+        const first = seen.current.values().next();
+        if (!first.done) seen.current.delete(first.value);
+      }
+    };
+    /* T242: a pass pick carries a ClientService id and no tender key. */
+    const passPick = readTenderPick(value) === null ? readPassPick(value) : null;
+    if (passPick !== null) {
+      const applyPass = applyPassRef.current;
+      if (applyPass === undefined) return;
+      if (seen.current.has(passPick.pickId)) return;
+      if (!ownsRef.current(passPick.requestId)) return;
+      if (passPick.presenter !== undefined && passPick.presenter !== presenterId()) {
+        return;
+      }
+      remember(passPick.pickId);
+      const done = applyPass(passPick);
+      if (done === null) return;
+      const who = nameRef.current ?? "The customer";
+      setNote(
+        typeof done === "string"
+          ? `${who} chose a pass on the customer screen. ${done}`
+          : `${who} chose ${done.name} on the customer screen. Checking them in.`,
+      );
+      return;
+    }
     const pick = readTenderPick(value);
     if (pick === null) return;
     if (seen.current.has(pick.pickId)) return;
@@ -148,15 +190,11 @@ export function useTenderPick(input: {
       /* Third review: this tab's own pick on a ticket it no longer shows
        * (the mirror was retired, the approval ended). A card typed on it
        * is let go of rather than left held with no line naming it. */
-      seen.current.add(pick.pickId);
+      remember(pick.pickId);
       if (pick.choice === "typedcard") releaseCard(pick.requestId);
       return;
     }
-    seen.current.add(pick.pickId);
-    if (seen.current.size > 100) {
-      const first = seen.current.values().next();
-      if (!first.done) seen.current.delete(first.value);
-    }
+    remember(pick.pickId);
     const who = nameRef.current ?? "The customer";
     const word = choiceTeacherWord(pick.choice);
     const refused = applyRef.current(pick);

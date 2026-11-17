@@ -1143,16 +1143,32 @@ export async function setVisitService(
   clientId?: string,
   /** T49: the signed-in teacher to make the change as, when there is one. */
   actor?: Actor | null,
-): Promise<{ suppressed: "dry-run" | "write-guard" | null }> {
+): Promise<{
+  suppressed: "dry-run" | "write-guard" | null;
+  /** T242 review: the pass the answer says the visit now carries
+   *  (UpdateClientVisitResponse.Visit, client.yml: `ServiceId`, "the
+   *  unique ID assigned to this pricing option when it was purchased by
+   *  the client", or the embedded `Service.Id`), or null when the answer
+   *  does not say. T62 saw a booking answer name a different pass than
+   *  the one asked for, so a caller that goes on to check in reads this. */
+  appliedClientServiceId: number | null;
+}> {
   const res = await mindbody("/client/updateclientvisit", {
     method: "POST",
     body: { VisitId: visitId, ClientServiceId: clientServiceId },
     clientId,
     ...(actor ? { actor } : {}),
   });
-  if (res?.DryRun) return { suppressed: "dry-run" };
-  if (res?.WriteSuppressed) return { suppressed: "write-guard" };
-  return { suppressed: null };
+  if (res?.DryRun) return { suppressed: "dry-run", appliedClientServiceId: null };
+  if (res?.WriteSuppressed) {
+    return { suppressed: "write-guard", appliedClientServiceId: null };
+  }
+  const applied = res?.Visit?.ServiceId ?? res?.Visit?.Service?.Id;
+  return {
+    suppressed: null,
+    appliedClientServiceId:
+      typeof applied === "number" && Number.isInteger(applied) ? applied : null,
+  };
 }
 
 export async function setSignedIn(

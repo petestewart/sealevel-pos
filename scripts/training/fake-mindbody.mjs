@@ -553,6 +553,15 @@ function handle(method, path, q, body, res) {
       for (const list of Object.values(visits)) {
         const v = list.find((x) => x.Id === Number(body.VisitId));
         if (v) {
+          /* T242: `Test: true` validates and commits nothing (client.yml
+           * UpdateClientVisitRequest), which is what the "Pay and check
+           * in" dialog's per-pass check relies on. */
+          if (body.Test === true) {
+            if (body.ClientServiceId && !clientServices.some((s) => s.Id === Number(body.ClientServiceId))) {
+              return send(res, 400, { Error: { Message: "Client service not found.", Code: "InvalidParameter" } });
+            }
+            return send(res, 200, { Visit: v });
+          }
           if (typeof body.SignedIn === "boolean") v.SignedIn = body.SignedIn;
           if (body.ClientServiceId) {
             const cs = clientServices.find((s) => s.Id === Number(body.ClientServiceId));

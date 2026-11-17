@@ -8273,6 +8273,138 @@ textarea.reason-note-field:disabled::placeholder {
   background: var(--accent-bg);
 }
 
+/* --- T242: the student's own passes ----------------------------------
+ * On the customer display, "Your passes": one row per pass, the name and
+ * its facts beside a 64px "Use this pass". On the teacher's "Pay and
+ * check in" dialog, the same list with a 64px "Use this pass and check
+ * in" per pass and the purchase one quiet tap below. Tokens only, both
+ * palettes, radius 0; --accent on the one action per row. */
+
+.dpasses-lead {
+  margin: 0;
+  font-size: 20px;
+  color: var(--muted);
+}
+
+.dpasses-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 2px solid var(--rule);
+}
+
+.dpasses-pass {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 16px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.dpasses-text {
+  flex: 1 1 260px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dpasses-name {
+  font-size: 24px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.dpasses-facts {
+  font-size: 18px;
+  color: var(--muted);
+}
+
+.dpasses-use {
+  flex: 0 0 auto;
+  min-width: 200px;
+}
+
+.dpasses-status .dpasses-lead {
+  font-size: 24px;
+  color: var(--ink);
+}
+
+.pay-own {
+  display: flex;
+  flex-direction: column;
+  margin: 0 0 12px;
+  border-top: 2px solid var(--rule);
+  /* T98: never so tall that the actions leave the visible band. */
+  max-height: min(46vh, 420px, calc(var(--vvh) - 300px));
+  overflow-y: auto;
+}
+
+.pay-own-pass {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.pay-own-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.pay-own-name {
+  font-size: 18px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.pay-own-facts {
+  font-size: 16px;
+  color: var(--muted);
+}
+
+.pay-own-use {
+  width: 100%;
+  min-height: 64px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 0;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.pay-own-use:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.pay-own-buy {
+  width: 100%;
+  min-height: 64px;
+  margin: 0 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  color: var(--accent);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.pay-own-buy:active:not(:disabled) {
+  background: var(--surface-2);
+}
+
+.pay-own-buy:disabled {
+  color: var(--muted);
+}
+
 /* T203: the apology a "Take over" leaves on the customer screen for a
  * few seconds, so a student half way through something is not simply
  * interrupted by the next person's ticket. */

@@ -34,6 +34,7 @@ import {
   type TenderChoice,
 } from "./displayticket";
 import type { TypedCard } from "./typedcard";
+import type { PassPick } from "./displaypasses";
 
 /**
  * The customer display's hub (T200, docs/design/customer-display.md).
@@ -68,13 +69,20 @@ import type { TypedCard } from "./typedcard";
 
 /** The four scenes. Nothing consumes these yet (items 2 to 6); the union
  *  is here so every later item adds a scene, not a protocol. */
-export type DisplayRequestKind = "waiver" | "ticket" | "register" | "contract";
+export type DisplayRequestKind =
+  | "waiver"
+  | "ticket"
+  | "register"
+  | "contract"
+  /* T242: "Your passes", the student's own passes for an unpaid visit. */
+  | "passes";
 
 const KINDS: readonly DisplayRequestKind[] = [
   "waiver",
   "ticket",
   "register",
   "contract",
+  "passes",
 ];
 
 export function isDisplayRequestKind(v: unknown): v is DisplayRequestKind {
@@ -151,6 +159,9 @@ export interface DisplayRequest {
    *  ticket a closed tab left behind can be taken over by another iPad
    *  after a while rather than blocking its mirror for 30 minutes. */
   presentedAt?: number;
+  /** T242: the student's pick of one of their own passes on a `passes`
+   *  scene. Memory only, like the tender pick. */
+  passPick?: (PassPick & { at: number }) | null;
 }
 
 /** T241: what the teacher's iPad is told about a pick. A key from the
@@ -203,6 +214,13 @@ export const SUMMARY_TTL_MS = 8 * 1000;
  *  test-only knob the abandon window has (POS_DISPLAY_SIGNUP_TTL_MS),
  *  read only when it is set. */
 export const SIGNUP_TTL_MS = 4 * 60 * 60 * 1000;
+/** T242: a "Your passes" offer holds the screen at most five minutes
+ *  with no new present, short enough that a tab closed without taking
+ *  it down does not leave one student's passes for the next, and inside
+ *  armExpiry's timer window, so it leaves with nobody asking. */
+export const PASSES_TTL_MS = 5 * 60 * 1000;
+/** T242: and "One moment" (a pass chosen, the writes running) a minute. */
+export const PASSES_WORKING_TTL_MS = 60 * 1000;
 /** T204: two minutes with no touch and a sign-up in progress returns the
  *  screen to idle and discards the partial form, so a student who
  *  wandered off cannot hold the screen against the next sale and the
@@ -992,6 +1010,44 @@ export async function presentRequest(input: {
         "The approval ended before it could be asked again. Finalize again to ask the customer.",
     };
   }
+  /* T242: a "Your passes" scene moves through its modes (the offer,
+   * working, done, help) in place, for the tab that put it up: the
+   * student watches their list become "One moment" and then "Done"
+   * rather than seeing it blink to Ready between writes. Another tab, or
+   * another kind of scene, meets the ordinary rule below ("busy"). */
+  if (
+    held !== null &&
+    held.status === "pending" &&
+    input.kind === "passes" &&
+    held.kind === "passes" &&
+    sameTicketOwner(held, input)
+  ) {
+    held.payload = input.payload;
+    held.private = input.private ?? {};
+    /* T242 review: a NEW offer (the teacher's iPad offering the list
+     * again, or the next student's on the same tab) is a fresh question:
+     * the last pick belongs to the offer it was made on, and left here it
+     * would refuse the next tap as "already checking you in". */
+    if (input.payload.mode === "offer") held.passPick = null;
+    held.version = (held.version ?? 1) + 1;
+    held.presentedAt = now;
+    held.expiresAt = now + (input.ttlMs ?? PASSES_TTL_MS);
+    armExpiry(held, now);
+    void boundedDb(
+      updateDisplayRequestPayload(
+        held.id,
+        Object.keys(held.private).length === 0
+          ? held.payload
+          : { ...held.payload, [PRIVATE_KEY]: held.private },
+        new Date(held.expiresAt),
+      ),
+      TABLE_WAIT_MS,
+      false,
+    );
+    const scene = sceneFor(held);
+    emit("display", scene.event, scene.data);
+    return { ok: true, request: held, replaced: true };
+  }
   if (held !== null && held.status === "pending") {
     /* T201: the ONE scene that is updated in place rather than completed.
      * A live ticket mirrors a cart the teacher is still building, so a
@@ -1203,7 +1259,9 @@ export async function cancelRequest(
     ) {
       return { cancelled: false };
     }
-    const owner = c.kind === "ticket" ? c.private.presenter : undefined;
+    /* T242: a passes scene belongs to its tab the way a ticket does. */
+    const owner =
+      c.kind === "ticket" || c.kind === "passes" ? c.private.presenter : undefined;
     if (typeof owner === "string" && owner !== opts.teacher.presenter) {
       if (!(opts.takenOver === true && isLiveTicket(c.kind, c.payload))) {
         return { cancelled: false, foreign: true };
@@ -1582,6 +1640,128 @@ export async function chooseTypedCard(
     now,
   );
   return { ok: true };
+}
+
+/* --- T242: the student picks one of their own passes ----------------- */
+
+/**
+ * The student tapped "Use this pass" on a "Your passes" scene. The key
+ * must be one the SERVER stored on this scene's offer (the private half,
+ * which the display never sees), the scene must still be offering, and
+ * one offer buys one pick: the scene moves to `working` here and now, so
+ * a second tap, from either side, cannot pick again. The teacher's iPad
+ * is told which ClientService the key stood for and runs the two writes
+ * itself, under the teacher's token. NOTHING HERE CALLS MINDBODY.
+ */
+export async function choosePass(
+  displayId: string,
+  requestId: string,
+  key: unknown,
+  now = Date.now(),
+): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
+  await ensureDisplayLoaded();
+  expireIfDue(now);
+  if (typeof key !== "string" || key.length === 0 || key.length > 64) {
+    return { ok: false, status: 400, error: "That is not one of your passes." };
+  }
+  const c = state.current;
+  if (c === null || c.id !== requestId || c.displayId !== displayId) {
+    return { ok: false, status: 409, error: "That is not the current screen." };
+  }
+  if (c.status !== "pending" || c.kind !== "passes") {
+    return { ok: false, status: 409, error: "That is not the current screen." };
+  }
+  if (c.payload.mode !== "offer" || c.passPick != null) {
+    return {
+      ok: false,
+      status: 409,
+      error: "The front desk is already checking you in.",
+    };
+  }
+  const offer = c.private.offer;
+  const clientServiceId =
+    offer !== null && typeof offer === "object" && !Array.isArray(offer)
+      ? (offer as Record<string, unknown>)[key]
+      : undefined;
+  if (typeof clientServiceId !== "number" || !Number.isInteger(clientServiceId)) {
+    return { ok: false, status: 409, error: "That is not one of your passes." };
+  }
+  const line = Array.isArray(c.payload.passes)
+    ? (c.payload.passes as unknown[]).find(
+        (p) =>
+          p !== null &&
+          typeof p === "object" &&
+          (p as Record<string, unknown>).key === key,
+      )
+    : undefined;
+  const passName =
+    line !== undefined &&
+    typeof (line as Record<string, unknown>).name === "string"
+      ? ((line as Record<string, unknown>).name as string)
+      : null;
+  const presenter = c.private.presenter;
+  const pick: PassPick & { at: number } = {
+    pickId: randomBytes(9).toString("base64url"),
+    requestId: c.id,
+    clientServiceId,
+    ...(typeof presenter === "string" ? { presenter } : {}),
+    at: now,
+  };
+  c.passPick = pick;
+  /* The offer closes on the student's screen at once: first tap wins. */
+  c.payload = {
+    mode: "working",
+    clientFirstName: c.payload.clientFirstName ?? null,
+    passes: [],
+    passName,
+  };
+  c.version = (c.version ?? 1) + 1;
+  /* T242 review: "One moment" holds a minute at most, as the teacher's
+   * own `working` present does, so a student is never left on it if the
+   * teacher's iPad never hears the pick. */
+  c.expiresAt = now + PASSES_WORKING_TTL_MS;
+  armExpiry(c, now);
+  void boundedDb(
+    updateDisplayRequestPayload(
+      c.id,
+      { ...c.payload, [PRIVATE_KEY]: c.private },
+      new Date(c.expiresAt),
+    ),
+    TABLE_WAIT_MS,
+    false,
+  );
+  const scene = sceneFor(c);
+  emit("display", scene.event, scene.data);
+  /* The teacher's iPad hears it on its events stream, and its poll of
+   * /api/display/passes carries it too, so a dropped stream does not
+   * lose it. An id the teacher's own list holds, and nothing else. */
+  const { at: _at, ...wire } = pick;
+  emit("teacher", "pass-pick", { ...wire });
+  return { ok: true };
+}
+
+/** T242: the student's pass pick on a passes scene, for the teacher's
+ *  poll, while that scene is the current one. */
+export function passPickFor(requestId: string): {
+  status: DisplayRequestStatus | "gone";
+  mode: string | null;
+  pick: PassPick | null;
+} {
+  const c = state.current;
+  if (c === null || c.id !== requestId || c.kind !== "passes") {
+    return { status: "gone", mode: null, pick: null };
+  }
+  const held = c.passPick ?? null;
+  let pick: PassPick | null = null;
+  if (held !== null) {
+    const { at: _at, ...wire } = held;
+    pick = wire;
+  }
+  return {
+    status: c.status,
+    mode: typeof c.payload.mode === "string" ? c.payload.mode : null,
+    pick,
+  };
 }
 
 /** T241: the studio switched "students can type a card" off. The ticket
