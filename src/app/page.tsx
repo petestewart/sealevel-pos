@@ -14,6 +14,14 @@ import { useRouter, useSearchParams } from "next/navigation";
 import DevDrawer from "./DevDrawer";
 import LockScreen from "./LockScreen";
 import ResetDisplay from "./ResetDisplay";
+import UpdateBanner, { ReloadApp, ReloadDisplay } from "./UpdateBanner";
+import {
+  beginWatchedWrite,
+  endWatchedWrite,
+  isWatchedWrite,
+  noteServerVersion,
+  useCheckOnReturn,
+} from "./appversion";
 import NavBar, {
   CartIcon,
   SettingsIcon,
@@ -1834,8 +1842,12 @@ function FrontDesk({
    * lives on the page rather than in the dev drawer, and it persists in
    * localStorage: starts as the default, then reads the stored choice in
    * an effect so the server render and first client render agree.
+   *
+   * T248: the default is FIRST NAME (Pete: "On the teacher screen make
+   * it so the sorting is by first name by default"). A teacher's stored
+   * pick still wins; the menu's order is T52's and unchanged.
    */
-  const [rosterSort, setRosterSort] = useState<RosterSort>("signin");
+  const [rosterSort, setRosterSort] = useState<RosterSort>("first");
   /** Whether the sort menu (anchored under the header's sort icon) is
    *  open. Pure UI state; the choice itself is rosterSort. */
   const [sortMenuOpen, setSortMenuOpen] = useState(false);
@@ -2041,7 +2053,11 @@ function FrontDesk({
     fetch("/api/config")
       .then((r) => (r.ok ? r.json() : null))
       .then((body) => {
-        if (body) setConfig(body);
+        if (body) {
+          setConfig(body);
+          /* T246: and which build the server runs now. */
+          noteServerVersion(body.version);
+        }
       })
       .catch(() => undefined);
   }, []);
@@ -2049,11 +2065,19 @@ function FrontDesk({
   useEffect(() => {
     fetch("/api/config")
       .then((r) => r.json())
-      .then(setConfig)
+      .then((body) => {
+        setConfig(body);
+        noteServerVersion(body?.version);
+      })
       .catch(() => setConfig(null));
     const timer = setInterval(readConfig, 30_000);
     return () => clearInterval(timer);
   }, [readConfig]);
+
+  /* T246: a counter iPad spends most of the day in the background or
+   * asleep, and the first thing a teacher does after a deploy is pick it
+   * up: the config is read again then, rather than at the next tick. */
+  useCheckOnReturn(readConfig);
 
   useEffect(() => {
     /* T46: another day is showing. Its list came from the calendar pick
@@ -11015,6 +11039,20 @@ function FrontDesk({
           every screen. It is rendered here rather than inside either
           screen so that it IS the same element in all three states: the
           roster behind the overlay, the shelf, and the payment step. */}
+      {/* T246: "A new version is ready." Fixed just above the nav bar,
+          with the space it takes added to --nav-space, so it covers
+          nothing (the charge button included). It never reloads by
+          itself; its Reload refuses while a charge is on the wire. */}
+      <UpdateBanner
+        busyWhy={
+          saleNav.charging
+            ? "A charge is going through. Reload when it has finished."
+            : saleNav.holdWhy !== null
+              ? "Write the gift card id on the card first, then reload."
+              : null
+        }
+      />
+
       <NavBar items={navItems} />
     </main>
   );
@@ -11118,6 +11156,8 @@ function AuthGate() {
         .then((r) => (r.ok ? r.json() : null))
         .then((body) => {
           if (!cancelled && body) setGateConfig(body);
+          /* T246: the gate's answer counts as the page's first too. */
+          if (body) noteServerVersion(body.version);
         })
         .catch(() => undefined);
     void read();
@@ -11144,7 +11184,17 @@ function AuthGate() {
     if (phase !== "open") return;
     const original = window.fetch;
     window.fetch = async (...args: Parameters<typeof window.fetch>) => {
-      const response = await original(...args);
+      /* T246: a write to our own API is counted while it is on the
+       * wire, so "Reload" can refuse to drop its answer on the floor.
+       * Observation only, like the 401 check below. */
+      const watched = isWatchedWrite(args[0], args[1]);
+      if (watched) beginWatchedWrite();
+      let response: Response;
+      try {
+        response = await original(...args);
+      } finally {
+        if (watched) endWatchedWrite();
+      }
       try {
         const url = new URL(String(
           args[0] instanceof Request ? args[0].url : args[0],
@@ -11376,6 +11426,11 @@ function DisplayMark() {
             buttonClass="display-mark-btn"
             confirmClass="display-mark-btn display-mark-btn-go"
           />
+          {/* T246: pick up a new deploy, on this iPad or on the
+              customer's. */}
+          <ReloadDisplay buttonClass="display-mark-btn">
+            <ReloadApp buttonClass="display-mark-btn" />
+          </ReloadDisplay>
         </div>
       ) : null}
     </div>

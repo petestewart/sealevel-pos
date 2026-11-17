@@ -353,6 +353,9 @@ so a tap in those first seconds gets T100's added-then-removed behaviour.
   is a back-office worker with a different uptime story and different users.
   The two share an API, not a codebase: `src/lib/mindbody.ts` is adapted from
   ai-manager's client and deliberately not imported from it.
+  Railway deploys from `main`; both iPads are Home Screen web apps with no
+  browser reload, so a new deploy is picked up as described under the
+  customer display ("Picking up a new deploy", T246).
 - **A small Postgres, on a charter (superseded "no database", Pete,
   2026-08-30, T29).** It holds what Mindbody has no home for -- waiver
   receipts, bundle config, banner text, promo entitlements -- and NEVER a
@@ -555,6 +558,34 @@ anywhere in it. Known limit: the deployed hub has no per-tab owner, so a
 second teacher iPad reloading with an empty cart also takes down the
 first iPad's live ticket, which that iPad puts back on its next priced
 change or its own return.
+
+**Picking up a new deploy** (T246, Pete: "could we add a reload button? i
+need it to run the new deployed versions as theyre deployed"). The server
+reports the build it runs (`src/lib/version.ts`:
+`RAILWAY_GIT_COMMIT_SHA`, else `.next/BUILD_ID`, else a value fixed at
+process start) as `version` on `/api/config`, on `GET
+/api/display/version` and as a `version` event on every display stream
+connect. A page's own version is the FIRST answer it got
+(`src/app/appversion.ts`). The **teacher's iPad** re-reads the config
+every 30 seconds, on `visibilitychange` to visible and on `pageshow`, and
+when the version moves shows "A new version is ready." with a 64px Reload,
+fixed above the nav bar with its height added to `--nav-space`, so it
+covers nothing. **It never reloads by itself**, and its Reload refuses in
+words while a charge is in flight, a gift card id is still to be written,
+or any write to `/api/*` is on the wire (counted by the fetch observer the
+page already had). **"Reload app"** always reloads, in the account modal
+and in the display mark's Options menu. The **customer screen** reloads
+ITSELF for a new version, but only from its paired idle screen, 1.5
+seconds after it got there: never over a ticket, an approval, a waiver, a
+sign-up, a contract, the thank you or the take-over apology, and at most
+once per version in two minutes (sessionStorage), so two servers answering
+during a cutover cannot loop it. The pairing is a cookie and survives.
+**"Reload customer screen"** in the Options menu (`POST
+/api/display/reload`, a teacher's session) sends a `reload` to the open
+display streams only, never into the replay buffer (a fresh stream replays
+the buffer and would reload forever); the display obeys at once if idle or
+when the scene ends, and the teacher's line says which, or that the screen
+is not connected. Nothing in it calls Mindbody or touches a sale path.
 
 **A screen that goes says so at once** (T206): the display's SSE stream
 closing is the signal, so a Safari tab shut on the counter reaches the

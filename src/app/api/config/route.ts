@@ -21,6 +21,7 @@ import {
 import { STUDIO_TAX_RATE, houseClientId } from "@/lib/sale";
 import { staffSessionFrom, staffSessionStorage } from "@/lib/staffsession";
 import { ensureTarget, isTargetAdmin, targetSource } from "@/lib/target";
+import { buildVersion } from "@/lib/version";
 
 export const dynamic = "force-dynamic";
 
@@ -73,6 +74,9 @@ export async function GET(request: Request) {
       writeClientIds: [],
       banner: await bannerText(),
       studioTaxRate: null,
+      /* T246: the build this server runs, on the lock screen's answer
+       * too. It names a commit and nothing else. */
+      version: buildVersion(),
     });
   }
   let siteId: string | null = null;
@@ -88,6 +92,10 @@ export async function GET(request: Request) {
    * refuses anyone else regardless. */
   const session = await staffSessionFrom(request);
   return NextResponse.json({
+    /* T246: the build this server runs. A page compares it with the one
+     * it loaded with and offers "Reload" when they differ; it never
+     * reloads by itself (src/app/appversion.ts). */
+    version: buildVersion(),
     /* T210: the site the signed-in teacher's token was issued for,
      * beside `siteId` above, which is the site this counter is on.
      * They agree in every ordinary state; when they do not, the token

@@ -21361,3 +21361,110 @@ after a confirmed Reset of an approval the teacher's wait reads
 "Customer screen disconnected" and a reset waiver dialog keeps waiting
 until closed (recoverable by retry or PIN); the header mark is now a 64px
 button.
+
+## T246. Reload, and picking up a new deploy (Pete, 2026-11-17)
+
+Pete: "could we add a reload button? i need it to run the new deployed
+versions as theyre deployed". Both iPads run as Home Screen web apps,
+with no browser controls, so a page open since this morning keeps
+running this morning's code after a deploy, and there was nothing to
+tap to change that.
+
+### Built
+
+- **The server says which build it runs.** `src/lib/version.ts`:
+  `RAILWAY_GIT_COMMIT_SHA`, else `.next/BUILD_ID` (production only), else
+  a value fixed at process start, held on globalThis so every route
+  answers the same. It is `version` on `/api/config` (the lock screen's
+  trimmed answer too), on `GET /api/display/version` (under the one
+  prefix the display's cookie opens; needs no cookie), and a `version`
+  event on every display stream connect, so a display whose stream
+  reconnects after a deploy learns it at once.
+- **A page's version is the first answer it got** (`src/app/appversion.ts`,
+  module scope, so it lasts exactly one page load). A deploy landing
+  between the scripts arriving and that first answer is missed until the
+  next one, or Reload app; baking a build-time id would instead have
+  disagreed with a runtime `RAILWAY_GIT_COMMIT_SHA`.
+- **Teacher's iPad: "A new version is ready."** Checked on the config read
+  the roster already makes every 30 seconds, on `visibilitychange` to
+  visible and on `pageshow`. A slim row fixed directly above the nav bar,
+  on `--accent-bg` with an accent rail and a 64px accent Reload; its
+  height joins `--nav-space` while it shows, so the roster, the Cart
+  screen (its Pay and charge foot included) and every modal end above it.
+  **It never reloads by itself.** Its Reload refuses with a sentence
+  while the Cart screen is charging, while a gift card id waits to be
+  written on the card, or while any write to `/api/*` is on the wire
+  (counted by the fetch observer FrontDeskPage already wraps every
+  request in, so no write path changed).
+- **"Reload app"** always reloads: in the account modal (beside Change
+  PIN and Sign out) and in the customer display mark's Options menu.
+- **Customer screen: updates itself when idle.** It reads the version on
+  load, every minute, on visibility and pageshow, and on each stream
+  connect. With a newer build up it reloads ONLY from its paired idle
+  screen, 1.5 seconds after getting there, so never over a ticket, an
+  approval, a waiver, a sign-up, a contract, the thank you or the
+  take-over apology; those ending is what lets it go. At most once per
+  version in two minutes (sessionStorage), so two servers answering
+  during a cutover cannot loop it. The pairing is a cookie and survives.
+- **"Reload customer screen"** in the Options menu: `POST
+  /api/display/reload` (device session and a signed-in teacher, logged
+  with the staff id) sends `reload` to the display's OPEN streams only,
+  never into the replay buffer, because a fresh stream replays the whole
+  buffer and a buffered reload would reload every display after it,
+  forever. The display obeys at once if idle, otherwise when the scene
+  ends, and the teacher's one line says which ("The customer screen is
+  reloading now.", "... will reload when the student finishes the
+  waiver.", or "The customer screen is not connected, so it could not be
+  told.").
+- Nothing in it calls Mindbody, and no sale path changed.
+
+### Verified
+
+`npx tsc --noEmit -p .` and `npx next build` clean. Driven in Chromium
+(Playwright) against `scripts/training/fake-mindbody.mjs`, a production
+build, a fresh Postgres database, a signed-in teacher and a paired
+display, restarting the server with `RAILWAY_GIT_COMMIT_SHA` set to three
+values in turn (the old process killed outright, as a replaced container
+is):
+
+- at version A: no banner; the Options menu holds Reset customer screen,
+  Reload customer screen and Reload app; Reload customer screen on an
+  idle display said "reloading now" and the display reloaded and stayed
+  paired (no code shown); Reload app in the account modal reloaded;
+- a teacher-started waiver on the display, server restarted as B: the
+  teacher's banner appeared on `pageshow`; the display saw B and did NOT
+  reload in the next eleven seconds, nor on Reload customer screen
+  (answered `held: "waiver"`); the student tapped Not now, the teacher's
+  dialog read "Customer tapped Not now.", and the display reloaded once
+  idle, still paired, and did not reload again;
+- the banner's Reload with a write held on the wire: "Something is still
+  being saved. Reload in a moment." and no reload;
+- server restarted as C with the display idle: it reloaded itself within
+  seven seconds and stayed paired; the teacher's banner appeared on
+  `visibilitychange`, sat above the nav bar with the Cart overlay ending
+  at its top edge, and its Reload reloaded with no banner after;
+- the Options menu in the dark palette, with the not-connected line.
+
+Also checked on this branch (T247, the coordinator's fix): "New here?
+Sign up" then "Not now" returns the display to its idle screen.
+
+### Limits
+
+- The charge guard reads the Cart screen's `charging` and the in-flight
+  write count; a teacher WAITING on a customer approval (no request on
+  the wire) is not refused, and a reload then leaves the approval on the
+  customer screen until it is answered, reset or expires.
+- The banner shows only once signed in (the roster and the Cart screen),
+  not on the lock screen or the sign-in gate, where Reload app is not
+  offered either.
+- Not seen on a real iPad or on Railway: the restart was a local process
+  replaced on one port.
+
+## T248. Roster sorts by first name by default (Pete, 2026-11-17)
+
+Pete: "On the teacher screen make it so the sorting is by first name by
+default". The roster's default sort is now First name (`"first"` in
+page.tsx); a teacher's stored choice (`pos.rosterSort`) still wins, and
+the menu keeps T52's order (Sign-in order, First name, Last name).
+Verified: a fresh browser profile, with nothing stored, opened the roster
+in first-name order.

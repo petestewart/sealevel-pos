@@ -1728,3 +1728,39 @@ export async function displayState(now = Date.now()): Promise<{
     durable: dbConfigured() && displayCookieDurable(),
   };
 }
+
+/* --- Reload (T246) --------------------------------------------------- */
+
+/**
+ * T246: "Reload customer screen". Sent to the display's OPEN streams
+ * only, never into the replay buffer: a fresh stream replays the whole
+ * buffer (a new page has no Last-Event-ID), so a buffered reload would
+ * reload every display that connected after it, including the one that
+ * just reloaded, forever. Id 0, like the scene replay on connect, so it
+ * cannot move a display's Last-Event-ID past anything real.
+ *
+ * The display decides WHEN: at once on its idle screen, otherwise when
+ * the scene a student is in ends. This answers what the server can see,
+ * which is what the teacher's one line is worded from: whether any
+ * stream heard it, and the scene held now. Nothing here calls Mindbody,
+ * and nothing about a request changes.
+ */
+export function requestDisplayReload(now = Date.now()): {
+  delivered: boolean;
+  held: HeldScene | null;
+} {
+  const current = currentRequest(now);
+  const held =
+    current !== null && current.status === "pending" ? heldSceneOf(current) : null;
+  const ev: HubEvent = { id: 0, event: "reload", data: { at: now } };
+  let delivered = false;
+  for (const sub of state.displaySubs) {
+    try {
+      sub(ev);
+      delivered = true;
+    } catch {
+      /* A closed stream is dropped on its own abort. */
+    }
+  }
+  return { delivered, held };
+}
