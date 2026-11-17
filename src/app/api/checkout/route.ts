@@ -412,6 +412,19 @@ interface SplitLeg {
   typedCard?: TypedCard;
 }
 
+/**
+ * T255: how many parts a split may have. T28 built exactly two; Pete
+ * asked for a sale "split between multiple credit cards (including the
+ * saved card), along with the other payment methods you can split between
+ * today", which is the saved card, a typed card or more, and the account,
+ * cash and a gift card beside them. Four covers every pairing of those a
+ * counter is likely to see and keeps the line list on one screen. Every
+ * method appears at most ONCE except a typed card, which is the only one
+ * a customer can hold several of: there is one card on file, one account,
+ * one cash drawer and (T83) one gift card held at a time.
+ */
+const MAX_SPLIT_LEGS = 4;
+
 /** T79: which shape a 100% discount went out in. */
 type DiscountShape = "lines" | "comp-payment";
 
@@ -830,11 +843,11 @@ async function runCheckout(
   }
   const items = parsed.items;
 
-  /* T28: an optional `split` -- exactly two payment legs, in the
-   * teacher's order, charged in ONE checkoutshoppingcart call so there
-   * is no two-write seam. Mutually exclusive with `method`: a request
-   * carrying both is refused rather than guessed at. */
-  let split: [SplitLeg, SplitLeg] | null = null;
+  /* T28: an optional `split` -- two to four payment legs since T255, in
+   * the teacher's order, charged in ONE checkoutshoppingcart call so
+   * there is no seam between them. Mutually exclusive with `method`: a
+   * request carrying both is refused rather than guessed at. */
+  let split: SplitLeg[] | null = null;
   if (payload?.split !== undefined && payload?.split !== null) {
     if (payload?.method !== undefined) {
       return NextResponse.json(
@@ -843,27 +856,46 @@ async function runCheckout(
       );
     }
     const legsRaw: unknown = payload.split?.legs;
-    if (!Array.isArray(legsRaw) || legsRaw.length !== 2) {
+    if (
+      !Array.isArray(legsRaw) ||
+      legsRaw.length < 2 ||
+      legsRaw.length > MAX_SPLIT_LEGS
+    ) {
       return NextResponse.json(
-        { error: "split.legs must be exactly two legs" },
+        { error: `split.legs must be two to ${MAX_SPLIT_LEGS} legs` },
         { status: 400 },
       );
     }
-    const legA = parseSplitLeg(legsRaw[0]);
-    if (typeof legA === "string") {
-      return NextResponse.json({ error: legA }, { status: 400 });
+    const legs: SplitLeg[] = [];
+    for (const raw of legsRaw) {
+      const leg = parseSplitLeg(raw);
+      if (typeof leg === "string") {
+        return NextResponse.json({ error: leg }, { status: 400 });
+      }
+      legs.push(leg);
     }
-    const legB = parseSplitLeg(legsRaw[1]);
-    if (typeof legB === "string") {
-      return NextResponse.json({ error: legB }, { status: 400 });
-    }
-    if (legA.method === legB.method) {
+    /* T255: every method once, except a typed card, which a customer can
+     * hold several of. */
+    const once = legs.filter((l) => l.method !== "typedcard");
+    if (new Set(once.map((l) => l.method)).size !== once.length) {
       return NextResponse.json(
-        { error: "a split's two legs must use different methods" },
+        {
+          error:
+            "a split may use each method once, except a typed card, " +
+            "which may appear more than once",
+        },
         { status: 400 },
       );
     }
-    split = [legA, legB];
+    /* One card on file per client: two "keep" cards would be the second
+     * replacing the first a moment later, which nobody asked for. */
+    if (legs.filter((l) => l.typedCard?.keep === true).length > 1) {
+      return NextResponse.json(
+        { error: "only one typed card in a split can be kept on file" },
+        { status: 400 },
+      );
+    }
+    split = legs;
   }
 
   const method: unknown = payload?.method;
@@ -1420,8 +1452,7 @@ async function runCheckout(
   const overdraftTokenRaw: unknown = payload?.overdraftToken;
   const creditAsked =
     method === "credit" ||
-    (split !== null &&
-      (split[0].method === "credit" || split[1].method === "credit"));
+    (split !== null && split.some((l) => l.method === "credit"));
   if (overdraftTokenRaw !== undefined && !creditAsked) {
     return NextResponse.json(
       { error: "overdraftToken applies only to an account payment" },
@@ -1512,10 +1543,17 @@ async function runCheckout(
       { status: 400 },
     );
   }
-  /* T93: the typed card, on the single shape or on a leg. */
-  const typedLeg =
-    split === null ? null : (split.find((l) => l.method === "typedcard") ?? null);
-  const typed = typedCard ?? typedLeg?.typedCard ?? null;
+  /* T93: the typed card, on the single shape or on a leg. T255: a split
+   * may carry several typed cards, and at most one of them is kept (the
+   * parse above refuses two). `typed` is the one being kept when there
+   * is one, which is the only thing the check below reads it for. */
+  const typedLegs =
+    split === null ? [] : split.filter((l) => l.method === "typedcard");
+  const typed =
+    typedCard ??
+    typedLegs.find((l) => l.typedCard?.keep === true)?.typedCard ??
+    typedLegs[0]?.typedCard ??
+    null;
   /* "and keep on file" needs somebody to keep it FOR. A walk-in sale
    * rides the house client, which is a catch-all record shared by every
    * anonymous sale, so a card kept on it belongs to nobody and would be
@@ -4253,14 +4291,14 @@ async function runCheckout(
 
   /* -------------------------- T28: split ---------------------------- */
   if (split !== null) {
-    const [legA, legB] = split;
+    const legs = split;
 
     /* The legs must sum EXACTLY to the rehearsed server total, compared
      * after cent rounding. The client sends AMOUNTS only, so the
      * teacher's chosen split is honored -- but the SUM is the server's
      * total, never the browser's: each leg is charged only because
      * together they equal the number Mindbody just priced. */
-    const legSum = roundToCents(legA.amount + legB.amount);
+    const legSum = roundToCents(legs.reduce((sum, l) => sum + l.amount, 0));
     if (legSum !== roundToCents(total)) {
       return NextResponse.json(
         {
@@ -4297,8 +4335,7 @@ async function runCheckout(
       }
     }
 
-    const creditLeg =
-      legA.method === "credit" ? legA : legB.method === "credit" ? legB : null;
+    const creditLeg = legs.find((l) => l.method === "credit") ?? null;
     if (creditLeg !== null) {
       /* A credit leg is a bound leg, so the profile above was read. */
       const balance = profile?.balance ?? null;
@@ -4331,12 +4368,7 @@ async function runCheckout(
       }
     }
 
-    const cardLeg =
-      legA.method === "storedcard"
-        ? legA
-        : legB.method === "storedcard"
-          ? legB
-          : null;
+    const cardLeg = legs.find((l) => l.method === "storedcard") ?? null;
     if (cardLeg !== null) {
       /* A card leg is a bound leg, so the profile above was read. */
       const onFile = profile?.card ?? null;
@@ -4363,12 +4395,7 @@ async function runCheckout(
 
     /* T83: the gift card leg, checked against the live balance the same
      * way the credit leg is checked against the account. */
-    const giftLeg =
-      legA.method === "giftcard"
-        ? legA
-        : legB.method === "giftcard"
-          ? legB
-          : null;
+    const giftLeg = legs.find((l) => l.method === "giftcard") ?? null;
     if (giftLeg !== null) {
       const refused = await giftCardRefusal(
         giftLeg.giftCardNumber as string,
@@ -4405,9 +4432,12 @@ async function runCheckout(
               : { type: "Cash", amount: leg.amount };
 
     try {
-      /* ONE checkoutshoppingcart call carrying both Payments entries in
+      /* ONE checkoutshoppingcart call carrying every Payments entry in
        * the teacher's order: no partial seam exists, so a refusal
-       * refuses the WHOLE sale and nothing partial can stand. */
+       * refuses the WHOLE sale and nothing partial can stand. T255: with
+       * several cards that matters more, not less. A decline on the
+       * second card must not leave the first one charged, and in one
+       * call it cannot. */
       const run = await runAsActor(session, "/api/checkout", (actor) =>
         checkoutCart(
           items,
@@ -4415,7 +4445,7 @@ async function runCheckout(
            * every other anonymous sale. Identical to `clientId`
            * whenever there is one. */
           saleClientId,
-          [toPayment(legA), toPayment(legB)],
+          legs.map(toPayment),
           actor,
           sendEmail,
           discount,
@@ -4465,10 +4495,15 @@ async function runCheckout(
         total,
         saleId: ids.saleId,
         cartId: ids.cartId,
-        legs: [
-          { method: legA.method, amount: legA.amount },
-          { method: legB.method, amount: legB.amount },
-        ],
+        legs: legs.map((l) => ({
+          method: l.method,
+          amount: l.amount,
+          ...(l.method === "typedcard"
+            ? {
+                lastFour: typedCardLastFour((l.typedCard as TypedCard).number),
+              }
+            : {}),
+        })),
         /* T83: the last four, never the number. */
         ...(giftLeg === null
           ? {}
@@ -4479,15 +4514,13 @@ async function runCheckout(
             }),
         /* T93: the same rule for a typed card leg, and the keep outcome
          * reported separately from the charge. */
-        ...(typedLeg === null
+        ...(typed === null
           ? {}
           : {
-              typedCard: {
-                lastFour: typedCardLastFour(
-                  (typedLeg.typedCard as TypedCard).number,
-                ),
-              },
-              ...(await keepTypedCard(typedLeg.typedCard as TypedCard)),
+              /* T255: the kept card when one was kept, else the first;
+               * each typed leg also carries its own last four above. */
+              typedCard: { lastFour: typedCardLastFour(typed.number) },
+              ...(await keepTypedCard(typed)),
             }),
         receiptRequested: sendEmail,
         emailReceipt: null,
@@ -4501,13 +4534,43 @@ async function runCheckout(
        * honest ambiguity and invites no retry. */
       const gone = staffSessionEndedResponse(err);
       if (gone) return gone;
-      const ambiguous = isAmbiguous(err);
+      /* T255 review: a split holding TWO OR MORE cards (the stored card
+       * and/or typed cards) is the one refusal that is not definite.
+       * Nobody has seen whether Mindbody voids card A's authorization
+       * when card B declines in the same checkout (probe B8), and T255 is
+       * what first makes several cards reachable. Until that is known a
+       * 4xx there is answered as ambiguous: T253's hold stands, the
+       * screen says it may have gone through, and nothing invites a
+       * retry. A split with one card or none is unchanged. */
+      const cardLegs = legs.filter(
+        (l) => l.method === "storedcard" || l.method === "typedcard",
+      ).length;
+      const status = mindbodyHttpStatus(err);
+      const multiCardRefusal =
+        cardLegs >= 2 &&
+        !isAmbiguous(err) &&
+        status !== null &&
+        status >= 400 &&
+        status < 500;
+      const ambiguous = isAmbiguous(err) || multiCardRefusal;
+      if (multiCardRefusal) {
+        console.warn(
+          `[split] ${target()} ${cardLegs} card legs refused ${status}; ` +
+            `answered as ambiguous (probe B8): ${JSON.stringify(errMessage(err))}`,
+        );
+      }
       return NextResponse.json(
         {
-          error: ambiguous
-            ? "The charge did not answer. It MAY have gone through. Check " +
-              "the dev drawer or Mindbody before charging again."
-            : errMessage(err),
+          error: multiCardRefusal
+            ? `Mindbody refused the payment: ${errMessage(err).trim().replace(/([^.!?])$/, "$1.")} This ` +
+              "split had more than one card, and whether a card it had " +
+              "already approved was released is not known, so it MAY " +
+              "have been charged. Check Mindbody and the cards before " +
+              "charging again."
+            : ambiguous
+              ? "The charge did not answer. It MAY have gone through. Check " +
+                "the dev drawer or Mindbody before charging again."
+              : errMessage(err),
           stage: "checkout",
           ambiguous,
         },

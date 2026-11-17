@@ -148,6 +148,27 @@ reason and a roster refresh, and nothing writes while that read is out. The
 student may pick on the customer iPad too ("Your passes", below); the
 first tap from either side wins (`payFlight`).
 
+**T255 (2026-11-09, PR #7, merged with main 2026-11-17): item search
+on the Cart screen, a split of up to four parts with several cards, and
+a whole-sale tender that survives a discount.** A search row above the
+grid filters the loaded catalog and gift cards, no Mindbody call. A
+split may carry the saved card and any number of typed cards beside the
+account, cash and a gift card (`MAX_SPLIT_LEGS` 4 in `/api/checkout`,
+every method once except `typedcard`, at most one kept on file), still
+ONE `checkoutshoppingcart`, each card leg charged exactly what it pays
+(T238); with the total covered, a further part opens at $0.00 and takes
+its amount from the part before it. A line one tap took for the whole
+sale (`whole` on `TenderLine`) follows the total through a discount. A
+card the student typed on the customer iPad still pays the whole sale
+alone. Never met live Mindbody: several `CreditCard` entries in one
+call, so **a 4xx on a split with two or more card legs is answered
+AMBIGUOUS** (T253 hold, "may have gone through", no retry) until probe B8
+says whether Mindbody releases card A when card B declines; a split
+with one card or none refuses as before. A non-cash part can be typed
+only as high as leaves the part it takes from a cent, and change on the
+screen is CASH change only. Pete's gift card "missing key account" bug
+is NOT fixed (probe B7).
+
 **`docs/PLAN.md` is the execution plan**: ordered work items, what each one is
 done when, the probes still to run, and the questions blocked on Pete. Start
 there. `docs/design/front-desk-pos.md` carries the reasoning behind every item
@@ -1792,6 +1813,16 @@ while `git clone` works, so clone the repo rather than fetching files.
   refused in Mindbody's words. Pete's last T242 box is the live run on
   the dummy client.
 
+- **A split of several cards has never met live Mindbody (T255).** A
+  split may carry up to four legs, several of them typed cards beside the
+  saved card, in ONE checkout; the spec puts no limit on `Payments` and
+  two legs have sold, but several `CreditCard` entries in one call have
+  not been seen. A refusal is a clean nothing-charged failure.
+- **A gift card tender was refused at Finalize, cause unproven (T255).**
+  Pete, 2026-11-09: "when finalizing a sale with a Gift card - 'missing
+  key account' bug". No call record of it is in the repo. T83's `Metadata`
+  is still a JSON STRING; the object `{amount, cardNumber}` is the by-hand
+  thing to try (probe B7), never an automatic retry.
 - **Card charges are live-proven by use, not by a recorded probe** (Pete,
   2026-11-15: "weve been using the app for months", and typed cards have
   been charged in testing). The note that stood here, that a live charge

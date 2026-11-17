@@ -23353,3 +23353,295 @@ carry the false sentence.
 - [x] The fake reports `IsService: true` for products, as live does.
 - [ ] Pete: Ed's Notes hold the false sentence; delete it in Mindbody.
       Tap Understood on the counter to release Ed's hold.
+
+## T255. Six things from Pete's counter list (Pete, 2026-11-09)
+
+Written as T219 on `claude/busy-fermat-v5flzk` (PR #7) on 2026-11-09,
+and renumbered T255 when it was merged with main on 2026-11-17, where
+T219 is the workshop sign-up. What the merge changed is at the end, and
+it overrides anything above it.
+
+Pete: "Search feature (ex: gift card) ... dual CC payment option ... bug
+fix: eliminate need to select payment method again after discount is
+entered ... We should be able to discount a gift card at 100%. Does
+mindbody allow us to do this? ... bugfix: when finalizing a sale with a
+Gift card - 'missing key account' bug ... Apple Pay: apple pay needs to
+be an available form of payment".
+
+### 1. A gift card tender refused at Finalize for a missing key
+
+Built on the branch as: the `GiftCard` payment's `Metadata` sent as an
+OBJECT `{ amount, cardNumber }` instead of T83's JSON string, on the
+theory that a string has no keys so Mindbody found no amount in it, with
+`redactCard` letting the barcode through inside that object.
+
+**Not kept by the merge.** See "Merged with main" below: no record of
+the refused call is in the repo, so main's string stands and the
+question is probe B7.
+
+### 2. The payment method had to be picked again after a discount
+
+Any discount change cleared every tender line (T79's `discountKey`
+effect and `confirmComp`), so the method had to be chosen again, and a
+tap made while Mindbody was still repricing the discounted cart did
+nothing (the tile is greyed "Pricing with Mindbody..." until the total
+lands). Now a line taken
+by one tap for the whole due is flagged `whole` on `TenderLine`, and such
+a line, when it is the only one, SURVIVES a discount and FOLLOWS the
+total: an effect sets it to the new total (capped by the account balance
+or the gift card balance, as a tap would be) once Mindbody has priced it.
+The total is null while pricing, so Finalize cannot fire on the old
+figure. A typed amount, a second line or an overdraft PIN ends `whole`,
+because then the figure is somebody's choice. A 100% discount still
+clears everything (a comp takes no tender), and a cart edit still clears
+the lines as before.
+
+### 3. Search on the cart screen
+
+A 64px search row above the grid ("Search items"). Two letters or more
+replace the grid with what matches; the X, Escape or any tap on the rail
+put the shelf back. It searches what is already loaded, the catalog
+payload and the gift card list, and makes NO Mindbody call. Every word of
+the query must appear in the item's name or the shelf it lives on (the
+retail category, Passes and its group, Packages, Memberships, Gift
+cards), so "gift card" finds every gift card cell including the custom
+amount, "towel" finds what is filed under Towel and Mat, and word order
+does not matter. At most 60 results, with a line saying so.
+
+### 4. A sale split across several cards
+
+T28 built exactly two legs of different methods, and T93 refused a
+stored and a typed card in the same payment. Now (as merged: every card
+leg is charged exactly what it pays, T238, with no floor):
+
+- `/api/checkout` takes a `split` of two to FOUR legs
+  (`MAX_SPLIT_LEGS`). Each method appears once except `typedcard`, which
+  may appear several times; at most one typed card may be kept on file.
+  Every leg goes to Mindbody in ONE `checkoutshoppingcart` call, as T28's
+  two did, so a decline on one card leaves none of them charged. Each
+  card leg, stored or typed, is charged exactly what it pays (T238; the
+  branch held each to the $10 floor, which the merge dropped). The
+  answer's `legs` carry each typed leg's last four.
+- The payment screen holds one typed card PER LINE (`typedCards`, keyed
+  by line id), so the keypad square opens again with a typed card in the
+  payment, and the saved card and typed cards may share it. At most four
+  parts.
+- Room for a third part: with the total covered, a tile (or the keypad
+  square) adds a part at $0.00 with its keypad open, and what is typed
+  there comes off the part added before it. T36's rule generalised: the
+  remainder of an edit lands on the newest other part, or on the one
+  before it when the newest is being edited; with two parts that is "the
+  other line", unchanged. A part added for nothing and left with nothing
+  (Cancel, Escape, the scrim, Done with no digits) is removed again,
+  which is not T36's trap: it never had an amount. A gift card cannot be
+  added onto a covered total (its modal is built around what is due).
+- With three or four parts the button reads "Charge $X in N parts" and
+  each part's figure is on its row; the done screen names every leg and
+  each typed card's last four.
+
+Not verified live: that Mindbody accepts several `CreditCard` entries,
+or a `StoredCard` beside a `CreditCard`, in one checkout. The spec puts
+no limit on `Payments` (sale.yml:5643), T28's two entries have been
+sold, and a refusal is a clean nothing-charged failure.
+
+### 5. A 100% discount on a gift card
+
+Not yet, and it is Mindbody's answer to give rather than ours to guess.
+What is known: `purchasegiftcard` refuses a `Comp` payment outright
+("Invalid payment method", T103's probes, 2026-09-17), and a gift card
+cannot ride a cart (T103: it sells nothing). What is not known is whether
+ANY zero payment issues a card worth its face value.
+`scripts/probe-giftcard-free.ts` (probe B6) asks exactly that, five shapes against a
+fixed and the custom product, all `Test: true`, and has never been run.
+Its answer decides it: a shape that issues the face value for nothing
+lifts T102's refusal (with the value still asserted to the cent); a card
+worth zero, or every shape refused, keeps it.
+
+### 6. Apple Pay
+
+Not buildable as a tender tile, and not buildable blind. Through the API
+Apple Pay is an alternative payment: `initiatecheckoutshoppingcart`
+answers a URL the CUSTOMER opens on their own phone, Mindbody returns
+them to a callback URL of ours, and `completecheckoutshoppingcart`
+finishes the sale. Those endpoints work only at the online store
+(LocationId 98, online prices, online-store reporting), need a public
+HTTPS callback (the deployed service Phase 1.5 has not produced), and
+the one call ever made to the gate, `alternativepaymentmethods`,
+answered HTTP 400 (probe B2, never re-run). Main deprioritised B2 on
+2026-11-15: counter Apple Pay is Phase 4's own card reader. The spec does not say what
+an Apple Pay `Payments` entry looks like.
+
+`scripts/probe-applepay.ts` is the next step: read-only by default (the
+method list at location 98, 1 and none), and with `--initiate <clientId>
+<productId>` a `Test: true` initiate in each plausible payment shape.
+Its output decides the build: a QR on the customer screen that opens
+Mindbody's page on the student's phone, a callback route, and the
+completion, which is Phase 3's design.
+
+### Verified on the branch (2026-11-09, before the merge)
+
+- `tsc --noEmit` and `next build`: clean.
+- Against `scripts/training/fake-mindbody.mjs`, in Chromium at
+  1180x820: search finds the three gift card cells for "gift card", the
+  tank top for "tank", and says so for nothing; a card line survives a
+  20% discount and moves from $35.31 to $28.25 with Finalize Sale live;
+  a $210.00 sale split $100.00 stored card, $60.00 and $50.00 on two
+  typed cards went out as three Payments entries in one call.
+- `/api/checkout` refuses five legs, two stored card legs and two kept
+  typed cards, each 400 in words with nothing sent.
+
+### Merged with main (2026-11-17)
+
+Main had moved through T220 to T254, mostly in the payment path. The
+merge kept every rule main has and re-applied this ticket on top:
+
+- **No $10 floor on any card leg (T238).** The branch's per-leg floor
+  (`CARD_MINIMUM_USD` in the route's split block and in SaleScreen's
+  `lineReason`) is gone; a typed card, the stored card and each leg of a
+  several-card split are charged exactly what they pay, and only a card
+  charge of nothing is refused.
+- **Several typed cards, one display card.** The held typed cards are
+  `typedCards`, keyed by tender line, each a T241 `TypedCardHeld` (card
+  or null, last four, keep, display request id). A card the STUDENT
+  typed on the customer iPad still arrives only by a pick, which
+  replaces the whole tender, still pays the whole sale on the single
+  `displayCard` shape, and now greys every other tile ("A card from the
+  customer screen pays the whole sale") rather than only refusing at
+  Finalize. The teacher's own modal is the only way to a second card.
+- **T239's automatic credit line** is never `whole`: its own effect
+  owns it, and a discount clears it and lets it come back for the new
+  total. A whole-sale line a teacher tapped survives the discount and
+  follows the total, except while a charge is in flight, an approval is
+  out, a part-sold lock stands or a result is showing (the same freeze
+  T239's line has). A "take from the last part" add skips T239's
+  replace, which only applies to the automatic line.
+- **T240's binding covers every leg.** `tenderShape()` sends
+  `split.legs` for any split of two or more (it read `=== 2`, so a
+  three-part split would have been presented with no tender), and
+  `src/lib/displayticket.ts` takes up to four tenders (its limit of two
+  made `/api/display/present` refuse a three-part approval outright).
+  `cartsha.ts` already hashed every leg, so a leg amount changed after
+  the student approved is refused, nothing charged.
+- **The tender lock (T240)** covers the new paths: a take-from add, a
+  second typed card and its keypad all go through `addLine`,
+  `applyTypedCard` and `openPad`, each of which refuses while
+  `tenderHeld`.
+- **Gift card `Metadata`: main's string is kept.** The branch's only
+  evidence is Pete's one line, "when finalizing a sale with a Gift card
+  - 'missing key account' bug", quoted above; the branch itself recorded
+  that "the exact sentence Pete saw was not in the code" and that nobody
+  had paid with a gift card since. No call record, no Mindbody answer,
+  and the sentence names a key "account", not "amount", and "a sale
+  with a Gift card" reads as well as a gift card SOLD from the account
+  (T108's `purchasegiftcard` with `DebitAccount`) as one spent. T83
+  named the object as the first thing to try BY HAND, never as a shipped
+  guess on a money call. So it is probe B7 (PLAN.md): copy the drawer's
+  record of the next refused gift card sale, or price both shapes with
+  `Test: true`. Pete's bug is therefore still open.
+- **Probe numbers**: main's B5 is the promotion code probe, so the free
+  gift card probe is B6 and the gift card shape is B7.
+
+### Verified after the merge (2026-11-17)
+
+- `tsc --noEmit` and `next build`: clean.
+- Against `scripts/training/fake-mindbody.mjs` (fake on :4255, app on
+  :3255, a private Postgres), in Chromium at 1180x820:
+  - search: "gift card" shows the Single Class, Five Class and Custom
+    gift card cells; "towel" shows Towel Rental and Yoga Mat Towel;
+    "zzzz" says nothing matches.
+  - a $210.00 sale for Jordan Kim: the stored card tapped for the whole
+    and set to $100.00, a typed card (...1111) took the $110.00 left, a
+    second typed card (...4444) on the covered total opened its keypad
+    at $0.00 and $5.00 typed there came off the first typed card. ONE
+    `checkoutshoppingcart` went out with three Payments, StoredCard
+    $100.00, CreditCard $105.00, CreditCard $5.00: a $5.00 card leg was
+    accepted (T238). The done block named all three legs and both last
+    fours.
+  - a Cash tap on that covered total opened a $0.00 part; Cancel took it
+    off again and left the three parts as they were.
+  - Sam Okafor, a $35.31 tank top on the stored card, 20% discount with
+    the PIN: the one Card line moved to $28.25 and Finalize charged
+    $28.25 with no re-pick.
+  - "customer approves each sale" on (`POS_CUSTOMER_CONFIRMS_SALE`), a
+    display paired: a $100.00 / $60.00 / $50.00 split for Taylor Brooks
+    put "Paying by Card $100.00, Card $60.00, Card $50.00" on the
+    customer screen; with the two typed legs moved to $70.00 / $40.00
+    in the request after the student tapped Approve, `/api/checkout`
+    answered 409 `reason: "approval"` ("The ticket or the payment
+    changed after the customer approved it.") and the fake recorded no
+    sale. The same split approved untouched sold, three Payments.
+  - `/api/checkout` refuses five legs, two stored card legs and two kept
+    typed cards, each 400 in words with nothing sent.
+
+### Not verified
+
+- Nothing here has met live Mindbody; several `CreditCard` entries in
+  one checkout are the open question.
+- T239's automatic credit line beside a T255 take-from part, and a
+  discount over it, were not driven: no client in the fake has a
+  positive balance.
+- With three or four parts the Finalize button sits below the fold at
+  820px tall; the payment column scrolls to it.
+
+### Review of 66c0d45 (2026-11-17)
+
+An independent review found two things, both fixed:
+
+- **A third or fourth part could be typed above what the others could
+  give up.** `applyPad` left the part it takes from unchanged when the
+  remainder came out at zero or below, and the keypad capped each part
+  only at the total less a cent per other part. On a $50 total: stored
+  $30, typed B $10, typed C retyped from $10 to $25 left rows of
+  $30/$10/$25. As the code reads, `lineReason` refuses a non-cash
+  figure that does not match what it covers, which should have kept
+  Finalize dark (the old build was not driven to confirm it, and the
+  review read it as charging $30/$10/$10); either way the foot, the pad
+  ("Change due") and, for any line reduced after it was typed, the done
+  screen read the surplus as "Change $15.00 from the drawer". Now:
+  - the keypad's cap for a non-cash part (`padCap`) is also the total
+    less the parts that stay put less one cent, so the part it takes
+    from keeps at least a cent; `applyPad` and every keystroke clamp to
+    it, and "tops out at" names it;
+  - `tenderValid` itself requires every non-cash part to be above zero
+    and to equal what it covers, not only through `lineReason`;
+  - change is CASH change only (`changeCents`, the pad's "Change due",
+    the foot and the done block's `changeAtTap`). This also fixes a bug
+    already on main: a single card line typed to an amount and then
+    reduced under it by a promotion code or a discount showed
+    "Change $X from the drawer" for money nobody handed over.
+- **A 4xx on a split with two or more cards was "nothing charged".**
+  Nobody has seen whether Mindbody releases card A's authorization when
+  card B declines in the same checkout, and T255 is what first makes
+  several cards reachable. Until probe B8 answers it, the split's catch
+  in `/api/checkout` answers a 4xx (a definite refusal by HTTP status)
+  on a split with two or more `storedcard`/`typedcard` legs as
+  `ambiguous: true`, with Mindbody's sentence and "it MAY have been
+  charged", so T253's hold stands and the screen shows the unknown
+  outcome with Understood and no retry. A split with one card or none
+  refuses exactly as before. Logged `[split] ... answered as ambiguous
+  (probe B8)`.
+- And, small: item search no longer shows T76's "TEACHER ..." twin of a
+  customer item unless the query has the word "teacher". The fake has
+  no TEACHER items, so this one was not driven.
+
+The fake now declines a real checkout carrying a `CreditCard` payment
+numbered 4000000000000002 with a 400.
+
+Driven against the fake after the fix (Chromium, 1180x820):
+
+- $49.66 total: stored card whole, typed B $20.00 (stored $29.66), typed
+  C added at $0.00 and set $10.00 (B $10.00), then C retyped $25.00: the
+  keypad held it at $19.99 ("The card (typed) part becomes $0.01"),
+  rows $29.66 / $0.01 / $19.99, Change $0.00, and the sale went out with
+  exactly those three Payments.
+- The variant (B $20.00, C typed $25.00 on arrival): the same, C held
+  at $19.99, B $0.01, sold as shown.
+- Cash $60.00 on $49.66: "Change due $10.34" on the pad, CHANGE $10.34
+  on the foot, "Change $10.34 from the drawer" on the done block.
+- Cash $20.00 plus the declining typed card: 502 `ambiguous: false`,
+  "Not charged: Card declined (fake)", no hold, Charge live again.
+- Stored card $20.00 plus the declining typed card: 502 `ambiguous:
+  true` with Mindbody's sentence, a hold of kind `ambiguous` for the
+  client in `/api/charge-holds`, the "may or may not have gone through"
+  outcome with Understood, and Finalize dark ("The last charge needs
+  checking first"). No sale in the fake.
