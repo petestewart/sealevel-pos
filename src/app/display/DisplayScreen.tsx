@@ -9,6 +9,7 @@ import {
   useCheckOnReturn,
   useUpdateReady,
 } from "../appversion";
+import { useVisualViewport } from "../viewport";
 import { readTicketPayload } from "@/lib/displayticket";
 import { readContractPayload } from "@/lib/displaycontract";
 import { readSignupPayload } from "@/lib/displaysignup";
@@ -52,7 +53,13 @@ interface Config {
 type Scene =
   /* T203: the ticket carries its request id now, because the APPROVE
    *  mode is answered from this screen; live and summary ignore it. */
-  | { kind: "ticket"; requestId: string; payload: TicketPayload }
+  | {
+      kind: "ticket";
+      requestId: string;
+      payload: TicketPayload;
+      /** T241 review: the version the Approve names. */
+      version?: number;
+    }
   /* T202: the waiver carries its request id, because this is the first
    *  scene the STUDENT answers: completing and refusing both name it. */
   | { kind: "waiver"; requestId: string; payload: WaiverPayload }
@@ -133,6 +140,14 @@ export default function DisplayScreen() {
   /** T203: the line a "Take over" leaves on the screen for a few seconds
    *  before the next scene, so a student is not simply interrupted. */
   const [notice, setNotice] = useState<string | null>(null);
+  /** T241: the student picked another way to pay. When the teacher's
+   *  iPad has to take the approval down to do it (cash, a gift card),
+   *  this is what stands on the screen instead of a blink to Ready. */
+  const [pickNotice, setPickNotice] = useState<string | null>(null);
+  /* T241: the card form keeps the OS keyboard (Apple's "Scan Credit
+   * Card"), so this screen publishes the visible band the way the
+   * teacher's iPad does (T98). */
+  useVisualViewport();
   /** T204: the self-serve sign-up's own tap, and what to say when the
    *  server will not have it (the front desk is using the screen). */
   const [starting, setStarting] = useState(false);
@@ -352,6 +367,7 @@ export default function DisplayScreen() {
         if (ticket.ok) {
           setThanks(null);
           setNotice(null);
+          setPickNotice(null);
           setScene({
             kind: "ticket",
             requestId:
@@ -359,6 +375,9 @@ export default function DisplayScreen() {
                 ? String((data as { requestId?: unknown }).requestId)
                 : "",
             payload: ticket.value,
+            ...(typeof (data as { version?: unknown }).version === "number"
+              ? { version: (data as { version: number }).version }
+              : {}),
           });
           return;
         }
@@ -460,6 +479,7 @@ export default function DisplayScreen() {
     scene === null &&
     thanks === null &&
     notice === null &&
+    pickNotice === null &&
     !starting;
   useEffect(() => {
     if (!idle) return;
@@ -474,6 +494,15 @@ export default function DisplayScreen() {
     }, RELOAD_SETTLE_MS);
     return () => clearTimeout(timer);
   }, [idle, reloadAsked, updateReady]);
+
+  /* T241: and the pick's "One moment", a little longer, because the
+   * teacher may be counting cash or scanning a gift card before the
+   * ticket comes back. */
+  useEffect(() => {
+    if (pickNotice === null) return;
+    const timer = setTimeout(() => setPickNotice(null), 20_000);
+    return () => clearTimeout(timer);
+  }, [pickNotice]);
 
   /* T203: and so does the take-over apology. */
   useEffect(() => {
@@ -511,13 +540,14 @@ export default function DisplayScreen() {
   /* T201: a scene owns the middle of the screen; the banner and the mode
    * mark stay where they are, because what this iPad is pointed at is as
    * true during a sale as it is at rest. */
-  if (pairing.state === "paired" && notice !== null && scene === null) {
+  const holding = notice ?? pickNotice;
+  if (pairing.state === "paired" && holding !== null && scene === null) {
     return (
       <main className="display">
         {banner.length > 0 ? <p className="display-banner">{banner}</p> : null}
         <div className="display-middle">
           <h1 className="display-greeting">One moment</h1>
-          <p className="display-notice">{notice}</p>
+          <p className="display-notice">{holding}</p>
         </div>
         {mark ? <p className="display-mark">{mark}</p> : null}
       </main>
@@ -572,6 +602,14 @@ export default function DisplayScreen() {
             <TicketScene
               payload={scene.payload}
               requestId={scene.requestId}
+              {...(scene.version !== undefined ? { version: scene.version } : {})}
+              onPicked={(words) =>
+                setPickNotice(
+                  words === "your card"
+                    ? "Your card is with the front desk."
+                    : `The front desk is switching to ${words}.`,
+                )
+              }
               onAnswered={(approved) => {
                 /* The scene is done with the screen the moment the
                  * server has the answer; the hub's own idle (when the
@@ -583,6 +621,7 @@ export default function DisplayScreen() {
               onClosed={() => {
                 /* T244: the student's own Close; the hub's idle follows. */
                 setScene(null);
+                setPickNotice(null);
               }}
             />
           ) : (

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import {
   contractRequiresSignature,
+  displayTypedCardAllowed,
   customerConfirmsSale,
   signupMode,
 } from "@/lib/approval";
@@ -174,6 +175,16 @@ export async function GET(request: Request) {
       return {
         contractRequiresSignature: rule.on,
         contractRequiresSignatureSource: rule.source,
+      };
+    })()),
+    /* T241: whether a student may type a card on the customer screen
+     * (default on). The drawer reads it; the server enforces it itself
+     * in /api/display/present and /api/display/card. */
+    ...(await (async () => {
+      const typed = await displayTypedCardAllowed();
+      return {
+        displayTypedCard: typed.on,
+        displayTypedCardSource: typed.source,
       };
     })()),
     /* T207: whether a completed self-serve sign-up is created

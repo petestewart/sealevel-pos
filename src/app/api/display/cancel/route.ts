@@ -29,7 +29,11 @@ export const dynamic = "force-dynamic";
  *    first (409 `reason: "confirm"` with the question in words) unless
  *    `confirm: true`. Every reset logs the teacher's staff id.
  *
- *  No scope is the cancel every flow has always sent, unchanged. */
+ *  No scope is the cancel every flow has always sent: since T241 it
+ *  names its tab (`presenter`) and is a no-op (`foreign`) against a
+ *  ticket another tab owns, unless that is a live mirror being taken
+ *  over. `scope: "live"` keeps that owner check; `scope: "reset"` does
+ *  not, and tells the owning tab (`ticket-retired`). */
 export async function POST(request: Request) {
   const denied = requireSession(request);
   if (denied) return denied;
@@ -41,31 +45,48 @@ export async function POST(request: Request) {
    * through something. A body is optional; anything unreadable is a
    * plain cancel, because a cancel must never fail for want of JSON. */
   let takenOver = false;
+  let presenter: string | null = null;
+  let requestId: string | undefined;
   let scope: "live" | "reset" | null = null;
   let confirm = false;
   /** T244 review: the scene the teacher was asked about, on "Clear it". */
   let confirmedHeld: string | null = null;
   try {
     const body: unknown = await request.json();
-    if (body !== null && typeof body === "object") {
-      const b = body as Record<string, unknown>;
-      takenOver = b["takenOver"] === true;
-      if (b["scope"] === "live" || b["scope"] === "reset") scope = b["scope"];
-      confirm = b["confirm"] === true;
-      if (typeof b["held"] === "string") confirmedHeld = b["held"];
-    }
+    const b =
+      body !== null && typeof body === "object"
+        ? (body as Record<string, unknown>)
+        : {};
+    takenOver = b["takenOver"] === true;
+    /* T241 second review (N3): the tab this cancel comes from. A ticket
+     * another tab owns is not this cancel's to take down (a no-op that
+     * answers `foreign`), unless it is a live mirror being taken over. */
+    presenter = typeof b["presenter"] === "string" ? b["presenter"] : null;
+    requestId =
+      typeof b["requestId"] === "string" ? (b["requestId"] as string) : undefined;
+    if (b["scope"] === "live" || b["scope"] === "reset") scope = b["scope"];
+    confirm = b["confirm"] === true;
+    if (typeof b["held"] === "string") confirmedHeld = b["held"];
   } catch {
-    /* No body: a plain cancel. */
+    /* No body: a plain cancel, from no tab in particular. */
   }
 
   if (scope === "live") {
+    /* T244 with T241: a live ticket or a summary, and only one THIS tab
+     * owns (or a live ticket nobody has presented for two minutes). */
     const done = await cancelRequest(Date.now(), {
       only: (held) => isQuietScene(held),
+      teacher: {
+        presenter,
+        staleLive: true,
+        ...(requestId !== undefined ? { requestId } : {}),
+      },
     });
     return NextResponse.json({
       ok: true,
       cancelled: done.cancelled,
       held: done.held,
+      ...(done.foreign === true ? { foreign: true } : {}),
     });
   }
 
@@ -76,6 +97,8 @@ export async function POST(request: Request) {
        * if a different one is up now, the teacher is asked again. */
       only: (held) =>
         isQuietScene(held) || (confirm && confirmedHeld !== null && held === confirmedHeld),
+      /* Whoever owns it; the owning tab is told. */
+      reset: true,
     });
     if (!done.cancelled && done.held !== null && !isQuietScene(done.held)) {
       return NextResponse.json(
@@ -99,6 +122,16 @@ export async function POST(request: Request) {
     });
   }
 
-  const { cancelled } = await cancelRequest(Date.now(), { takenOver });
-  return NextResponse.json({ ok: true, cancelled });
+  const { cancelled, foreign } = await cancelRequest(Date.now(), {
+    takenOver,
+    teacher: {
+      presenter,
+      ...(requestId !== undefined ? { requestId } : {}),
+    },
+  });
+  return NextResponse.json({
+    ok: true,
+    cancelled,
+    ...(foreign === true ? { foreign: true } : {}),
+  });
 }

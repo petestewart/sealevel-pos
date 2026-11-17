@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { TicketPayload } from "@/lib/displayticket";
 
+import { cancelOnDisplay, presenterId } from "./presenter";
+
 /**
  * The teacher's half of the ticket scene (T201, Phase 2.5 item 2).
  *
@@ -35,8 +37,10 @@ import type { TicketPayload } from "@/lib/displayticket";
  *   left up. So on mount, on `visibilitychange` to visible, on
  *   `pageshow` and when the display (re)connects, an empty cart (or a
  *   closed sale screen) sends ONE `scope: "live"` cancel, which the
- *   SERVER applies only to a live ticket or a summary, never to a
- *   waiver, a sign-up, a contract or an approval; a cart that is not
+ *   SERVER applies only to a live ticket or a summary this tab owns
+ *   (T241's presenter; or another tab's live ticket gone two minutes
+ *   without a present), never to a waiver, a sign-up, a contract or an
+ *   approval; a cart that is not
  *   empty is presented again so the display matches this screen.
  * - **The student's Close sticks** (T244). The display's Close tells this
  *   tab (`closed` on the events stream), and the SAME ticket is not
@@ -66,8 +70,15 @@ export interface DisplayMirror {
    *  the student can see this. False the moment the cart is cancelled,
    *  the display goes away, or something else takes the screen. */
   showing: boolean;
-  /** Mirror the ticket. Debounced, single-flight, latest wins. */
-  live: (payload: TicketPayload | null) => void;
+  /** Mirror the ticket. Debounced, single-flight, latest wins. T241:
+   *  `clientId` is the ticket's client ("" for a walk-in), which the
+   *  server keeps on its own half of the request so a card the student
+   *  types on this ticket is bound to that client. It never reaches the
+   *  display. */
+  live: (payload: TicketPayload | null, clientId?: string) => void;
+  /** T241: the request id of the live ticket of ours that is up, or
+   *  null. A pick is only acted on for a ticket this screen is showing. */
+  requestId: () => string | null;
   /** Put the post-sale summary up. Sent once, immediately: the hub takes
    *  it back down itself after its few seconds. */
   summary: (payload: TicketPayload) => void;
@@ -76,7 +87,18 @@ export interface DisplayMirror {
   closedByCustomer: boolean;
 }
 
-export function useDisplayMirror(active: boolean): DisplayMirror {
+export function useDisplayMirror(
+  active: boolean,
+  opts: {
+    /** T241: a `tender-pick` event off the teacher's stream this hook
+     *  already holds, handed to the screen's `useTenderPick`. One stream
+     *  rather than another EventSource: the iPad already holds several,
+     *  and a browser on HTTP/1.1 gives one origin six connections. */
+    onPick?: (value: unknown) => void;
+  } = {},
+): DisplayMirror {
+  const onPickRef = useRef(opts.onPick);
+  onPickRef.current = opts.onPick;
   const [connected, setConnected] = useState(false);
   const [showing, setShowing] = useState(false);
   const [closedByCustomer, setClosedByCustomer] = useState(false);
@@ -113,18 +135,44 @@ export function useDisplayMirror(active: boolean): DisplayMirror {
     };
     const on = mark(true);
     const off = mark(false);
+    const pick = (ev: Event) => {
+      try {
+        onPickRef.current?.(JSON.parse((ev as MessageEvent).data));
+      } catch {
+        /* An unreadable pick is no pick. */
+      }
+    };
+    /* T241 second review (N3): another tab took this tab's live ticket
+     * over (Take over, or a stale ticket retired), or since T244 a
+     * teacher's "Reset customer screen" cleared it, so it is no longer
+     * up: the next priced change presents again, and meets "busy" if
+     * something else still holds the screen. */
+    const retired = (ev: Event) => {
+      try {
+        const data = JSON.parse((ev as MessageEvent).data) as {
+          requestId?: unknown;
+        };
+        if (data.requestId !== liveId.current) return;
+        liveId.current = null;
+        up.current = false;
+        setShowing(false);
+      } catch {
+        /* An unreadable event changes nothing. */
+      }
+    };
     /* T244: the student's Close. Only a live ticket of OURS counts (the
-     * request id the last present answered), and the cart it showed is
-     * remembered so the mirror does not put it straight back. */
-    const closed = (ev: MessageEvent) => {
+     * request id the last live present answered), and the cart it showed
+     * is remembered so the mirror does not put it straight back. */
+    const closed = (ev: Event) => {
       let data: { requestId?: unknown; mode?: unknown } = {};
       try {
-        data = JSON.parse(ev.data);
+        data = JSON.parse((ev as MessageEvent).data);
       } catch {
         return;
       }
       if (data.mode !== "live") return;
-      if (!up.current || data.requestId !== lastRequestId.current) return;
+      if (!up.current || data.requestId !== liveId.current) return;
+      liveId.current = null;
       up.current = false;
       closedKey.current = lastKey.current;
       setShowing(false);
@@ -132,10 +180,14 @@ export function useDisplayMirror(active: boolean): DisplayMirror {
     };
     source.addEventListener("connected", on);
     source.addEventListener("disconnected", off);
+    source.addEventListener("tender-pick", pick);
+    source.addEventListener("ticket-retired", retired);
     source.addEventListener("closed", closed);
     return () => {
       source?.removeEventListener("connected", on);
       source?.removeEventListener("disconnected", off);
+      source?.removeEventListener("tender-pick", pick);
+      source?.removeEventListener("ticket-retired", retired);
       source?.removeEventListener("closed", closed);
       source?.close();
     };
@@ -143,17 +195,21 @@ export function useDisplayMirror(active: boolean): DisplayMirror {
 
   /** The present in flight, and the payload waiting behind it. */
   const busy = useRef(false);
-  const queued = useRef<TicketPayload | null>(null);
+  const queued = useRef<{ payload: TicketPayload; clientId: string } | null>(
+    null,
+  );
+  /** T241: the id the last successful present answered with. */
+  const liveId = useRef<string | null>(null);
   /** Whether a live ticket of ours is up, so the cart emptying cancels
    *  it rather than leaving the last line on a student's screen. */
   const up = useRef(false);
-  /** T244: the request id and closure key of the last live present that
-   *  landed, the key of a ticket the student closed, and the newest
+  /** T244: the closure key of the last live present that landed, the key of a ticket the student closed, and the newest
    *  payload the sale screen asked for (null: empty cart or closed). */
-  const lastRequestId = useRef<string | null>(null);
   const lastKey = useRef<string | null>(null);
   const closedKey = useRef<string | null>(null);
-  const latest = useRef<TicketPayload | null>(null);
+  const latest = useRef<{ payload: TicketPayload; clientId: string } | null>(
+    null,
+  );
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const alive = useRef(true);
   useEffect(() => {
@@ -164,23 +220,20 @@ export function useDisplayMirror(active: boolean): DisplayMirror {
     };
   }, []);
 
-  const post = useCallback(async (payload: TicketPayload | null) => {
+  const post = useCallback(async (payload: TicketPayload | null, clientId = "") => {
     busy.current = true;
     try {
       if (payload === null) {
         up.current = false;
+        liveId.current = null;
         if (alive.current) setShowing(false);
-        /* T244 review: scoped, so the mirror can only ever take down a
-         * live ticket or a summary. Without a per-tab owner (not on this
-         * branch) another iPad's reconcile can leave `up` stale here, and
-         * an unscoped cancel would then wipe a waiver or sign-up a student
-         * is in the middle of. Approvals end through useSaleApproval's
-         * own cancel. */
-        await fetch("/api/display/cancel", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ scope: "live" }),
-        });
+        /* T244 review, kept with T241's owner: scoped AND naming this
+         * tab, so the mirror can only ever take down a live ticket or a
+         * summary that this tab put up. A stale `up` (another iPad's
+         * Reset or retirement) can then never wipe a waiver, a sign-up
+         * or another tab's ticket. Approvals end through
+         * useSaleApproval's own cancel. */
+        await cancelOnDisplay({ scope: "live" });
         return;
       }
       /* T244: the student closed this very ticket; nothing changed since. */
@@ -200,14 +253,20 @@ export function useDisplayMirror(active: boolean): DisplayMirror {
           ...(payload.clientFirstName
             ? { clientFirstName: payload.clientFirstName }
             : {}),
+          ...(payload.mode === "live" ? { clientId } : {}),
+          /* T241 review: this tab, so the hub keeps two iPads' tickets
+             (and a student's pick and card) apart. */
+          presenter: presenterId(),
         }),
       });
       const body = await res.json().catch(() => null);
       if (res.ok) {
         up.current = payload.mode === "live";
+        liveId.current =
+          payload.mode === "live" && typeof body?.requestId === "string"
+            ? body.requestId
+            : null;
         if (payload.mode === "live") {
-          lastRequestId.current =
-            typeof body?.requestId === "string" ? body.requestId : null;
           lastKey.current = closureKey(payload);
           /* T244 review: a different cart is now showing, so a Close
            * remembered for an earlier one (e.g. one that raced this
@@ -226,12 +285,14 @@ export function useDisplayMirror(active: boolean): DisplayMirror {
        * at the counter and a teacher must not be told about a decision
        * they did not make. */
       up.current = false;
+      liveId.current = null;
       if (alive.current) setShowing(false);
       console.debug(
         `[display] ticket not shown (${body?.reason ?? res.status})`,
       );
     } catch {
       up.current = false;
+      liveId.current = null;
       if (alive.current) setShowing(false);
     } finally {
       busy.current = false;
@@ -240,13 +301,13 @@ export function useDisplayMirror(active: boolean): DisplayMirror {
        * the ticket as it stands, not every tap that built it. */
       const next = queued.current;
       queued.current = null;
-      if (next !== null) void post(next);
+      if (next !== null) void post(next.payload, next.clientId);
     }
   }, []);
 
   const live = useCallback(
-    (payload: TicketPayload | null) => {
-      latest.current = payload;
+    (payload: TicketPayload | null, clientId = "") => {
+      latest.current = payload === null ? null : { payload, clientId };
       if (payload === null) {
         /* T244: an empty cart forgets the student's Close, so the next
          * cart is presented whatever it holds. */
@@ -287,10 +348,10 @@ export function useDisplayMirror(active: boolean): DisplayMirror {
       timer.current = setTimeout(() => {
         timer.current = null;
         if (busy.current) {
-          queued.current = payload;
+          queued.current = { payload, clientId };
           return;
         }
-        void post(payload);
+        void post(payload, clientId);
       }, PRESENT_DEBOUNCE_MS);
     },
     [active, connected, post],
@@ -305,10 +366,11 @@ export function useDisplayMirror(active: boolean): DisplayMirror {
        * `up` goes false SYNCHRONOUSLY so the cart-clearing render that
        * follows this tap finds no live ticket of ours to take down. */
       up.current = false;
+      liveId.current = null;
       if (timer.current !== null) clearTimeout(timer.current);
       timer.current = null;
       if (busy.current) {
-        queued.current = payload;
+        queued.current = { payload, clientId: "" };
         return;
       }
       void post(payload);
@@ -316,11 +378,34 @@ export function useDisplayMirror(active: boolean): DisplayMirror {
     [connected, post],
   );
 
-  /* T244: reconcile on load and on return. One request either way: an
-   * empty cart (or a closed sale screen) asks the SERVER to take down a
-   * live ticket or a summary and nothing else; a cart that is not empty
-   * is presented again through the normal path, so the display matches
-   * this screen (busy, closed and unpaired are all still silent). */
+  /* T241 second review (N2): a tab that goes away (closed, reloaded,
+   * evicted) takes its own live ticket off the student's screen on the
+   * way out, best effort: a keepalive cancel naming this tab and that
+   * request, so it can never take down another tab's. A reload comes
+   * back as the same presenter (sessionStorage) and simply presents
+   * again. */
+  useEffect(() => {
+    const leave = () => {
+      const rid = liveId.current;
+      if (rid === null) return;
+      liveId.current = null;
+      up.current = false;
+      void cancelOnDisplay({ requestId: rid, keepalive: true }).catch(
+        () => undefined,
+      );
+    };
+    window.addEventListener("pagehide", leave);
+    return () => window.removeEventListener("pagehide", leave);
+  }, []);
+
+  /* T244: reconcile on load and on return, because pagehide does not
+   * always fire (iPadOS discards a backgrounded tab without one). One
+   * request either way: an empty cart (or a closed sale screen) asks the
+   * SERVER to take down a live ticket or a summary that THIS tab owns
+   * (or one no tab has presented for two minutes, T241's own staleness
+   * rule) and nothing else; a cart that is not empty is presented again
+   * through the normal path, so the display matches this screen (busy,
+   * closed and unpaired are all still silent). */
   const liveRef = useRef(live);
   liveRef.current = live;
   /** When the last empty-cart reconcile went out: mount, `pageshow` and
@@ -328,8 +413,8 @@ export function useDisplayMirror(active: boolean): DisplayMirror {
    *  one cancel answers all three. */
   const lastReconcile = useRef(0);
   const reconcile = useCallback(() => {
-    const payload = latest.current;
-    if (payload === null) {
+    const next = latest.current;
+    if (next === null) {
       const now = Date.now();
       if (now - lastReconcile.current < 2_000) return;
       lastReconcile.current = now;
@@ -337,15 +422,12 @@ export function useDisplayMirror(active: boolean): DisplayMirror {
       timer.current = null;
       queued.current = null;
       up.current = false;
+      liveId.current = null;
       if (alive.current) setShowing(false);
-      void fetch("/api/display/cancel", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ scope: "live" }),
-      }).catch(() => undefined);
+      void cancelOnDisplay({ scope: "live" }).catch(() => undefined);
       return;
     }
-    liveRef.current(payload);
+    liveRef.current(next.payload, next.clientId);
   }, []);
 
   useEffect(() => {
@@ -368,5 +450,7 @@ export function useDisplayMirror(active: boolean): DisplayMirror {
     if (connected) reconcile();
   }, [connected, reconcile]);
 
-  return { connected, showing, live, summary, closedByCustomer };
+  const requestId = useCallback(() => liveId.current, []);
+
+  return { connected, showing, live, summary, requestId, closedByCustomer };
 }

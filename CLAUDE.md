@@ -40,12 +40,36 @@ own reason. Driven live against site 471 on 2026-11-14 (Cart screen, dummy
 client John NewGuy): 414, 478 and 581 greyed with Mindbody's reasons, a tap
 put nothing on the ticket, Drop In still priced.
 
+**T238 (2026-11-15): the $10 card minimum is retired** (Pete: "that is an
+old policy! ... change it so any amount can be charged"). A stored card, a
+typed card, a split's card leg and each cart of a typed-card ticket are
+charged exactly what they pay in ONE `checkoutshoppingcart`; no card sale
+buys account credit, and only a card charge of nothing is refused
+(`cardChargeable` in `src/lib/sale.ts`). The roster's pay dialog still
+defaults to a balance that covers the total, with the card offered beside
+it, and since T239 the Cart screen starts the same way: one account-credit
+line for the whole total, put there only while the teacher has touched no
+tender, removable with its X and replaced by the first other tender tapped.
+Since T240 a discounted total gets it too (only a full comp leaves it off),
+it is never judged on a balance being re-read (a refetch in flight freezes
+it), and a refused charge's reported balance is keyed to its client, cleared
+with the tender, and loses to any profile read begun after it.
+`purchaseCredit` is kept, unreached, for Phase 4's gift card (PLAN
+T232). The design doc's "$10 card minimum" section is reasoning of record
+only. **A service charge on card transactions under $10 is planned, not
+built** (Pete, 2026-11-15; PLAN P15): until it is, a card is charged
+exactly the sale.
+
 **Next (planned 2026-11-15, not started): Phase 4, the studio's own Stripe
 card reader**, so a student can pay by chip, tap, Apple Pay or Google Pay
 at the counter (teachers report lost sales without it). Work items T222 to
 T237 in `docs/PLAN.md`; T222 to T227 reach a working flow on Stripe's
 simulated reader before hardware arrives. Blocked on Pete for the Stripe
 account (P6) and the Mindbody custom payment method (P7).
+
+**T241 (2026-11-15): the student chooses how to pay on the customer
+iPad**, and can type their own card there (Pete: "a student shouldnt have
+to hand them their card"). See Customer display below.
 
 **`docs/PLAN.md` is the execution plan**: ordered work items, what each one is
 done when, the probes still to run, and the questions blocked on Pete. Start
@@ -494,6 +518,24 @@ answer could be the LOOSER one (a stored `review` flipping to
 asked for), and it falls to the environment only when this process has
 never had an answer.
 
+T241's "students can type a card on the customer screen" sits beside
+them and, like T207's, is NOT a rail exception (Pete, 2026-11-17: "i
+think we can keep that for now and remove it once we actually have
+stripe ... let's hide it behind a flag so i can turn it off if it
+becomes annoying"). `display_typed_card` in `app_settings`, DEFAULT ON,
+with `POS_DISPLAY_TYPED_CARD` as the no-database fallback (only `false`
+or `0` turn it off), read and stored exactly like T205's
+(`displayTypedCardAllowed` in `src/lib/approval.ts`, `PUT
+/api/admin/display-typed-card`, a 64px admin control, the log naming
+the staff id). Off, the SERVER removes a way to pay: "A different card"
+is stripped from every offer `/api/display/present` stores,
+`/api/display/card` refuses with nothing held, and switching it off
+drops every card already held (each teacher's line then meets "no
+longer held" at Finalize, as for any released card). On, a student's
+card still reaches Mindbody only through the teacher's own checkout.
+The teacher's own typed-card modal is unaffected. It is to be REMOVED,
+with the feature, once Phase 4's reader exists (PLAN, Phase 4).
+
 ## Customer display (T200 to T205, T207, T208; Phase 2.5)
 
 A second iPad on the counter, facing the student, at `/display`. Design:
@@ -515,7 +557,13 @@ imports `mindbody()`. A student's answer is a stored result on a
 `display_requests` row; the write happens afterwards from the TEACHER's
 iPad, under the teacher's token, through a write route that already
 exists, which is what keeps dry run, the write guard, T49 attribution
-and T50's refusal applying unchanged.
+and T50's refusal applying unchanged. **Card data has exactly one path
+through it** (T241): a card the student types on the display travels
+display -> this server's MEMORY (`src/lib/displaycard.ts`, on that display
+request, for one charge) -> the teacher's `/api/checkout`, and nowhere
+else: never a table (not `display_requests`, not any payload or result
+column), never a log line beyond a last four, never the teacher's
+browser, never back to the display.
 
 **A live ticket is the one scene that is REPLACED in place** (T201,
 Phase 2.5 item 2). The sale screen mirrors the priced cart as it is
@@ -534,30 +582,54 @@ rebuilds the payload field by field so no client, product or pricing
 option id and no card detail beyond the tender's WORD can reach a screen
 a student is holding.
 
+**Every ticket scene names the payment method, in words** (T240, Pete:
+"we should always list the payment method on the custmer ipad"): the
+live mirror once a tender is on the ticket, the approval and the
+summary. "Paying by Account balance", "Paying by Card", and on a split
+each leg with its amount ("Account balance $15.00, Card $10.00");
+"Paid $25.00 by Card" after. The words are a FIXED list, `TENDER_WORDS`
+in `src/lib/displayticket.ts` (Account balance, Card, Cash, Gift card,
+No charge), and `readTicketPayload` refuses any other, so the payload's
+`tenders` cannot carry a card's digits; **a card's last four is no
+longer shown there**, the summary included ("Card ending 1234" before
+T240). The Cart screen reports its tender up to the mirror
+(`onTenderChange`); both charge paths put it on the approval.
+
 **A stuck customer screen clears itself, and can be cleared** (T244,
 hotfix, Pete: "when i switched to another app and went back to this one,
 it is stuck on a sales screen even tho the cart is empty and no client is
-attached"; he had to unpair and re-pair). iPadOS reloads a discarded tab
-with an empty cart and no memory of the ticket it left up, so
-`useDisplayMirror` now reconciles on mount, on `visibilitychange` to
-visible, on `pageshow` and on the display (re)connecting: an empty cart
-sends ONE `POST /api/display/cancel` with `scope: "live"`, which the
-SERVER applies only to a live ticket or a summary (never a waiver,
-sign-up, contract or approval; a no-op answering `held`), and a cart that
-is not empty is presented again. **"Reset customer screen"** is reached
-on the deployed counter by tapping the customer display mark under the
-header (a 64px row; "Options" opens the menu), and in the drawer beside
-Pair and Unpair (`src/app/ResetDisplay.tsx`, `scope: "reset"`): a live
-ticket or a summary goes at once, anything a student is in asks once,
-naming it, and the log names the staff id. **The student can Close** a
-live ticket or a summary (`POST /api/display/close`, display cookie);
-the teacher's tab hears `closed`, shows "The customer closed the ticket
-on their screen." and does not present that SAME cart again until it
-changes (`closedKey`: lines and name, never a price). No Mindbody call
-anywhere in it. Known limit: the deployed hub has no per-tab owner, so a
-second teacher iPad reloading with an empty cart also takes down the
-first iPad's live ticket, which that iPad puts back on its next priced
-change or its own return.
+attached"; he had to unpair and re-pair). iPadOS can discard a
+backgrounded tab with no `pagehide` and reload it with an empty cart and
+no memory of the ticket it left up, so `useDisplayMirror` reconciles on
+mount, on `visibilitychange` to visible, on `pageshow` and on the
+display (re)connecting: an empty cart sends ONE `POST
+/api/display/cancel` with `scope: "live"` and this tab's presenter
+(`cancelOnDisplay`), which the SERVER applies only to a live ticket or a
+summary (never a waiver, sign-up, contract or approval; a no-op
+answering `held`) AND only to one this tab owns, under T241's owner
+rule below; the one exception is another tab's LIVE ticket gone two
+minutes without a present (T241's own staleness rule, for a tab killed
+with its sessionStorage), which is retired and its owner told
+(`ticket-retired`). A cart that is not empty is presented again. The
+mirror's own cancel on an emptied cart is `scope: "live"` too.
+**"Reset customer screen"** is reached on the deployed counter by
+tapping the customer display mark under the header (a 64px row;
+"Options" opens the menu), and in the drawer beside Pair and Unpair
+(`src/app/ResetDisplay.tsx`, `scope: "reset"`): it clears whatever is up
+WHOEVER owns it, a live ticket or a summary at once, anything a student
+is in only after asking once, naming it (the "Clear it" echoes the scene
+it was asked about, and the server asks again if a different one is up
+now); a ticket's owning tab is told (`ticket-retired`), and the log
+names the staff id. **The student can Close** a live ticket or a summary
+(`POST /api/display/close`, display cookie; drawn on the ticket itself,
+never inside T241's Change list or card form, and its cancel releases a
+card typed on that ticket as any cancel does); the owning tab hears
+`closed`, shows "The customer closed the ticket on their screen." and
+does not present that SAME cart again until it changes (`closedKey`:
+lines and name, never a price). Since T247 a refusal (a student's "Not
+now" or Cancel) also sends the display back to idle itself, which is
+what unsticks a self-serve sign-up nobody is waiting on. No Mindbody
+call anywhere in it.
 
 **Picking up a new deploy** (T246, Pete: "could we add a reload button? i
 need it to run the new deployed versions as theyre deployed"). The server
@@ -610,10 +682,20 @@ each line's type, id, quantity, unit price and T90 recipient, the gift
 card lines, the discount; sorted, so order is not a change). Tax and the
 total are NOT in it, because the checkout body never carries them, and
 T75's rehearsal already refuses a total that moved. The browser never
-sends a hash. The approval is spent only AFTER the charge resolved
+sends a hash. **Since T240 the TENDER is in it too, whenever the approval
+named one**: both charge paths send their `method` or `split.legs`
+(method and amount, never a card or gift card number) in the presented
+cart, `/api/display/present` rewrites the scene's tender words from that
+same tender and hashes it with `{ tender: true }` (a stored and a typed
+card fold to one word, as the student reads them), recording
+`tenderBound` on the private half, and `/api/checkout` hashes its own
+body the same way, so a tender switched after the student approved is
+refused, nothing charged. An approval presented with no tender (a page
+loaded before T240) hashes exactly as before and binds no tender, because
+it showed none. The approval is spent only AFTER the charge resolved
 (`recordApproval`, built above every write path and called from each:
 `recordDiscount` on the single-cart paths, the gift card and T90
-tickets directly, the sold-nothing answer and the card-credit seam;
+tickets directly, and the sold-nothing answer;
 claimed through T202's `beginFinalisation`), so a refused charge can be
 retried on the same cart and a spent one is refused twice over. The D1 override is
 T48's PIN with its own purpose, spent once, and filed on the client the
@@ -654,6 +736,128 @@ customer's tap still charges. Take over's three second apology is
 cancellable, so Cancel during it puts no ticket up. "Check in free
 (comp)" is not a charge and presents nothing. A THIRD charge path added
 later belongs in that hook on the day it is written, not after a drive.
+**The tender cannot move under an approval** (T240): the hook's `pending`
+is true from the primary tap, the present's round trip INCLUDED (T238's
+review found the roster dialog's "Use the card instead" live for exactly
+that round trip), until the approval is answered, and both screens lock
+their tender controls on it: the Cart screen's tiles, keypad square,
+line amounts and Xs, and the roster dialog's switch. A tender that moves
+by itself under one (a credit line dropped by a refetch, the card lookup
+answering) ends it with one sentence, the way a cart edit does, and
+`endWait` now also ends a present still in flight.
+
+**The student chooses how to pay** (T241, Pete: "would be better to
+surface a choice to the customer for the payment method if they want to
+switch it", and it must not depend on the approval setting). A live or
+approve ticket paid by ONE method carries `choices`, keys from the fixed
+`TENDER_CHOICES` (credit, storedcard, cash, giftcard, typedcard), which
+the TEACHER's iPad builds from the very rule its tiles are greyed by
+(`addReason(source, true)`, a fresh tender for the whole total) less the
+method already chosen; the account is offered only when the balance
+covers the total and shows it ("Account balance ($100.00 available)"),
+the house client gets neither the account nor the card on file, and the
+offer is withdrawn from the live mirror the moment a charge begins. The
+display's 64px Change opens the list; `POST /api/display/choose` reads a
+request id and ONE key and refuses a key not on the offer the SERVER
+stored (one offer, one pick: the next present reopens it). The teacher's
+iPad hears it through ONE piece, `src/app/useTenderPick.ts`, fed by the
+`tender-pick` event on the stream the live mirror already holds and by a
+`pick` on the approval poll (no new EventSource: the iPad holds several
+and HTTP/1.1 allows six), acted on once per pick id and only for a
+ticket that screen is showing. It says one sentence ("Taylor chose
+Cash. Enter what they hand you.") and REPLACES the tender, which counts
+as touched: Account balance or Card on file, one line for the whole
+total; Cash, a cash line with the keypad open; Gift card, the gift card
+entry. **A pick never charges**: refused with the reason and nothing
+changed during a charge or after the sale resolved. Under an approval, a
+tender ready with no hands is asked again IN PLACE (`askAgain`, a present
+with `replaces` naming the pending approve ticket, same request id, new
+cart sha, never a charge, nothing with the setting off), and Cash or a
+gift card ENDS the approval for Finalize to ask again. The roster's pay
+dialog offers only the other of Account balance and Card on file, and
+only on the approval: it has no live mirror.
+
+**"A different card" is typed by the STUDENT on the display** (T241,
+Pete: "i dont want teachers to have to do that. a student shouldnt have
+to hand them their card."), while the studio's `display_typed_card`
+setting is on (default; see Settings tab: off, it is never offered and
+`/api/display/card` refuses). `src/app/display/CardForm.tsx` is T93's
+fields and validator (`cc-number` kept for Scan Credit Card; the display
+runs `useVisualViewport`), posting to `POST /api/display/card`, which
+validates with `parseTypedCard` and holds it in `src/lib/displaycard.ts`:
+memory only. **It belongs to the client, the teacher and the TAB whose
+ticket it was typed on** (T241 review): every ticket present carries a
+per-tab presenter id (`src/app/presenter.ts`, kept in sessionStorage so
+a reload or a tab eviction is still the same owner) on the request's
+server-only half beside the staff id. Another tab's present no longer
+takes over a live ticket in place (it is "busy"). A ticket that has gone
+two minutes without a present is retired, which is kept for an iPad that
+died without saying so; the owner is told (`ticket-retired`). A pick
+goes only to the tab whose ticket it was. The checkout's claim checks
+the client, the staff session, the presenter and the last four the
+teacher's line shows ("for a different sale" otherwise). **Every
+teacher-side cancel names its tab** (`cancelOnDisplay`), and the hub
+refuses, as a no-op, a cancel of a ticket another tab owns, except a
+live mirror on an explicit Take over (an approval is never taken) or a
+stale live ticket on T244's reconcile; a teacher's deliberate "Reset
+customer screen" (T244) is the one cancel that takes anything, after
+asking over a student's scene, and tells the owner. A
+tab leaving (pagehide) cancels its own live ticket AND its own
+outstanding approval with a keepalive request naming it. A PIN-approved
+checkout takes down only its own tab's approval (the checkout body
+names the presenter). A present that meets ANOTHER iPad's approval is
+"busy" with `foreignApproval`, and the teacher reads "The customer
+screen is showing another sale's approval." with Wait and Approve sale
+and no Take over; an approval its owner has not polled for a minute is
+an orphan, and the next present retires it. It is
+**released** on the approval's 30 minutes (a timer sweeps, so a closed
+tab cannot leave it in memory), on cancel, on the student's own Cancel
+of the approval, on expiry, unpair, a present that changes the lines,
+name or client, and the teacher's `/api/display/card/release` when the
+line leaves the tender, or the teacher's screen refuses the student's
+card pick; a claimed card is never replaced, evicted or dropped from
+under its checkout, and a drop while claimed marks it withdrawn so it
+is never handed back. The teacher hears the last four only;
+`/api/checkout` takes `displayCard: {requestId, presenter}` on the single
+`typedcard` shape BELOW T113's gate, claims it for one checkout, charges
+it as T93's `typedCard` under the teacher's token (dry run, write guard,
+T75, T103, T240's binding unchanged; the word is still "Card"), and
+**spends it on every answer that asked Mindbody to write anything**
+(`src/lib/mbtrace.ts` counts non-GET calls inside the checkout; a
+suppressed write counts), keeping it only for a refusal that provably
+asked nothing. An answer that spent it says `displayCardSpent`, and a
+refused claim is a 409 `reason: "displaycard"` with a `card` code. The
+server REMEMBERS a spent card per request (third review), so a later
+claim answers `spent`, and the browser treats `spent` and `charging` as
+UNKNOWN outcomes, never "nothing was charged". A claim also closes the
+ticket's offer: no pick and no new card are taken until the teacher's
+iPad offers again, which it does only once the result is settled. **"Ask
+them to enter it again" is shown ONLY after a definite outcome that
+charged nothing**: a refused claim (other than another checkout holding
+it), a 4xx refusal, or a whole-ticket suppression. After an outcome that
+may have moved money (no readable answer, a 5xx, ambiguous, sold
+nothing, partial, a part-suppressed T90 ticket) the line comes off
+without a word and no way to pay is offered on the display until the
+teacher has dismissed that result. **While an unknown outcome is
+showing (an ambiguous answer, or that hold) the Cart screen's Finalize
+and every tender control are locked, for EVERY tender, until that
+result's own Understood** (third review: a tile tap, a client change or
+a new ticket does not dismiss it), the fetch itself failing is handled
+the same way, and the outcome is kept in sessionStorage (no card data:
+that the last charge needs checking, when, and the request id) so a
+reload shows it again with the display's choices held. "A different card" stays offered
+while a typed card is the tender, and choices are offered on an empty
+tender too. For 1.5 seconds after a pick moves the tender, the charge
+control ignores taps with the sentence highlighted (`settling` on
+`useTenderPick`), so a teacher never charges a method they have not
+seen. An approve ticket's Approve names the scene's version, so a tap
+on a ticket since replaced in place is refused. "Save this card for next
+time", unticked, is T93's keep on file, offered only with a client
+attached; the form's name and postal fields have autocomplete off,
+and **Safari AutoFill must be switched off on the display iPad
+(Settings > Safari > AutoFill)**, which is the only full answer to one
+student's details being offered to the next. The teacher's own
+typed-card modal is unchanged.
 
 **A student can sign themselves up** (T204, Phase 2.5 item 5). The idle
 screen's "New here? Sign up" calls `POST /api/display/start`, the one
@@ -1288,11 +1492,12 @@ while `git clone` works, so clone the repo rather than fetching files.
   file and check them in together, keeping free entry as the deliberate
   exception. See the phasing section of the design doc.
 
-- **The live charge has never fully settled.** The probe reached payment
-  handling and was refused with "Credit card is expired", which proves
-  authorization but not that a charge reaches Stripe. Re-run
-  `mindbody:probe-payments --live` in ai-manager against a client with a
-  current card to close this.
+- **Card charges are live-proven by use, not by a recorded probe** (Pete,
+  2026-11-15: "weve been using the app for months", and typed cards have
+  been charged in testing). The note that stood here, that a live charge
+  had never settled because the 2026-08-26 probe met an expired card, was
+  stale. What is still unseen is only what T238 changed: a card charge
+  UNDER $10 as one checkout.
 - **Teacher attribution is unverified live (T49).** A comp still takes
   the teacher's own PIN in the dialog, every time (T48: stored hashed and
   unique in `teacher_pins`, enrolled through a one-time Mindbody sign-in

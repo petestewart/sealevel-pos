@@ -23,7 +23,7 @@ Where the first draft's argument was wrong, it is recorded as wrong rather
 than quietly deleted.
 
 Read alongside `front-desk-pos.md` (the speed argument, the phasing, the
-$10 card minimum) and TICKETS T23, T27, T31, T33 and above all **T35**,
+$10 card minimum, retired by T238) and TICKETS T23, T27, T31, T33 and above all **T35**,
 whose tender model is the interaction this plan must preserve intact. Where
 this document and T35 disagree, T35 wins and this document is wrong.
 
