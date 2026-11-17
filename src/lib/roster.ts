@@ -58,6 +58,14 @@ export interface RosterEntry {
   paid: boolean;
   checkedIn: boolean;
   /**
+   * T245: the studio marked this visit a late cancel (`Visit.LateCancelled`
+   * on `/class/classvisits`, class.yml). Mindbody keeps such a visit ON the
+   * class, signed out, with its pass still attached (Andie's visit 1305761,
+   * read live 2026-11-17), so the row stays on the roster, greyed, and is
+   * not counted as booked. A missing field reads as false.
+   */
+  lateCancelled: boolean;
+  /**
    * Liability waiver state, from `Liability.IsReleased` on the client
    * record (the visit payload does not carry it). `true` means released,
    * `false` means Mindbody says there is no released waiver and check-in
@@ -422,6 +430,7 @@ function mapVisits(visits: any[]): RosterEntry[] {
        */
       paid: Boolean(service?.Name ?? v.ServiceName),
       checkedIn: Boolean(v.SignedIn),
+      lateCancelled: v.LateCancelled === true,
       /** Filled by classRoster's batched client lookup; a bare visit list
        *  knows nothing about waivers. */
       waiverSigned: null,
@@ -1173,6 +1182,58 @@ export async function setVisitService(
       typeof applied === "number" && Number.isInteger(applied) && applied > 0
         ? applied
         : null,
+  };
+}
+
+/**
+ * T245: mark a visit as a late cancel, or take the mark off. This is the
+ * studio's own "Late Cancel" in Mindbody's UI (Pete: "all we do is mark
+ * them Late Cancel in the Mindbody UI ... and no we do not take a class
+ * away, that is all we do"), and what Mindbody holds for one is the visit
+ * still on the class with `LateCancelled: true`, signed out, its pass
+ * still attached (read live on site 471, 2026-11-17).
+ *
+ * `POST /client/updateclientvisit` with `{VisitId, Execute}` and NOTHING
+ * else (client.yml UpdateClientVisitRequest: "Possible values are:
+ * Cancel, Latecancel, Unlatecancel"). Not `SignedIn`, not
+ * `ClientServiceId`, not `SendEmail` (whose default, false, is what we
+ * want): each field this operation receives it also SETS, which is
+ * setVisitService's lesson. And deliberately NOT
+ * `/class/removeclientfromclass` with `LateCancel: true`, which removes
+ * the booking: that is not what the studio does.
+ *
+ * Dry run and the write guard apply through mindbody() with the client
+ * id. `lateCancelled` is what the answer's Visit says, when it says.
+ */
+export async function setLateCancelled(
+  visitId: number,
+  lateCancel: boolean,
+  /** For POS_WRITE_CLIENT_IDS only; never merged into the payload. */
+  clientId?: string,
+  actor?: Actor | null,
+): Promise<{
+  suppressed: "dry-run" | "write-guard" | null;
+  /** `Visit.LateCancelled` on UpdateClientVisitResponse, or null when
+   *  the answer did not carry it. */
+  lateCancelled: boolean | null;
+}> {
+  const res = await mindbody("/client/updateclientvisit", {
+    method: "POST",
+    body: {
+      VisitId: visitId,
+      Execute: lateCancel ? "Latecancel" : "Unlatecancel",
+    },
+    clientId,
+    ...(actor ? { actor } : {}),
+  });
+  if (res?.DryRun) return { suppressed: "dry-run", lateCancelled: null };
+  if (res?.WriteSuppressed) {
+    return { suppressed: "write-guard", lateCancelled: null };
+  }
+  const flag = res?.Visit?.LateCancelled;
+  return {
+    suppressed: null,
+    lateCancelled: typeof flag === "boolean" ? flag : null,
   };
 }
 

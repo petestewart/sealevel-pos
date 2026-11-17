@@ -2643,6 +2643,110 @@ button.chip.action:active {
   color: var(--stop);
 }
 
+/* T245: the roster trash's two choices, stacked, each a full-width 64px
+ * button with its consequence under it. "Cancel booking" keeps the
+ * destructive stop fill the old Remove had (text --bg, as .modal-confirm);
+ * "Late cancel" only marks the visit, so it is the quiet pair. */
+.cancel-choices {
+  display: grid;
+  gap: 16px;
+  margin: 0 0 16px;
+}
+
+.cancel-choice {
+  display: grid;
+  gap: 6px;
+}
+
+.cancel-choice-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  width: 100%;
+  min-height: 64px;
+  padding: 0 20px;
+  border: 1px solid transparent;
+  border-radius: 0;
+  font-size: 17px;
+  font-weight: 800;
+  text-align: left;
+}
+
+.cancel-choice-btn.remove {
+  background: var(--stop);
+  color: var(--bg);
+  border-color: var(--stop);
+}
+
+.cancel-choice-btn.late {
+  background: var(--surface-2);
+  color: var(--ink);
+  border-color: var(--rule);
+  border-width: 2px;
+}
+
+.cancel-choice-btn:hover:not(:disabled),
+.cancel-choice-btn:active:not(:disabled) {
+  filter: brightness(0.92);
+}
+
+.cancel-choice-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.cancel-choice-line {
+  margin: 0;
+  font-size: 16px;
+  color: var(--muted);
+}
+
+/* T245: a late-cancelled row. The visit stays on the class in Mindbody,
+ * so it stays here, greyed: the name drops to --muted and every cell but
+ * the chip and the actions fades (opacity, so the badges and the pass
+ * line fade in both palettes without a colour of their own), and the
+ * chip reads "late cancel" in the muted pair (a state, not a control,
+ * like the future-day chip). */
+.rrow.late .name-text {
+  color: var(--muted);
+}
+
+.rrow.late > :not(.cell-chip):not(.cell-actions) {
+  opacity: 0.55;
+}
+
+.chip.late {
+  background: var(--surface-2);
+  color: var(--muted);
+  border-color: var(--line);
+  cursor: default;
+}
+
+/* The late row's quiet Undo: text, in the trash's slot, as wide as the
+ * actions column leaves it (188px less three 44px icons and the gaps)
+ * and the 64px floor tall. */
+.late-undo {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 50px;
+  min-height: 64px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--accent);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.late-undo:hover:not(:disabled),
+.late-undo:active:not(:disabled) {
+  background: var(--accent-bg);
+}
+
 /* A suppression / failure notice inside a modal (reuses the dropdown's
  * amber pass-note pairing) needs its own bottom gap there. */
 .modal .modal-note-gap {
