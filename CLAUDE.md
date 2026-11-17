@@ -71,6 +71,16 @@ account (P6) and the Mindbody custom payment method (P7).
 iPad**, and can type their own card there (Pete: "a student shouldnt have
 to hand them their card"). See Customer display below.
 
+**T250 (2026-11-17): the roster's "Pay and check in" can charge the
+account past its balance** (Pete: "if the client has no account balance,
+the teacher needs the ability to override and give them a negative
+balance"). T94's overdraft, in that dialog: a "Charge to account" block
+with "Balance after: -$X.XX" and a 64px control that opens the shared PIN
+pad with the `overdraft` purpose; a match arms it for THAT ticket (client,
+pass, code, total) and the charge sends `method: "credit"` with
+`overdraftToken`. No server change. **T252: that dialog now keeps a
+charge that may have moved money** (see the T249 section).
+
 **T242 (2026-11-17): the unpaid row's "Pay and check in" opens on the
 student's OWN passes** when they hold any that may pay for this visit
 (Pete: "there should be an option to use one of their exisiting passes
@@ -310,8 +320,28 @@ same cards again). Two things now stand in the way, either enough alone:
   acknowledged). The nav bar's Cart stays live: it is how a teacher
   reaches Empty cart, which is what releases a part-sold ticket.
 
-Nothing about what the server charges changed. The record covers the
-Cart screen only; the roster's pay dialog keeps its own outcome.
+Nothing about what the server charges changed.
+
+**The roster's "Pay and check in" holds on the same rule** (T252, a
+review of PR #16: Close wiped the dialog's outcome and reopening the row
+offered a fresh Charge after an unknown answer, and the Cart screen's
+record was read only when that screen mounted). `src/app/heldcharge.ts`
+holds both records' readers. The dialog writes its own,
+`pos_roster_uncertain_charge`, one per client and no card data: at the
+Charge TAP as `charging`, removed on a definite answer (refused,
+suppressed, a renewal that charged, a pass that attached), replaced by
+`ambiguous`, `sold-nothing` or `attach-failed` until that outcome's own
+Understood. The Cart record now names its `clientIds` (payer and T90
+recipients; a record without them holds every client). The page reads
+both at mount and on every open, and while one stands for the dialog's
+client, Charge, free entry, the overdraft PIN, "Use this pass" and the
+customer iPad's "Your passes" stand down and the dialog shows the record
+with Close and Understood (Close keeps it; Understood on a Cart record
+takes its stage the way that screen's does, a part-sold lock stays). The
+nav bar's Profile, where Sign out is, waits on `closeWhy` like Sign-in,
+and sessionStorage outlives a sign-out in the tab, so a record surfaces
+after the next sign-in. "Use this pass" moves no money and keeps T242's
+own lock.
 
 ### A sold pass can come with a place (T219)
 
@@ -339,7 +369,8 @@ can turn a sale into an error. Never run against Mindbody yet: run
 ### A teacher's PIN now authorizes six separate things
 
 `CompPurpose` in `src/lib/auth.ts` is `comp` (a discount, T48), `overdraft`
-(charging an account past its balance, T94), `override` (selling a pass
+(charging an account past its balance, T94; since T250 also asked by the
+roster's "Pay and check in", through the shared `ApprovalDialog` pad), `override` (selling a pass
 Mindbody's own rules refused, T112), `approve` (approving a sale the customer
 screen could not, T203), `contract` (selling a membership with no customer
 signature, T205) and, since T211, `waiver` (booking or checking a student in

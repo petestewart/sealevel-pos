@@ -715,6 +715,15 @@ function handle(method, path, q, body, res) {
       if (body.Test === true) return send(res, 200, { ShoppingCart: cart });
       const saleId = ++saleSeq;
       sales.push({ Id: saleId, ClientId: String(body.ClientId ?? ""), SaleDateTime: wall(new Date()), PurchasedItems: purchased, Payments: body.Payments ?? [] });
+      /* T250: an account payment comes off the account, below zero too,
+       * so an overdraft reads back as the negative balance it left. */
+      const payer = body.ClientId ? byId(body.ClientId) : null;
+      for (const pay of body.Payments ?? []) {
+        if (payer && pay?.Type === "DebitAccount") {
+          const amt = Number(pay?.Metadata?.Amount ?? 0);
+          payer.AccountBalance = Math.round(((payer.AccountBalance ?? 0) - amt) * 100) / 100;
+        }
+      }
       /* A pass sold becomes a ClientService the app re-reads. */
       for (const l of p.lines) {
         if (l.found?._kind === "Service" && body.ClientId) {

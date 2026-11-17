@@ -56,6 +56,17 @@ import GuestModal, {
 import { isGuestPass, usableGuestPass } from "@/lib/guestpass";
 import { actorFallbackLine } from "./actornote";
 import ApprovalDialog, { type ApprovalArmed } from "./ApprovalDialog";
+import {
+  acknowledgeCartHeld,
+  readCartHeld,
+  readRosterHeld,
+  ROSTER_PAGE_ID,
+  storableSentence,
+  writeRosterHeld,
+  type HeldCharge,
+  type RosterHeld,
+  type RosterHeldStage,
+} from "./heldcharge";
 import WaiverOverrideDialog, {
   type WaiverOverrideArmed,
 } from "./WaiverOverrideDialog";
@@ -1032,6 +1043,36 @@ function PassFactsLine(props: {
   );
 }
 
+/** T252: the first line of a standing record, in the roster dialog. */
+function heldHeadline(held: HeldCharge, name: string): string {
+  const when =
+    held.at !== null
+      ? ` at ${new Date(held.at).toLocaleTimeString([], {
+          hour: "numeric",
+          minute: "2-digit",
+        })}`
+      : "";
+  const where = held.source === "cart" ? "on the Cart screen" : "from this iPad";
+  switch (held.stage) {
+    case "charging":
+      return `A charge for ${name} ${where}${when} had not answered when ${
+        held.source === "cart"
+          ? "the Cart screen closed or the page reloaded"
+          : held.samePage
+            ? "this dialog closed"
+            : "the page reloaded"
+      }. It may have gone through.`;
+    case "ambiguous":
+      return `A charge for ${name} ${where}${when} may or may not have gone through.`;
+    case "sold-nothing":
+      return held.source === "cart"
+        ? `A sale for ${name} ${where}${when} took a payment and did not sell everything.`
+        : `A charge for ${name} ${where}${when} took a payment and sold nothing.`;
+    case "attach-failed":
+      return `${name} was charged ${where}${when}, but the pass was not attached to the visit.`;
+  }
+}
+
 function money(n: number): string {
   return n.toLocaleString([], {
     style: "currency",
@@ -1332,6 +1373,50 @@ function FrontDesk({
    *  covers the total. Credit is this dialog's default, never its rule,
    *  so the card is one tap away beside it. Reset per open. */
   const [payUseCard, setPayUseCard] = useState(false);
+  /**
+   * T250 (Pete: "When making a sale, if the client has no account
+   * balance, the teacher needs the ability to override and give them a
+   * negative balance"): T94's authorized overdraft, on this dialog. The
+   * teacher's PIN with the `overdraft` purpose, through the same
+   * /api/teacher/verify, and the one-shot token /api/checkout already
+   * takes as `overdraftToken`, which is still the ONLY thing that lets a
+   * credit charge exceed the live balance.
+   *
+   * It belongs to ONE ticket: the client, the pass, the code and the
+   * total Mindbody priced when the PIN was typed. Anything that moves
+   * one of those drops it (the effect beside `payMethod`), and so do
+   * closing the dialog, switching to the card and any answer from the
+   * charge (the route spends the token before its first Mindbody call,
+   * T94 review 4). The figures here are the screen's; the route re-reads
+   * the balance and works out the shortfall itself.
+   */
+  const [payOverdraft, setPayOverdraft] = useState<{
+    token: string;
+    teacherName: string;
+    clientId: string;
+    selectedId: string | number;
+    promo: string | null;
+    total: number;
+  } | null>(null);
+  /** T250: the PIN pad for that authorization is open over the dialog. */
+  const [payOverdraftPin, setPayOverdraftPin] = useState(false);
+  /**
+   * T252: charges that may have moved money, by client, from the tab's
+   * records (src/app/heldcharge.ts): this dialog's own, written at the
+   * Charge tap and kept until its Understood, and the Cart screen's
+   * (T249), which was read only when that screen's payment panel mounted.
+   * Read here at mount and on every open, so a reload, an evicted tab or
+   * the page unmounting behind the sign-in gate cannot leave the roster
+   * free to charge the same student again.
+   */
+  const [rosterHeld, setRosterHeld] = useState<RosterHeld[]>([]);
+  const [cartHeld, setCartHeld] = useState<ReturnType<typeof readCartHeld>>(
+    null,
+  );
+  useEffect(() => {
+    setRosterHeld(readRosterHeld());
+    setCartHeld(readCartHeld());
+  }, []);
   const [payPriceError, setPayPriceError] = useState<string | null>(null);
   /**
    * T242 (Pete: "there should be an option to use one of their exisiting
@@ -3850,6 +3935,12 @@ function FrontDesk({
       setPayPromoDraft("");
       setPayPromoNote(null);
       setPayUseCard(false);
+      /* T250: an overdraft authorized for another ticket is not this one's. */
+      setPayOverdraft(null);
+      setPayOverdraftPin(false);
+      /* T252: what the tab holds now, the Cart screen's record included. */
+      setRosterHeld(readRosterHeld());
+      setCartHeld(readCartHeld());
       setPayDialog({ entry, classId: activeId, flavor });
       /* T242: the student's own passes come first, when they hold any
        * that may pay for this visit. Only the unpaid flavor: the
@@ -4045,6 +4136,10 @@ function FrontDesk({
     setPayPromoDraft("");
     setPayPromoNote(null);
     setPayUseCard(false);
+    /* T250: and the overdraft its PIN authorized, which was for this
+     * dialog's ticket and no other. */
+    setPayOverdraft(null);
+    setPayOverdraftPin(false);
   }, [payStage, cancelPayApproval, dropPassScene]);
 
   /**
@@ -4354,11 +4449,13 @@ function FrontDesk({
        * being ASKED, Escape still closes this dialog, and closing it
        * takes the ticket off their screen. */
       if (payApprovalStage === "pin") return;
+      /* T250: the same for the overdraft's PIN pad. */
+      if (payOverdraftPin) return;
       if (e.key === "Escape" && payStage === null) closePayDialog();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [payDialog, payStage, closePayDialog, payApprovalStage]);
+  }, [payDialog, payStage, closePayDialog, payApprovalStage, payOverdraftPin]);
 
   /**
    * The check-in CHIP's tap. The chip is the ONLY check-in trigger: the
@@ -6812,8 +6909,39 @@ function FrontDesk({
   const payCardLive = Boolean(
     payProfile && !payProfile.loading && payCard && !payCard.expired,
   );
+  /* T250: an overdraft the teacher's PIN authorized for THIS ticket
+   * (the client, the pass, the code and the total it was typed for).
+   * While the total is being repriced it is not armed, and Charge waits
+   * for the price as it always does. */
+  const payOverdraftArmed =
+    payOverdraft !== null &&
+    payDialog !== null &&
+    payOverdraft.clientId === payDialog.entry.clientId &&
+    payOverdraft.selectedId === paySelectedId &&
+    payOverdraft.promo === payPromoCode &&
+    payTotal !== null &&
+    payOverdraft.total === payTotal &&
+    !payUseCard;
+  /* And anything that moved the ticket under it drops it for good, T94's
+   * rule: a negative balance is never charged on a figure nobody
+   * authorized. A total still being priced (null) is not a move. */
+  useEffect(() => {
+    if (payOverdraft === null) return;
+    if (
+      payDialog === null ||
+      payOverdraft.clientId !== payDialog.entry.clientId ||
+      payOverdraft.selectedId !== paySelectedId ||
+      payOverdraft.promo !== payPromoCode ||
+      (payTotal !== null && payOverdraft.total !== payTotal) ||
+      payUseCard
+    ) {
+      setPayOverdraft(null);
+    }
+  }, [payOverdraft, payDialog, paySelectedId, payPromoCode, payTotal, payUseCard]);
+  /** T250: the account can pay, on its balance or on the PIN. */
+  const payCreditReady = payCreditCovers || payOverdraftArmed;
   const payMethod: "credit" | "storedcard" | null =
-    payCreditCovers && !(payUseCard && payCardLive)
+    payCreditReady && !(payUseCard && payCardLive)
       ? "credit"
       : payCardLive
         ? "storedcard"
@@ -6835,8 +6963,9 @@ function FrontDesk({
     payPickReask.current = false;
     payAskAgain();
   }, [payReaskNonce, payAskAgain]);
-  /** T238: both tenders can pay, so the dialog offers the other one. */
-  const payCanSwitchMethod = payCreditCovers && payCardLive;
+  /** T238: both tenders can pay, so the dialog offers the other one.
+   *  T250: an authorized overdraft counts; switching drops it. */
+  const payCanSwitchMethod = payCreditReady && payCardLive;
   /* T241: and so does the customer screen, on the approval: the one
    * other method, with the balance beside the account (Pete: "yes"). */
   payChoicesRef.current =
@@ -6853,7 +6982,7 @@ function FrontDesk({
     }
     if (payMoneyMoved) return "This sale is already done.";
     if (pick.choice === "credit") {
-      if (!payCreditCovers) return "The account balance does not cover it.";
+      if (!payCreditReady) return "The account balance does not cover it.";
       setPayUseCard(false);
     } else if (pick.choice === "storedcard") {
       if (!payCardLive) return "There is no usable card on file.";
@@ -6915,9 +7044,43 @@ function FrontDesk({
         : payOwnHere.alreadyPaidWith !== null
           ? `This booking is already paid with ${payOwnHere.alreadyPaidWith}. Refresh the roster before charging or checking in.`
           : null;
+  /**
+   * T252: a charge for THIS client that may have moved money and has not
+   * been acknowledged, from this dialog (any row for the client) or from
+   * the Cart screen. While one stands, nothing here charges, comps or
+   * uses a pass: the dialog shows the record and its Understood instead.
+   * This dialog's own charge in flight is not a hold on itself (its stage
+   * locks everything already).
+   */
+  const payHeld: HeldCharge | null = (() => {
+    if (payDialog === null) return null;
+    const cid = payDialog.entry.clientId;
+    const own = rosterHeld.find((r) => r.clientId === cid);
+    if (own !== undefined) {
+      return {
+        source: "roster",
+        stage: own.stage,
+        message: own.message,
+        at: own.at,
+        samePage: own.page === ROSTER_PAGE_ID,
+      };
+    }
+    if (
+      cartHeld !== null &&
+      (cartHeld.clientIds === null || cartHeld.clientIds.includes(cid))
+    ) {
+      return cartHeld.held;
+    }
+    return null;
+  })();
+  /** Whether the dialog draws the record in place of its views: not while
+   *  its own run is on the wire, and not over the outcome that run left
+   *  on screen (which carries its own Understood). */
+  const payHeldShown = payHeld !== null && payStage === null && payOutcome === null;
   /** And while that one read is still out, nothing writes either: it is
    *  what says whether the booking is this client's and unpaid. */
-  const payWriteHeld = payWriteBlock !== null || payOwnHere?.loading === true;
+  const payWriteHeld =
+    payWriteBlock !== null || payOwnHere?.loading === true || payHeld !== null;
   const payChargeable =
     payStage === null &&
     !payMoneyMoved &&
@@ -6926,6 +7089,25 @@ function FrontDesk({
     paySelected !== null &&
     payTotal !== null &&
     payMethod !== null;
+  /**
+   * T250: the account, offered whenever it cannot cover the total (T94's
+   * "Account is always an option"), with what it would leave on the
+   * account. Charging it needs the teacher's PIN; until then the card on
+   * file (or nothing) is the method, exactly as before. Waits for the
+   * live profile read, so the figure is not the roster's.
+   */
+  const payOverdraftOffered =
+    payDialog !== null &&
+    !payMoneyMoved &&
+    !payCreditCovers &&
+    payTotal !== null &&
+    payTotal > 0 &&
+    payProfile !== null &&
+    !payProfile.loading;
+  const payOverdraftAfter =
+    payOverdraftOffered && payTotal !== null
+      ? Math.round(((payBalance ?? 0) - payTotal) * 100) / 100
+      : null;
 
   /**
    * The gesture (T25): charge, attach, check in -- pessimistic end to
@@ -6945,6 +7127,12 @@ function FrontDesk({
     if (payFlight.current || !payChargeable) return;
     if (!payDialog || !paySelected || payMethod === null) return;
     const { entry, classId, flavor } = payDialog;
+    /* T250: the overdraft's one-shot token rides beside an account
+     * charge it was authorized for, and nothing else. */
+    const overdraftToken =
+      payMethod === "credit" && payOverdraftArmed && payOverdraft !== null
+        ? payOverdraft.token
+        : null;
     /* The unpaid gesture attaches to and signs in a visit; without a
      * visit id there is nothing to run. The renewal gesture (T26) is the
      * charge alone -- the visit is already paid and checked in and is
@@ -6952,6 +7140,31 @@ function FrontDesk({
     if (flavor === "unpaid" && entry.visitId === null) return;
     payFlight.current = true;
     setPayOutcome(null);
+    /* T252: the tab's record of this charge, written at the TAP, before
+     * anything is sent, so a reload, an evicted tab or a Close and reopen
+     * from here until a definite answer comes back as a charge that needs
+     * checking, never as a fresh Charge. A definite answer removes it; an
+     * outcome that may have moved money replaces it until its Understood. */
+    const heldAt = Date.now();
+    const hold = (stage: RosterHeldStage | null, message: string | null = null) =>
+      setRosterHeld(
+        writeRosterHeld(
+          entry.clientId,
+          stage === null
+            ? null
+            : {
+                v: 1,
+                clientId: entry.clientId,
+                visitId: entry.visitId,
+                name: entry.name,
+                stage,
+                message: storableSentence(message),
+                at: heldAt,
+                page: ROSTER_PAGE_ID,
+              },
+        ),
+      );
+    hold("charging");
     try {
       /* Stage (a): the charge, via the one route that moves money. The
        * route rehearses and re-prices server-side; the browser's number
@@ -6997,11 +7210,17 @@ function FrontDesk({
               ? { approvalOverride: { token: approved.token } }
               : {}),
             method: payMethod,
+            /* T250: the teacher's PIN for a negative balance (T94). The
+               route verifies its purpose and teacher, spends it once and
+               files the overdraft on the client. */
+            ...(overdraftToken !== null ? { overdraftToken } : {}),
           }),
         });
       } catch {
         /* The request died between us and our server: the outcome is
          * UNKNOWN, and the one wrong move is to invite a retry. */
+        if (overdraftToken !== null) setPayOverdraft(null);
+        hold("ambiguous");
         setPayOutcome({ kind: "charge-ambiguous", message: "" });
         return;
       }
@@ -7010,21 +7229,32 @@ function FrontDesk({
       } catch {
         chargeBody = null;
       }
+      /* T250, T94 review 4: once the route has answered at all, the
+       * token is spent (or was never good), so the authorization goes
+       * with any answer that is not a sale standing. A refusal offers the
+       * PIN again. A sale that stood keeps the line as it was charged
+       * until the dialog closes; nothing here can charge twice. */
+      if (
+        overdraftToken !== null &&
+        !(chargeRes.ok && chargeBody?.ok === true && !chargeBody?.suppressed)
+      ) {
+        setPayOverdraft(null);
+      }
       if (chargeBody === null && (chargeRes.ok || chargeRes.status >= 500)) {
         /* A 200 whose body could not be read, or a 500-class answer with
          * no readable verdict (a gateway 502/504 serves HTML): the route
          * may have run -- and charged -- before the answer was lost, so
          * this must NOT render as "not charged, safe to retry". Only a
          * readable refusal or a 4xx earns the definite branch below. */
-        setPayOutcome({
-          kind: "charge-ambiguous",
-          message: chargeRes.ok
-            ? "The server answered but the outcome could not be read."
-            : `The server's answer (HTTP ${chargeRes.status}) carried no readable outcome.`,
-        });
+        const unread = chargeRes.ok
+          ? "The server answered but the outcome could not be read."
+          : `The server's answer (HTTP ${chargeRes.status}) carried no readable outcome.`;
+        hold("ambiguous", unread);
+        setPayOutcome({ kind: "charge-ambiguous", message: unread });
         return;
       }
       if (chargeRes.ok && chargeBody?.suppressed) {
+        hold(null);
         /* Stage (a) suppression: amber, and the gesture STOPS -- no
          * attach, no check-in, because nothing was sold. */
         setPayOutcome({
@@ -7039,22 +7269,24 @@ function FrontDesk({
              gesture stops: no attach, no check-in, and the wording is
              the route's, which names the sale and says to escalate
              rather than retry. */
-          setPayOutcome({
-            kind: "sold-nothing",
-            message: String(
-              chargeBody?.error ??
-                "The payment went through and nothing was sold.",
-            ),
-          });
+          const said = String(
+            chargeBody?.error ??
+              "The payment went through and nothing was sold.",
+          );
+          hold("sold-nothing", said);
+          setPayOutcome({ kind: "sold-nothing", message: said });
           return;
         }
         if (chargeBody?.ambiguous === true) {
+          hold("ambiguous", String(chargeBody?.error ?? "") || null);
           setPayOutcome({
             kind: "charge-ambiguous",
             message: String(chargeBody?.error ?? ""),
           });
           return;
         }
+        /* A definite refusal: the record goes with it. */
+        hold(null);
         /* A definite refusal: nothing was charged, nothing else
          * happened, and saying so is what makes a retry safe. A refusal
          * that names the live balance (a credit payment over it)
@@ -7089,6 +7321,8 @@ function FrontDesk({
        * pass caches and the roster refresh so the row's pass facts show
        * the new pack, best-effort because the sale already stands. */
       if (flavor === "renewal") {
+        /* The charge stood and there is nothing more to it. */
+        hold(null);
         try {
           const pr = await fetch(
             `/api/passes?clientId=${encodeURIComponent(entry.clientId)}`,
@@ -7183,11 +7417,13 @@ function FrontDesk({
             `the write was suppressed (${aBody.suppressed}) after the charge went through`,
           );
         }
+        /* T252: paid and attached, so the visit reads paid (T242's read
+         * says so on any reopen): the record has done its job. */
+        hold(null);
       } catch (err) {
-        setPayOutcome({
-          kind: "attach-failed",
-          message: err instanceof Error ? err.message : String(err),
-        });
+        const why = err instanceof Error ? err.message : String(err);
+        hold("attach-failed", why);
+        setPayOutcome({ kind: "attach-failed", message: why });
         await refreshRoster(classId);
         return;
       }
@@ -7285,7 +7521,8 @@ function FrontDesk({
     payPassOutcome?.kind === "unknown";
   /** Nothing in the passes view may write: locked, or the visit turned
    *  out to be paid already (a stale roster). */
-  const payPassBlocked = payPassLocked || payWriteBlock !== null;
+  const payPassBlocked =
+    payPassLocked || payWriteBlock !== null || payHeld !== null;
 
   /** Put a mode of "Your passes" on the customer display, in place, for
    *  this tab. Best effort: the dialog never waits on it. */
@@ -7854,6 +8091,24 @@ function FrontDesk({
   /** Free entry, the deliberate exception (T25): today's Phase 1
    *  behavior exactly -- no charge, just the pessimistic check-in write
    *  -- behind its own labelled choice. */
+  /**
+   * T252: the record's own Understood. The teacher has read that the last
+   * charge for this student may have gone through and checked it; only
+   * this releases the dialog. The Cart screen's record loses its outcome
+   * the way that screen's own Understood takes it (a part-sold lock stays
+   * with its ticket). Not while the Cart screen is open: its panel owns
+   * that record then, and it covers this dialog anyway.
+   */
+  const acknowledgePayHeld = () => {
+    if (payDialog === null || payHeld === null || saleOpen) return;
+    if (payHeld.source === "roster") {
+      setRosterHeld(writeRosterHeld(payDialog.entry.clientId, null));
+    } else {
+      acknowledgeCartHeld();
+      setCartHeld(readCartHeld());
+    }
+  };
+
   const freeCheckIn = () => {
     /* payFlight is the SYNCHRONOUS lock: payStage lags a render behind,
      * so without the ref a free tap landing in the same tick as a Charge
@@ -8114,7 +8369,12 @@ function FrontDesk({
     label: teacher.name,
     icon: <ProfileIcon />,
     on: staffOpen,
-    why: null,
+    /* T252: Profile is where Sign out is, and a sign-out unmounts the
+     * Cart screen behind the gate. So it waits on exactly what Sign-in
+     * waits on (T249's `closeWhy`), with the same sentence. The tab's
+     * records survive a sign-out regardless, and the roster's dialog
+     * reads them after the next sign-in. */
+    why: closeWhy,
     onTap: () => {
       setPickerFor(null);
       setSortMenuOpen(false);
@@ -11231,7 +11491,45 @@ function FrontDesk({
                 that may pay for this visit. ONLY those passes,
                 each with one 64px "Use this pass and check in", and the
                 purchase view one quiet tap below, unchanged. */}
-            {payShowsOwn ? (
+            {payHeldShown && payHeld !== null ? (
+              /* T252: a charge for this student that may have moved money
+                 and nobody has acknowledged. In place of every way to
+                 write: no Charge, no free entry, no "Use this pass", until
+                 its own Understood. Close keeps it. */
+              <>
+                <div className="sale-stop" role="status">
+                  <p className="pay-split-head">
+                    {heldHeadline(payHeld, payDialog.entry.name)}
+                  </p>
+                  {payHeld.message !== null &&
+                  payHeld.stage !== "charging" ? (
+                    <p className="pay-split-why">{payHeld.message}</p>
+                  ) : null}
+                  <p className="pay-split-why">
+                    {payHeld.stage === "sold-nothing"
+                      ? "Do not charge again. Check the sale in Mindbody first."
+                      : payHeld.stage === "attach-failed"
+                        ? "Do not charge again. Attach the pass with the payment chevron, then check in."
+                        : "Check the dev drawer or Mindbody before charging again."}
+                  </p>
+                </div>
+                <p className="pass-note modal-note-gap">
+                  Nothing can be charged, comped or checked in from here
+                  until you tap Understood.
+                </p>
+                <div className="modal-actions">
+                  <button className="modal-cancel" onClick={closePayDialog}>
+                    Close
+                  </button>
+                  <button
+                    className="modal-confirm pay-charge"
+                    onClick={acknowledgePayHeld}
+                  >
+                    Understood
+                  </button>
+                </div>
+              </>
+            ) : payShowsOwn ? (
               <>
                 {payOwn?.loading ? (
                   <p className="pass-empty">
@@ -11548,7 +11846,11 @@ function FrontDesk({
               </p>
             ) : null}
             <p className="pay-method-line">
-              {payMethod === "credit"
+              {payMethod === "credit" && payOverdraftArmed
+                ? `Charges the account past its balance (${money(
+                    payBalance ?? 0,
+                  )}).`
+                : payMethod === "credit"
                 ? `Pays with account balance (${
                     payBalance !== null ? money(payBalance) : ""
                   }).`
@@ -11556,6 +11858,49 @@ function FrontDesk({
                   ? `Pays with the stored card ...${payCard.lastFour}.`
                   : payMethodReason}
             </p>
+            {/* T250: the account past its balance, T94's overdraft. Only
+                where it is TRUE (the balance does not reach the total),
+                with what it leaves on the account, and the teacher's PIN
+                as the one way to choose it. */}
+            {payOverdraftOffered && payOverdraftAfter !== null ? (
+              <div
+                className={
+                  payOverdraftArmed ? "pay-overdraft armed" : "pay-overdraft"
+                }
+              >
+                <p className="pay-overdraft-head">Charge to account</p>
+                <p className="pay-overdraft-after">
+                  {`Balance after: ${
+                    payOverdraftAfter < 0 ? "-" : ""
+                  }${money(Math.abs(payOverdraftAfter))}`}
+                </p>
+                {payOverdraftArmed ? (
+                  <p className="pay-overdraft-note">
+                    {payOverdraft?.teacherName
+                      ? `Authorized by ${payOverdraft.teacherName}.`
+                      : "Authorized."}
+                  </p>
+                ) : (
+                  <>
+                    <button
+                      className="pay-overdraft-btn"
+                      disabled={
+                        payStage !== null ||
+                        payApproval.pending ||
+                        payWriteHeld ||
+                        payPick.settling
+                      }
+                      onClick={() => setPayOverdraftPin(true)}
+                    >
+                      Charge to account with PIN
+                    </button>
+                    <p className="pay-overdraft-note">
+                      This will result in a negative account balance.
+                    </p>
+                  </>
+                )}
+              </div>
+            ) : null}
             {/* T238: when the balance and the card can both pay, the
                 other one is a tap away. The balance is the default, not
                 the rule. */}
@@ -11567,7 +11912,15 @@ function FrontDesk({
                    about to read the tender on their screen, and what
                    they approve is what is charged. */
                 disabled={payStage !== null || payApproval.pending}
-                onClick={() => setPayUseCard((cur) => !cur)}
+                onClick={() => {
+                  /* T250: off an overdraft, the card is a plain switch
+                     and the authorization goes with it. */
+                  if (payOverdraftArmed) {
+                    setPayOverdraft(null);
+                    return;
+                  }
+                  setPayUseCard((cur) => !cur);
+                }}
               >
                 {payMethod === "credit"
                   ? `Use the card ...${payCard.lastFour} instead`
@@ -11625,6 +11978,17 @@ function FrontDesk({
               <p className="pass-note modal-note-gap">
                 Paid and attached; the check-in tap will finish it.
               </p>
+            ) : null}
+            {/* T252: an outcome that may have moved money is kept for
+                this student (Close does not discard it) until this. */}
+            {payHeld?.source === "roster" &&
+            payStage === null &&
+            (payOutcome?.kind === "charge-ambiguous" ||
+              payOutcome?.kind === "sold-nothing" ||
+              payOutcome?.kind === "attach-failed") ? (
+              <button className="pay-method-switch" onClick={acknowledgePayHeld}>
+                Understood
+              </button>
             ) : null}
 
             {/* T209: the customer's approval, while it is outstanding.
@@ -11740,6 +12104,51 @@ function FrontDesk({
           because={payApproval.approval.because}
           onCancel={payApproval.closePin}
           onArmed={(armed: ApprovalArmed) => payApproval.armed(armed.token)}
+        />
+      ) : null}
+
+      {/* T250: T94's overdraft PIN over the pay dialog. The same pad the
+          approval override uses, with T94's own purpose signed into the
+          token, so this PIN authorizes a negative balance and nothing
+          else. A match arms THIS ticket (the client, the pass, the code
+          and the total on screen now); a miss stays on the pad and
+          charges nothing. */}
+      {payDialog && payOverdraftPin ? (
+        <ApprovalDialog
+          purpose="overdraft"
+          title="Teacher PIN to authorize a negative balance"
+          because={
+            payOverdraftAfter !== null
+              ? `${payDialog.entry.name}'s account has ${money(
+                  payBalance ?? 0,
+                )}. This charge leaves it at ${
+                  payOverdraftAfter < 0 ? "-" : ""
+                }${money(Math.abs(payOverdraftAfter))}.`
+              : `${payDialog.entry.name}'s account does not cover this.`
+          }
+          note="Your name goes on the client's record as the person who authorized it."
+          onCancel={() => setPayOverdraftPin(false)}
+          onArmed={(armed: ApprovalArmed) => {
+            setPayOverdraftPin(false);
+            /* The ticket it was typed for. A total still pricing, or a
+               pass gone, arms nothing: the PIN is asked for again. */
+            if (
+              payTotal === null ||
+              paySelectedId === null ||
+              !payOverdraftOffered
+            ) {
+              return;
+            }
+            setPayUseCard(false);
+            setPayOverdraft({
+              token: armed.token,
+              teacherName: armed.teacher.name,
+              clientId: payDialog.entry.clientId,
+              selectedId: paySelectedId,
+              promo: payPromoCode,
+              total: payTotal,
+            });
+          }}
         />
       ) : null}
 

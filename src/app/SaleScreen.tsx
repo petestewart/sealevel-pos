@@ -35,6 +35,7 @@ import type {
   TenderOffer,
 } from "@/lib/displayticket";
 import { IDEMPOTENCY_HEADER, newIdempotencyKey } from "@/lib/idemkey";
+import { CART_HELD_KEY } from "./heldcharge";
 
 import {
   COMP_DETAIL_MAX,
@@ -1973,7 +1974,7 @@ function ticketDiscountParts(
  *  not yet acknowledged, and the lock a part-sold ticket carries, so a
  *  closed and reopened Cart screen, a reload or an evicted tab comes
  *  back holding all of them. */
-const UNCERTAIN_KEY = "pos_uncertain_charge";
+const UNCERTAIN_KEY = CART_HELD_KEY;
 
 /** T249: this page load, so a record can tell a Cart screen reopened in
  *  the same page from one restored after a reload. */
@@ -2003,6 +2004,23 @@ interface HeldRecord {
   /** The ticket the lock was about, as line keys and quantities: the
    *  lock comes back only onto the same ticket. */
   ticket: string | null;
+  /** T252: the clients this ticket was for (the payer and any T90
+   *  recipient), so the roster's "Pay and check in" holds THOSE students
+   *  while an outcome here waits (src/app/heldcharge.ts). Ids only. */
+  clientIds: string[];
+}
+
+/** T252: the clients a ticket is for, for the record above. */
+function ticketClients(
+  client: SaleClient | null,
+  cart: readonly CartEntry[],
+): string[] {
+  const ids = new Set<string>();
+  if (client !== null) ids.add(client.id);
+  for (const line of cart) {
+    if (line.forClient) ids.add(line.forClient.id);
+  }
+  return [...ids];
 }
 
 /** T249: a sentence off the server is kept as shown, less any run of
@@ -2618,6 +2636,10 @@ function PaymentPanel(props: {
   };
   /** T249: when the charge a held record is about was tapped. */
   const heldAt = useRef<number | null>(null);
+  /** T252: the clients a RESTORED record named, kept beside this ticket's
+   *  own: after a reload the cart and its client are gone, and the record
+   *  must go on holding the student it was about on the roster. */
+  const heldClients = useRef<string[]>([]);
   /** Third review (6): the record is not written until the mount's
    *  restore below has read it. */
   const outcomeRestored = useRef(false);
@@ -3675,6 +3697,7 @@ function PaymentPanel(props: {
     if (!outcomeRestored.current) return;
     if (heldStage === null && partialLock === null) {
       heldAt.current = null;
+      heldClients.current = [];
       writeHeldRecord(null);
       return;
     }
@@ -3703,8 +3726,11 @@ function PaymentPanel(props: {
           : null,
       lock: partialLock,
       ticket: partialLock !== null ? ticketPrint(cart) : null,
+      clientIds: [
+        ...new Set([...heldClients.current, ...ticketClients(client, cart)]),
+      ],
     });
-  }, [heldStage, result, partialLock, holdingGiftIds, cart, restoreDone]);
+  }, [heldStage, result, partialLock, holdingGiftIds, cart, restoreDone, client]);
   /* The restore, once per mount, AFTER the writer so the writer skips
    * the mount. A reopen in the same page brings each outcome back as
    * itself; after a reload it says so, and a charge that was still in
@@ -3719,6 +3745,9 @@ function PaymentPanel(props: {
         uncertainRequest.current =
           typeof saved.requestId === "string" ? saved.requestId : null;
         heldAt.current = typeof saved.at === "number" ? saved.at : Date.now();
+        heldClients.current = Array.isArray(saved.clientIds)
+          ? saved.clientIds.filter((c): c is string => typeof c === "string")
+          : [];
         const when =
           typeof saved.at === "number"
             ? new Date(saved.at).toLocaleTimeString([], {
@@ -4439,6 +4468,7 @@ function PaymentPanel(props: {
      * back as a charge that needs checking. The writer effect keeps it
      * from the next render on; this is the moment before that render. */
     heldAt.current = Date.now();
+    heldClients.current = [];
     uncertainRequest.current = typedCard?.displayRequestId ?? null;
     if (outcomeRestored.current) {
       writeHeldRecord({
@@ -4455,6 +4485,7 @@ function PaymentPanel(props: {
         restored: null,
         lock: null,
         ticket: null,
+        clientIds: ticketClients(client, cart),
       });
     }
     inFlight.current = true;

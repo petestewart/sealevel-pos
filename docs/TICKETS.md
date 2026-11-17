@@ -22595,3 +22595,180 @@ in a scratch build only, Sign-in then Cart after a sold-nothing and
 after a partial brought the ticket back locked, before and after
 Understood. Not driven: the database blip for `display_typed_card`
 (the shared Postgres was not stopped).
+
+
+## T250. The roster's "Pay and check in" can charge the account past its balance, with the teacher's PIN (Pete, 2026-11-17)
+
+Pete: "When making a sale, if the client has no account balance, the
+teacher needs the ability to override and give them a negative balance."
+
+T94 built this on the Cart screen (the Account keypad's "Charge full
+amount", the teacher's PIN with the `overdraft` purpose, `overdraftToken`
+on `/api/checkout`, the only thing that lets a credit charge exceed the
+live balance). The roster's Pay and check in dialog (T25, `payMethod` in
+`src/app/page.tsx`) offers the account only when the balance covers the
+total, so a student with no balance cannot be put on account from there.
+
+### To do
+
+- [x] With a client attached, the dialog always offers paying from the
+      account. When the balance covers the total it behaves as today
+      (T238's default and "Use the card instead"). When it does not, the
+      choice reads "Charge to account" with "Balance after: -$X.XX" under
+      it and a 64px control that opens the teacher's PIN pad ("Teacher PIN
+      to authorize a negative balance"), the same pad, purpose
+      (`overdraft`) and `/api/teacher/verify` path the Cart screen uses
+      (T94's rule: the token names this session's own teacher).
+- [x] A matched PIN arms the overdraft for THIS dialog's ticket only; the
+      charge sends `method: "credit"` with the `overdraftToken`; closing
+      the dialog, changing the pass, or switching to the card drops it.
+      The server is unchanged and still refuses an overdraft without the
+      token.
+- [x] Works with "customer approves each sale" on (the display reads
+      "Paying by Account balance"; T240's binding unchanged) and off.
+- [x] Filed on the client the way T94 files it on the Cart screen (check
+      T94's Done note for the exact behaviour and match it).
+- [x] tsc, next build, Chromium drive against the fake: a client with $0
+      buys a Drop In from Pay and check in on the account with a PIN, the
+      balance reads -$25.00 after, and is checked in; a wrong PIN charges
+      nothing.
+
+**Done (2026-11-17).** No server change: `/api/checkout` already takes
+`overdraftToken` on a whole-sale credit charge, verifies its `overdraft`
+purpose and that it names the session's own teacher, spends it once
+before the first Mindbody call, and files the overdraft on the client
+after the charge resolves (T94's `recordOverdraft`: "Account charged
+$25.00 against a $0.00 balance, authorized by Maya Chen. Sale N.", T45's
+Formula Note with T62's Notes fallback). So "filed on the client the way
+T94 files it" is the same code path, not a copy of it.
+
+In `src/app/page.tsx`, the purchase view of the Pay and check in dialog:
+
+- With the live profile read in and the balance short of Mindbody's
+  total, a "Charge to account" block sits under the method line with
+  "Balance after: -$X.XX" in `--warn` and one 64px `--stop` filled
+  "Charge to account with PIN" (label in `--bg`, the Cart screen's "Charge
+  full amount" treatment, `.pay-overdraft*` in `globals.css`), with "This
+  will result in a negative account balance." under it. Until the PIN,
+  the method is what it was (the card on file, or none, and T88's "Cart
+  and check in" offer with no card).
+- The control opens the shared PIN pad (`ApprovalDialog`, which T205
+  already parameterised by purpose) with `purpose="overdraft"` and the
+  title "Teacher PIN to authorize a negative balance", through
+  `/api/teacher/verify`. T94's own pad lives inside the Cart screen's
+  amount modal and cannot be lifted out without moving that screen; this
+  is the same verify call, purpose and token. A wrong PIN stays on the
+  pad and arms nothing.
+- A match arms `payOverdraft` for THIS ticket: the client, the pass, the
+  code and the total Mindbody priced. Any of them moving, the dialog
+  closing or opening, "Use the card instead", the student picking the
+  card on the customer iPad, and any answer from the charge that is not
+  a sale standing (the route has spent the token, T94 review 4) drops it.
+  Armed, the method is `credit`, the method line reads "Charges the
+  account past its balance ($0.00).", the block reads "Authorized by
+  <teacher>.", and the card stays one tap away. The charge sends
+  `method: "credit"` with `overdraftToken`.
+- With "customer approves each sale" on, the approval names "Account
+  balance" (T240's binding hashes the method, unchanged; the token is not
+  in the cart sha) and the student's Change offers the card on file.
+
+Verified: `npx tsc --noEmit -p .` and `npx next build` clean. Chromium
+against the fake (`scripts/training/fake-mindbody.mjs`, which now takes a
+`DebitAccount` payment off the client's `AccountBalance` on a real
+checkout so an overdraft reads back), app :3250, fake :4250, database
+`pos250`, Taylor Brooks ($0, card ...8210): the dialog offered "Charge to
+account" with "Balance after: -$25.00" and a 64px control beside the card
+default; a wrong PIN (9999) said "That is not your PIN.", sent no
+checkout and left the balance at $0.00; the right PIN armed it ("Authorized
+by Maya Chen"); Cancel and reopen, "Use the card instead", and picking
+another pass each dropped it; armed again, one tap sent ONE checkout with
+`method: "credit"` and the token, the dialog closed, Taylor was checked
+in, the balance read -$25.00, and the note was filed ("Account charged
+$25.00 against a $0.00 balance, authorized by Maya Chen. Sale 3100001.").
+A forged token straight at the route answered 401 and a tokenless one 409,
+nothing charged either time. With `customer_confirms_sale` on and a
+paired display: the display read "Paying by Account balance" (with Change),
+nothing was charged before Approve, Approve charged once with the
+approval id and the token, Taylor was checked in at -$25.00. Not driven:
+the dark palette (tokens only), and Mindbody itself accepting a
+`DebitAccount` past the balance, which is still T94's open live probe.
+
+## T252. The roster dialog keeps a charge that may have gone through (review of PR #16, 2026-11-17)
+
+The review, in its own words: "the roster's "Pay and check in" dialog
+(src/app/page.tsx) can charge a second time after an outcome that may
+have moved money. This is live on main today.
+
+1. The dialog has no outcome record of its own. After `charge-ambiguous`
+or `sold-nothing` (and any unknown/partial outcome it can produce), Close
+is enabled (it is disabled only while `payStage !== null`), `closePayDialog`
+wipes `payOutcome`, and reopening the same row offers a fresh Charge; the
+T242 visit read only catches an attached pass, and after an unknown charge
+the visit still reads unpaid. [...]
+2. The T249 record is only read when the Cart screen's payment panel
+mounts, so after a reload, a tab eviction, or the app unmounting behind
+the sign-in gate (a Profile sign-out is not held by `closeWhy`: the
+Profile nav item has `why: null`; a staff session expiring), the roster
+dialog can charge the same student before anyone sees the Cart screen's
+record."
+
+The rules: never invite a second charge before the teacher has
+acknowledged a may-have-moved-money outcome; a definite success or
+definite refusal clears as today; an ordinary sale is unaffected.
+
+### To do
+
+- [x] The dialog's own record, written at the Charge tap, replaced by an
+      outcome that may have moved money, kept until that outcome's own
+      Understood, keyed to the client (and visit), no card data; while it
+      stands, any row for that client shows it instead of Charge, free
+      entry or "Use this pass", and Close does not discard it.
+- [x] The Cart screen's record read at the page level, gating the roster
+      dialog the same way for its clients, with its Understood.
+- [x] Profile held on T249's `closeWhy`, and the records kept across a
+      sign-out and surfaced after sign-in.
+- [x] tsc, next build, Chromium drive: a forced ambiguous charge in Pay and
+      check in, Close, reopen: no Charge until Understood; a forced
+      unknown on the Cart screen, reload, sign in, Pay and check in for
+      that student: held.
+
+**Done (2026-11-17).** `src/app/heldcharge.ts` holds both records' shapes
+and readers. The roster dialog's record is `pos_roster_uncertain_charge`
+in sessionStorage, one per client: `{clientId, visitId, name, stage,
+message, at, page}`, `stage` one of `charging` (written synchronously at
+the tap, before the request), `ambiguous` (a dead request, an unreadable
+answer, the route's `ambiguous`), `sold-nothing` (T103) and
+`attach-failed` (charged, the new pass not on the visit: a fresh Charge
+there would sell it twice). A suppressed or refused answer removes it, a
+renewal that charged removes it, and an attach that landed removes it
+(the visit then reads paid, which T242's visit read already catches).
+The Cart screen's T249 record now carries `clientIds` (the payer and any
+T90 recipient; a restored record keeps the ids it was written with, so a
+reload's empty cart does not unname the student), and a record without
+them (written before this) holds every client. The page reads both at
+mount and on every open of the dialog; `payHeld` joins `payWriteHeld` and
+`payPassBlocked`, so Charge, free entry, the overdraft PIN, "Use this
+pass" and the "Your passes" offer on the customer iPad all stand down,
+and the dialog draws the record (when, where, the route's sentence, what
+not to do) with Close and a 64px Understood. The live outcome in the same
+open carries its own Understood. Understood on a Cart record does what
+that screen's Understood does: the stage goes, a part-sold lock stays for
+its ticket. Profile in the nav bar now waits on `closeWhy` with its
+sentence; sessionStorage survives a sign-out in the same tab regardless.
+Nothing the server does changed. "Use this pass" moves no money and keeps
+its own T242 lock.
+
+Verified: tsc and next build clean. Chromium against the fake: Pay and
+check in for Taylor Brooks with `/api/checkout` aborted showed "may or may
+not have gone through" with Understood and no Charge; the record named
+10107 as ambiguous with nothing but its time as a long number; Close and
+reopen showed it with no Charge, free entry, "Use this pass" or overdraft
+PIN, Understood 68px; a reload kept it; Understood brought Charge back and
+removed the record (one checkout attempted). The Cart screen with the
+checkout aborted wrote its record with `clientIds: ["10107"]` and held
+Profile; after a reload the roster dialog showed "A charge for Taylor
+Brooks on the Cart screen at 5:54 AM may or may not have gone through."
+with no Charge or free entry, and its Understood released it. Again with
+the staff session ended (`/api/teacher/signout`) and a reload: the gate,
+sign in, and the dialog was still held. An ordinary sale afterwards
+closed, checked Taylor in and left no record.
