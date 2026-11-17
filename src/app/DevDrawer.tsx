@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { DEFAULT_SETTINGS, type Settings, useSettings } from "./settings";
 import { readThemeChoice, setThemeChoice, type ThemeChoice } from "./theme";
 import { ProbeView, type ProbeResult, type Teacher } from "./StaffModal";
+import ResetDisplay from "./ResetDisplay";
 
 /**
  * A drawer that slides up from the bottom showing the Mindbody traffic this
@@ -868,6 +869,13 @@ function DisplayPanel({ open }: { open: boolean }) {
             </button>
           </div>
         )
+      ) : null}
+      {/* T244: the same reset the header's display mark offers. */}
+      {info?.paired ? (
+        <ResetDisplay
+          buttonClass="dev-target-btn"
+          confirmClass="dev-target-btn dev-target-go stop"
+        />
       ) : null}
     </>
   );

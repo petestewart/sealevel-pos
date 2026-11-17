@@ -22918,6 +22918,268 @@ the table back it was recorded with the teacher's staff id. The T250,
 T252 and earlier T253 drives were re-run on the new build and passed
 (approval drive included).
 
+## T244. A stuck customer screen (hotfix)
+
+Pete, live at the counter, 2026-11-17: "when i switched to another app
+and went back to this one, it is stuck on a sales screen even tho the
+cart is empty and no client is attached." He had to unpair and re-pair
+the customer iPad to clear it.
+
+Cause: the live ticket mirror (T201) took its ticket down only when the
+cart emptied AND the tab remembered (`up` in `src/app/useDisplayMirror.ts`)
+that a ticket of its own was up. iPadOS discards a backgrounded Safari tab
+and reloads it on return; the reloaded page has an empty cart and
+`up === false`, so nothing cancelled the old ticket and the hub
+(`src/lib/display.ts`) kept it current for its 30 minute
+`REQUEST_TTL_MS`.
+
+### What was built
+
+- **The teacher's tab reconciles on load and on return.** On mount, on
+  `visibilitychange` to visible, on `pageshow` and when the display
+  (re)connects, an empty cart (or a closed sale screen) sends ONE
+  `POST /api/display/cancel` with `scope: "live"` (throttled to one per
+  two seconds, so a reload sends one). The hub decides
+  (`cancelRequest`'s new `only` test, `heldSceneOf`, `isQuietScene`): a
+  live ticket or a post-sale summary is cancelled; a waiver, a sign-up, a
+  contract or an approval is left alone, answered as a no-op naming what
+  is held, with no event sent to the display. A cart that is not empty is
+  presented again through the mirror's normal path.
+- **"Reset customer screen".** On the deployed counter: tap the customer
+  display mark under the header (now a 64px button reading "Customer
+  display connected" with "Options" on the right), then "Reset customer
+  screen". Also beside Pair and Unpair in the drawer's customer display
+  section. One shared piece, `src/app/ResetDisplay.tsx`, posting
+  `scope: "reset"`: a live ticket, a summary or nothing clears at once
+  and the display goes to its welcome screen; anything a student is in
+  answers 409 `reason: "confirm"` with the question in words ("Someone is
+  signing up on the customer screen. Clear it anyway?", and the waiver,
+  contract and approval equivalents), asked once, then "Clear it". Device
+  session and a signed-in teacher; every reset logs
+  `[display] reset by staff <id>: cleared <scene>`.
+- **"Close" on the customer screen** for the live ticket and the summary
+  (`src/app/display/TicketScene.tsx`, a quiet 64px control), through
+  `POST /api/display/close` under the display's own cookie
+  (`closeOnDisplay`: this display's current request, by id, live or
+  summary only). The hub tells the teacher's stream `closed`; the mirror
+  records that cart's key (`closureKey`: name and lines, never a price,
+  so a price answer landing cannot undo the Close) and does not present
+  it again until the cart changes, and the Cart screen says "The customer
+  closed the ticket on their screen." The approval, waiver, sign-up and
+  contract scenes are unchanged.
+
+Nothing here writes to Mindbody, charges or touches a sale path, and the
+display still imports no `mindbody()`. The plain cancel every other flow
+sends is unchanged.
+
+### Verified
+
+`npx tsc --noEmit -p .` and `npx next build` clean. Driven in Chromium
+(Playwright) against `scripts/training/fake-mindbody.mjs` with a local
+Postgres, a production build, a signed-in teacher and a paired display
+(paired through `/api/admin/display/pair`), 32 checks, all passing:
+
+- a live ticket up, the teacher page RELOADED (empty cart): the display
+  goes idle, with exactly one `scope: "live"` cancel sent;
+- a live ticket up, the page hidden and shown with the cart still full:
+  the display still shows it; and after an out-of-band cancel while
+  "away", the return re-presents it;
+- a self-serve sign-up and a waiver on the display both survive a
+  teacher reload and a hide/show; an approval survives a `scope: "live"`
+  cancel (`held: "approval"`);
+- Reset from the header mark clears a stuck live ticket at once with no
+  question, and asks first over a sign-up, a waiver and an approval,
+  changing nothing until "Clear it";
+- the display's Close goes idle, the teacher sees the line, the same
+  ticket is not presented again after three seconds or a hide/show, and
+  adding an item presents the new ticket and clears the line; Close on a
+  summary goes idle too.
+
+### Limits
+
+- The deployed hub has no per-tab owner, so with two teacher iPads a
+  reload on one (empty cart) also takes down the other's live ticket,
+  which comes back on that iPad's next priced change or its own return.
+- Not seen on a real iPad: a discarded-and-reloaded Safari tab firing
+  these events was simulated (reload, and a dispatched
+  `visibilitychange`), not reproduced on iPadOS.
+
+### Review (2026-11-17)
+
+An independent review found it safe to ship for a counter with one teacher
+iPad. Three findings fixed in a follow-up commit:
+
+- **The mirror's own cancel is now scoped to a live ticket or summary.**
+  Without per-tab ownership (not on this branch), another iPad's reconcile
+  could leave this tab believing its ticket was still up, and its plain
+  cancel on emptying the cart could then wipe a waiver or sign-up a
+  student was in the middle of.
+- **"Clear it" is tied to the scene it asked about.** The confirm echoes
+  the scene kind; if something else has come up since, the teacher is
+  asked again instead of it being cleared.
+- **A student's Close no longer holds back a later return to that cart**
+  once a different cart has been shown (a race between the Close and an
+  in-flight present).
+
+Noted, not changed: the hold-back after Close ignores a price change on
+the same lines (a promotion code or discount after the student closed it);
+after a confirmed Reset of an approval the teacher's wait reads
+"Customer screen disconnected" and a reset waiver dialog keeps waiting
+until closed (recoverable by retry or PIN); the header mark is now a 64px
+button.
+
+### Merged with T241's per-tab ownership (2026-11-17)
+
+Main's T241 gave every ticket an owning tab (a presenter id per tab, in
+sessionStorage) and made every teacher-side cancel name its tab. The
+merged rules:
+
+- **The reconcile and the mirror's own cancel** (`cancelOnDisplay({scope:
+  "live"})`) clear only a live ticket or a summary AND only one this tab
+  owns. The one exception is another tab's LIVE ticket that has gone two
+  minutes without a present, T241's own staleness rule (a Home Screen
+  app killed with its sessionStorage comes back as a new presenter): it
+  is retired and its owner told (`ticket-retired`). T241's pagehide
+  cancel stays; the reconcile covers the discard that fires none, which
+  is why the "Known limit" above (a second iPad's reload clearing the
+  first's ticket) is gone.
+- **Reset** clears anything whoever owns it, asking first over a
+  student's scene as before, and tells a ticket's owning tab
+  (`ticket-retired`), so that mirror stops believing its ticket is up.
+- **The display's Close** is drawn only on the ticket view, never inside
+  T241's Change list or card form; its cancel goes through the same
+  `cancelRequest`, so a card the student typed on that ticket is released
+  exactly as by a teacher's cancel. The `closed` event is matched on the
+  mirror's own live request id.
+- **T247's idle on refuse** stands beside T241: an approval's Cancel and a
+  sign-up's or waiver's Not now all leave the display idle; picks go
+  through `/api/display/choose`, never a refusal, so they are untouched.
+
+Driven after the merge (`tsc --noEmit` and `next build` clean; Chromium,
+the scratch fake with Taylor Brooks $100 on account, a fresh database, a
+paired display), 27 checks, all passing: the stuck-ticket reload (one
+scoped cancel naming the tab); another tab's fresh live ticket left by
+this tab's reconcile, then cleared at once by the header Reset; Reset
+asking over a sign-up and clearing it on "Clear it"; Not now on a
+self-serve sign-up returning to idle; the display's Close, the teacher's
+line, no re-present after time or a hide/show, a cart change presenting
+again; T241's Change and Close on one ticket, no Close in the Change list
+or the card form, a Cash pick reaching the teacher, a display-typed card
+reaching the teacher as a last four and charged in ONE live checkout; an
+approval with the setting on surviving the reconcile and a scoped cancel,
+then charged once on Approve; and, with the server restarted as a new
+build, "A new version is ready." on the teacher's iPad and the idle
+display reloading itself, still paired. Not driven: the two-minute stale
+retirement on the reconcile, and a typed card released by the student's
+Close (the same `dropDisplayCard` path a cancel takes).
+
+## T246. Reload, and picking up a new deploy (Pete, 2026-11-17)
+
+Pete: "could we add a reload button? i need it to run the new deployed
+versions as theyre deployed". Both iPads run as Home Screen web apps,
+with no browser controls, so a page open since this morning keeps
+running this morning's code after a deploy, and there was nothing to
+tap to change that.
+
+### Built
+
+- **The server says which build it runs.** `src/lib/version.ts`:
+  `RAILWAY_GIT_COMMIT_SHA`, else `.next/BUILD_ID` (production only), else
+  a value fixed at process start, held on globalThis so every route
+  answers the same. It is `version` on `/api/config` (the lock screen's
+  trimmed answer too), on `GET /api/display/version` (under the one
+  prefix the display's cookie opens; needs no cookie), and a `version`
+  event on every display stream connect, so a display whose stream
+  reconnects after a deploy learns it at once.
+- **A page's version is the first answer it got** (`src/app/appversion.ts`,
+  module scope, so it lasts exactly one page load). A deploy landing
+  between the scripts arriving and that first answer is missed until the
+  next one, or Reload app; baking a build-time id would instead have
+  disagreed with a runtime `RAILWAY_GIT_COMMIT_SHA`.
+- **Teacher's iPad: "A new version is ready."** Checked on the config read
+  the roster already makes every 30 seconds, on `visibilitychange` to
+  visible and on `pageshow`. A slim row fixed directly above the nav bar,
+  on `--accent-bg` with an accent rail and a 64px accent Reload; its
+  height joins `--nav-space` while it shows, so the roster, the Cart
+  screen (its Pay and charge foot included) and every modal end above it.
+  **It never reloads by itself.** Its Reload refuses with a sentence
+  while the Cart screen is charging, while a gift card id waits to be
+  written on the card, or while any write to `/api/*` is on the wire
+  (counted by the fetch observer FrontDeskPage already wraps every
+  request in, so no write path changed).
+- **"Reload app"** always reloads: in the account modal (beside Change
+  PIN and Sign out) and in the customer display mark's Options menu.
+- **Customer screen: updates itself when idle.** It reads the version on
+  load, every minute, on visibility and pageshow, and on each stream
+  connect. With a newer build up it reloads ONLY from its paired idle
+  screen, 1.5 seconds after getting there, so never over a ticket, an
+  approval, a waiver, a sign-up, a contract, the thank you or the
+  take-over apology; those ending is what lets it go. At most once per
+  version in two minutes (sessionStorage), so two servers answering
+  during a cutover cannot loop it. The pairing is a cookie and survives.
+- **"Reload customer screen"** in the Options menu: `POST
+  /api/display/reload` (device session and a signed-in teacher, logged
+  with the staff id) sends `reload` to the display's OPEN streams only,
+  never into the replay buffer, because a fresh stream replays the whole
+  buffer and a buffered reload would reload every display after it,
+  forever. The display obeys at once if idle, otherwise when the scene
+  ends, and the teacher's one line says which ("The customer screen is
+  reloading now.", "... will reload when the student finishes the
+  waiver.", or "The customer screen is not connected, so it could not be
+  told.").
+- Nothing in it calls Mindbody, and no sale path changed.
+
+### Verified
+
+`npx tsc --noEmit -p .` and `npx next build` clean. Driven in Chromium
+(Playwright) against `scripts/training/fake-mindbody.mjs`, a production
+build, a fresh Postgres database, a signed-in teacher and a paired
+display, restarting the server with `RAILWAY_GIT_COMMIT_SHA` set to three
+values in turn (the old process killed outright, as a replaced container
+is):
+
+- at version A: no banner; the Options menu holds Reset customer screen,
+  Reload customer screen and Reload app; Reload customer screen on an
+  idle display said "reloading now" and the display reloaded and stayed
+  paired (no code shown); Reload app in the account modal reloaded;
+- a teacher-started waiver on the display, server restarted as B: the
+  teacher's banner appeared on `pageshow`; the display saw B and did NOT
+  reload in the next eleven seconds, nor on Reload customer screen
+  (answered `held: "waiver"`); the student tapped Not now, the teacher's
+  dialog read "Customer tapped Not now.", and the display reloaded once
+  idle, still paired, and did not reload again;
+- the banner's Reload with a write held on the wire: "Something is still
+  being saved. Reload in a moment." and no reload;
+- server restarted as C with the display idle: it reloaded itself within
+  seven seconds and stayed paired; the teacher's banner appeared on
+  `visibilitychange`, sat above the nav bar with the Cart overlay ending
+  at its top edge, and its Reload reloaded with no banner after;
+- the Options menu in the dark palette, with the not-connected line.
+
+Also checked on this branch (T247, the coordinator's fix): "New here?
+Sign up" then "Not now" returns the display to its idle screen.
+
+### Limits
+
+- The charge guard reads the Cart screen's `charging` and the in-flight
+  write count; a teacher WAITING on a customer approval (no request on
+  the wire) is not refused, and a reload then leaves the approval on the
+  customer screen until it is answered, reset or expires.
+- The banner shows only once signed in (the roster and the Cart screen),
+  not on the lock screen or the sign-in gate, where Reload app is not
+  offered either.
+- Not seen on a real iPad or on Railway: the restart was a local process
+  replaced on one port.
+
+## T248. Roster sorts by first name by default (Pete, 2026-11-17)
+
+Pete: "On the teacher screen make it so the sorting is by first name by
+default". The roster's default sort is now First name (`"first"` in
+page.tsx); a teacher's stored choice (`pos.rosterSort`) still wins, and
+the menu keeps T52's order (Sign-in order, First name, Last name).
+Verified: a fresh browser profile, with nothing stored, opened the roster
+in first-name order.
+
 
 ## T245. The roster's trash can offers "Late cancel" (Pete, 2026-11-17)
 

@@ -1234,14 +1234,27 @@ export async function cancelRequest(
   opts: {
     takenOver?: boolean;
     abandoned?: boolean;
+    /** T244: cancel only when what is up passes this test; anything
+     *  else is left exactly where it is and answers `held` (no event is
+     *  pushed, so a student mid-waiver sees nothing happen). */
+    only?: (held: HeldScene, request: DisplayRequest) => boolean;
     /** T241 second review (N3): a cancel from a TEACHER's iPad, which
      *  names its tab. It may not take down a ticket another tab owns,
      *  except a live mirror on an explicit Take over (the mirror is
      *  informational; an approval is a student mid-answer and is never
-     *  taken). The hub's own cancels (an abandoned sign-up) pass none. */
-    teacher?: { presenter: string | null; requestId?: string };
+     *  taken). The hub's own cancels (an abandoned sign-up) pass none.
+     *  T244: `staleLive` also lets the reconcile take down another tab's
+     *  LIVE ticket that has gone LIVE_STALE_MS without a present, the
+     *  same judgment a present makes when it retires one (a tab killed
+     *  with its sessionStorage, so it comes back as a new presenter). */
+    teacher?: { presenter: string | null; requestId?: string; staleLive?: boolean };
+    /** T244: "Reset customer screen". Clears whatever is up, whoever
+     *  owns it (the route asks first over a student's scene), and tells
+     *  the ticket's owning tab (`ticket-retired`) so its mirror stops
+     *  believing the ticket is up. */
+    reset?: boolean;
   } = {},
-): Promise<{ cancelled: boolean; foreign?: boolean }> {
+): Promise<{ cancelled: boolean; held: HeldScene | null; foreign?: boolean }> {
   await ensureDisplayLoaded();
   expireIfDue(now);
   const c = state.current;
@@ -1249,24 +1262,40 @@ export async function cancelRequest(
     /* Nothing up. Still push idle: a display that somehow held a stale
      * scene must end up where the server says it is. */
     emit("display", "idle", {});
-    return { cancelled: false };
+    return { cancelled: false, held: null };
   }
-  if (opts.teacher !== undefined) {
+  const held = heldSceneOf(c);
+  if (opts.only !== undefined && !opts.only(held, c)) {
+    return { cancelled: false, held };
+  }
+  /* T242: a passes scene belongs to its tab the way a ticket does. */
+  const owner =
+    c.kind === "ticket" || c.kind === "passes" ? c.private.presenter : undefined;
+  if (opts.reset === true) {
+    /* T244: a reset is nobody's tab in particular and takes down any
+     * ticket; its owner hears so, as a retirement. */
+    if (typeof owner === "string") {
+      emit("teacher", "ticket-retired", { requestId: c.id, presenter: owner });
+    }
+  } else if (opts.teacher !== undefined) {
     /* A cancel for one request (the pagehide cancel) touches no other. */
     if (
       opts.teacher.requestId !== undefined &&
       opts.teacher.requestId !== c.id
     ) {
-      return { cancelled: false };
+      return { cancelled: false, held };
     }
-    /* T242: a passes scene belongs to its tab the way a ticket does. */
-    const owner =
-      c.kind === "ticket" || c.kind === "passes" ? c.private.presenter : undefined;
     if (typeof owner === "string" && owner !== opts.teacher.presenter) {
-      if (!(opts.takenOver === true && isLiveTicket(c.kind, c.payload))) {
-        return { cancelled: false, foreign: true };
+      const live = isLiveTicket(c.kind, c.payload);
+      const stale =
+        live &&
+        opts.teacher.staleLive === true &&
+        now - (c.presentedAt ?? c.createdAt) > LIVE_STALE_MS;
+      if (!((opts.takenOver === true && live) || stale)) {
+        return { cancelled: false, held, foreign: true };
       }
-      /* Taken over: the owner's mirror is told it is no longer up. */
+      /* Taken over, or stale: the owner's mirror is told it is no longer
+       * up. */
       emit("teacher", "ticket-retired", { requestId: c.id, presenter: owner });
     }
   }
@@ -1296,7 +1325,88 @@ export async function cancelRequest(
     ...(opts.abandoned === true ? { abandoned: true } : {}),
   });
   emit("display", "idle", {});
-  return { cancelled: true };
+  return { cancelled: true, held };
+}
+
+/**
+ * T244: what a pending request IS, in the words the teacher's screen
+ * and the reset's question use. `live` and `summary` are the two scenes
+ * nobody is in the middle of (a mirror and a thank you); every other
+ * one has a student, or a charge, waiting on it.
+ */
+export type HeldScene =
+  | "live"
+  | "summary"
+  | "approval"
+  | "waiver"
+  | "signup"
+  | "contract";
+
+export function heldSceneOf(r: DisplayRequest): HeldScene {
+  if (r.kind === "register") return "signup";
+  if (r.kind === "waiver") return "waiver";
+  if (r.kind === "contract") return "contract";
+  if (r.payload.mode === "summary") return "summary";
+  if (r.payload.mode === "approve") return "approval";
+  return "live";
+}
+
+/** T244: the two scenes a stale tab, a reset or the student's own Close
+ *  may take down without asking anybody. */
+export function isQuietScene(held: HeldScene | null): boolean {
+  return held === null || held === "live" || held === "summary";
+}
+
+/** T244: the reset's one question, naming what a student is in. */
+export function resetQuestion(held: HeldScene): string {
+  switch (held) {
+    case "signup":
+      return "Someone is signing up on the customer screen. Clear it anyway?";
+    case "waiver":
+      return "A student is reading or signing a waiver on the customer screen. Clear it anyway?";
+    case "contract":
+      return "A student is signing a membership on the customer screen. Clear it anyway?";
+    case "approval":
+      return "A student is being asked to approve a sale on the customer screen. Clear it anyway?";
+    default:
+      return "Clear the customer screen?";
+  }
+}
+
+/**
+ * T244: the student's own Close on a live ticket or a summary. The
+ * display's cookie, this display's CURRENT request by id, and only one
+ * of the two quiet scenes: an approval, a waiver, a sign-up and a
+ * contract each have their own answer and are refused here. The
+ * teacher's iPad is told (`closed`), so its mirror does not put the
+ * same ticket straight back.
+ */
+export async function closeOnDisplay(
+  displayId: string,
+  requestId: string,
+  now = Date.now(),
+): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
+  await ensureDisplayLoaded();
+  expireIfDue(now);
+  const c = state.current;
+  if (c === null || c.id !== requestId || c.displayId !== displayId) {
+    return { ok: false, status: 409, error: "That is not the current request." };
+  }
+  if (c.status !== "pending") {
+    return { ok: false, status: 409, error: "That request is already done." };
+  }
+  const held = heldSceneOf(c);
+  if (held !== "live" && held !== "summary") {
+    return { ok: false, status: 409, error: "Only a ticket can be closed here." };
+  }
+  const done = await cancelRequest(now, {
+    only: (h, r) => h === held && r.id === requestId,
+  });
+  if (!done.cancelled) {
+    return { ok: false, status: 409, error: "That request is already done." };
+  }
+  emit("teacher", "closed", { requestId, mode: held });
+  return { ok: true };
 }
 
 /**
@@ -1403,6 +1513,13 @@ export async function refuseRequest(
     false,
   );
   emit("teacher", "refused", { requestId: c.id, kind: c.kind, reason });
+  /* T247 (Pete: "if I click 'new here? Sign up' and then click 'not
+   * now', nothing happens"): a refusal takes the scene off the student's
+   * screen HERE. Before, only the teacher heard it, which ended a waiver
+   * or an approval because the teacher's iPad then cleared the screen,
+   * but a sign-up the student started themselves has no teacher waiting,
+   * so the display sat on the form until the app was closed. */
+  emit("display", "idle", {});
   return { ok: true };
 }
 
@@ -2326,4 +2443,40 @@ export async function displayState(now = Date.now()): Promise<{
      * display both say a restart needs re-pairing. */
     durable: dbConfigured() && displayCookieDurable(),
   };
+}
+
+/* --- Reload (T246) --------------------------------------------------- */
+
+/**
+ * T246: "Reload customer screen". Sent to the display's OPEN streams
+ * only, never into the replay buffer: a fresh stream replays the whole
+ * buffer (a new page has no Last-Event-ID), so a buffered reload would
+ * reload every display that connected after it, including the one that
+ * just reloaded, forever. Id 0, like the scene replay on connect, so it
+ * cannot move a display's Last-Event-ID past anything real.
+ *
+ * The display decides WHEN: at once on its idle screen, otherwise when
+ * the scene a student is in ends. This answers what the server can see,
+ * which is what the teacher's one line is worded from: whether any
+ * stream heard it, and the scene held now. Nothing here calls Mindbody,
+ * and nothing about a request changes.
+ */
+export function requestDisplayReload(now = Date.now()): {
+  delivered: boolean;
+  held: HeldScene | null;
+} {
+  const current = currentRequest(now);
+  const held =
+    current !== null && current.status === "pending" ? heldSceneOf(current) : null;
+  const ev: HubEvent = { id: 0, event: "reload", data: { at: now } };
+  let delivered = false;
+  for (const sub of state.displaySubs) {
+    try {
+      sub(ev);
+      delivered = true;
+    } catch {
+      /* A closed stream is dropped on its own abort. */
+    }
+  }
+  return { delivered, held };
 }
