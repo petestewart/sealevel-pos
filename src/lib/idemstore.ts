@@ -454,21 +454,6 @@ export async function beginIdempotent(
   };
 }
 
-/**
- * T253: whether this request's key is one the store already holds
- * (answered or in flight). /api/checkout asks this BEFORE its charge-hold
- * check, so the hold refuses only a NEW tap: the same tap arriving again
- * still gets its first answer verbatim from the gate (the hold that
- * answer made must not change a replay), and a refused new tap spends no
- * slot in the store. Reads only; never records.
- */
-export function idemKeyKnown(request: Request): boolean {
-  const key = keyOf(request);
-  if (key === null || key === "malformed") return false;
-  sweep(Date.now(), ttlMs());
-  return store.has(key);
-}
-
 /** For a driver and for the drawer: how many keys are held. Never used by
  *  the money path. */
 export function idemSize(): number {

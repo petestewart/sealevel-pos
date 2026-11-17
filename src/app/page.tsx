@@ -1066,6 +1066,10 @@ function heldHeadline(held: HeldCharge, name: string): string {
         : "from this iPad";
   switch (held.stage) {
     case "charging":
+      /* T253 review: the server's write-ahead hold, a charge running now. */
+      if (held.pending === true) {
+        return `A charge for ${name} started${when} and has not answered yet.`;
+      }
       return `A charge for ${name} ${where}${when} had not answered when ${
         held.source === "cart"
           ? "the Cart screen closed or the page reloaded"
@@ -8217,11 +8221,15 @@ function FrontDesk({
       for (const id of held.serverHoldIds ?? []) {
         if (!(await acknowledgeServerHold(id))) failed = true;
       }
-      if (held.source === "server" && failed) {
+      if (failed) {
+        /* T253 review (6): the server could not record it, so its hold
+         * stands; the screen says so rather than pretending. A local
+         * record still goes (it was read), and the server's hold shows
+         * next with its own Understood. */
         setPayAckNote(
-          "The server did not take the Understood. Try again in a moment.",
+          "The server could not record the Understood, so the hold stands. Try again in a moment.",
         );
-        return;
+        if (held.source === "server") return;
       }
       if (held.source === "roster") {
         setRosterHeld(writeRosterHeld(cid, null));
@@ -11640,7 +11648,9 @@ function FrontDesk({
                     <p className="pay-split-why">{`Sale ${payHeld.saleId}.`}</p>
                   ) : null}
                   <p className="pay-split-why">
-                    {payHeld.stage === "sold-nothing"
+                    {payHeld.pending === true
+                      ? "Another iPad (or this one, before it reloaded) is waiting on Mindbody for it. Wait for it to answer, then check again."
+                      : payHeld.stage === "sold-nothing"
                       ? "Do not charge again. Check the sale in Mindbody first."
                       : payHeld.stage === "attach-failed"
                         ? "Do not charge again. Attach the pass with the payment chevron, then check in."
@@ -11648,8 +11658,9 @@ function FrontDesk({
                   </p>
                 </div>
                 <p className="pass-note modal-note-gap">
-                  Nothing can be charged, comped or checked in from here
-                  until you tap Understood.
+                  {payHeld.pending === true
+                    ? "Nothing can be charged, comped or checked in from here until that charge has answered."
+                    : "Nothing can be charged, comped or checked in from here until you tap Understood."}
                 </p>
                 {payAckNote !== null ? (
                   <p className="sale-stop" role="status">
@@ -11660,13 +11671,27 @@ function FrontDesk({
                   <button className="modal-cancel" onClick={closePayDialog}>
                     Close
                   </button>
-                  <button
-                    className="modal-confirm pay-charge"
-                    disabled={payAckBusy}
-                    onClick={() => void acknowledgePayHeld()}
-                  >
-                    {payAckBusy ? "One moment..." : "Understood"}
-                  </button>
+                  {payHeld.pending === true ? (
+                    /* A running charge cannot be acknowledged: the way on
+                       is its answer, so this only looks again. */
+                    <button
+                      className="modal-confirm pay-charge"
+                      disabled={payAckBusy}
+                      onClick={() =>
+                        void loadPayServerHolds(payDialog.entry.clientId)
+                      }
+                    >
+                      Check again
+                    </button>
+                  ) : (
+                    <button
+                      className="modal-confirm pay-charge"
+                      disabled={payAckBusy}
+                      onClick={() => void acknowledgePayHeld()}
+                    >
+                      {payAckBusy ? "One moment..." : "Understood"}
+                    </button>
+                  )}
                 </div>
               </>
             ) : payShowsOwn ? (

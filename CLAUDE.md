@@ -81,8 +81,10 @@ pass, code, total) and the charge sends `method: "credit"` with
 `overdraftToken`. No server change. A balance read that failed offers no
 PIN. **T252: that dialog now keeps a charge that may have moved money**
 (see the T249 section), and **T253 moved the authority for that to the
-server**: `/api/checkout` refuses a held client from any iPad (see "A
-charge that may have moved money holds the client").
+server**: `/api/checkout` holds each client of a charge AHEAD of running
+it and refuses a held client from any iPad until the charge has answered
+and anything it may have moved has been acknowledged (see "A charge that
+may have moved money holds the client").
 
 **T242 (2026-11-17): the unpaid row's "Pay and check in" opens on the
 student's OWN passes** when they hold any that may pay for this visit
@@ -288,58 +290,86 @@ it is settable from the drawer.
 
 ### A charge that may have moved money holds the client, on the SERVER (T253)
 
-**`/api/checkout` refuses any new charge for a client whose last charge
-may have moved money and nobody has acknowledged** (a review of e200b71;
-the main session's decision). T241, T249 and T252 kept that in the
-browser's sessionStorage, which is ONE TAB's: a second iPad, a second
-tab, a closed tab and the Home Screen web app after it is swiped away
-(`appleWebApp.capable`; iOS starts a standalone web app with a fresh
-sessionStorage per launch, and swiping it away is how the counter gets
-reloaded) all saw no hold and could charge the same student again.
+**`/api/checkout` refuses any new charge for a client whose charge is
+still running, or may have moved money and nobody has acknowledged it**
+(reviews of e200b71 and 1bbe146; the main session's decision). T241, T249
+and T252 kept that in the browser's sessionStorage, which is ONE TAB's: a
+second iPad, a second tab, a closed tab and the Home Screen web app after
+it is swiped away (`appleWebApp.capable`; iOS starts a standalone web app
+with a fresh sessionStorage per launch, and swiping it away is how the
+counter gets reloaded) all saw no hold and could charge the same student
+again.
 
-- **What makes a hold** (`src/lib/chargehold.ts`): an answer from
-  `/api/checkout` that is ambiguous (the route's flag, a 5xx or 200 it
-  could not read, a route that threw), T103's sold-nothing or a T95/T90
-  partial, and an ambiguous live `/api/purchase-contract`. One per
-  client on the ticket, the payer and every T90 recipient. A definite
-  success, a suppression and a definite refusal make none. Each is
-  logged `[charge-hold] made`.
-- **Where it lives**: `charge_holds` (migration 19: ids, site, kind, the
-  route's sentence with long digit runs struck, the sale id when known,
-  the staff id, created and acknowledged at and by; NO card data;
-  Mindbody has no home for it, so the T29 charter allows it) AND this
-  process's memory, always. Memory refuses even when the table does not
-  answer; a row the table has and memory does not (a restart) refuses
-  too; an acknowledgement in memory is never undone by a row whose
-  update did not land. A second instance with no database does not share
-  memory. A hold lapses after `POS_HOLD_LAPSE_MS` (24 hours), logged.
-- **The refusal**: before T113's gate takes a slot, before any PIN,
-  approval or display card is spent and before any Mindbody call, 409
-  `reason: "held"` with the hold's sentence and `holds`. A key the gate
-  already knows is the same tap arriving again and gets its FIRST answer
-  verbatim (`idemKeyKnown`), hold or no hold. Every charge path goes
-  through `/api/checkout` (the Cart screen, the roster's Pay and check in
-  and its renewal flavor, the display's picks and approvals ride the
-  same two screens); `/api/purchase-contract` refuses a held client's
-  live purchase too (the Test: true rehearsal is not held); `/api/guest`
-  sells a $0 comp and moves no money.
-- **The answer that made holds names them** (`chargeHolds: [{id,
-  clientId}]`), inside T113's record. `GET /api/charge-holds?clientId=`
-  (device session) lists the standing ones; `POST
-  /api/charge-holds/acknowledge {id}` (device session and a signed-in
-  teacher, whose staff id goes on the row and in the log) is the only
-  thing that releases one before it lapses.
+- **Written AHEAD of the charge** (`claimCharge` in
+  `src/lib/chargehold.ts`). After T113's gate takes a NEW key, every
+  client on the ticket (the payer and each T90 recipient, never the house
+  client) is checked and, in the same tick, given a `pending` hold, in
+  memory and in the table, before any display card, PIN, approval or
+  Mindbody call. A second iPad or a relaunched app charging the same
+  client meanwhile is refused "A charge for this client started at 5:33
+  PM and has not answered yet." A pending hold cannot be acknowledged;
+  the screens offer "Check again".
+- **Settled by its answer** (`settleCharge`, `outcomeOf`). A definite one
+  (a sale that stood, a suppression, a definite refusal) clears it. One
+  that may have moved money (the route's `ambiguous`, a 5xx or 200 it
+  could not read, T103's sold-nothing, a T95/T90 partial) turns it into
+  that kind of hold, same id, until a teacher acknowledges it. A throw
+  ANYWHERE after the claim, even after a definite answer was settled
+  (promotion, display card, enrolment, the record), makes it ambiguous,
+  because the teacher is about to read "may or may not have gone
+  through". A pending hold with no answer after 3 minutes, or found with
+  no request in this process that owns it (a restart mid-charge),
+  becomes ambiguous, never cleared.
+- **The refusal is recorded against its key**: 409 `reason: "held"` goes
+  through `gate.record`, so a delayed duplicate of a refused tap arriving
+  after Understood replays the refusal rather than charging. A key the
+  gate already knows replays its first answer verbatim, hold or no hold.
+- **Walk-in tickets** (no client id, or the house client's own, decided
+  on the server) never make a blocking hold: a block on the house client
+  would stop every walk-in sale. One that ends unknown, sold-nothing or
+  partial leaves a STUDIO-WIDE notice (kind `walkin`, kept under the house
+  client's id), which refuses nothing; the Cart screen shows it on every
+  walk-in ticket ("A walk-in sale at 5:33 PM may have gone through. Check
+  Mindbody before ringing up a walk-in again.") with its own Understood.
+  T90 recipients on a walk-in ticket are held as usual.
+- **Where it lives**: this process's memory is the record; `charge_holds`
+  (migration 19: ids, site, kind, the route's sentence with long digit
+  runs struck, the sale id when known, the staff id, created and
+  acknowledged at and by; NO card data; Mindbody has no home for it, so
+  the T29 charter allows it) is its durable copy, written as the whole
+  current state by id (`upsertChargeHold`), one write after another per
+  hold, so a slow first insert cannot land over a later state. A table
+  that does not answer leaves memory in charge; rows memory lacks (a
+  restart) are read in. ONE INSTANCE: a second process would share the
+  table but not who owns a pending hold, and would turn the other's
+  in-flight charges ambiguous; not built for. A settled hold lapses after
+  `POS_HOLD_LAPSE_MS` (24 hours), logged.
+- **Other money routes**: `/api/purchase-contract`'s live purchase is
+  claimed and settled the same way (its Test: true rehearsal is neither
+  held nor holds); `/api/guest` sells a $0 comp and moves no money. Every
+  other charge path is `/api/checkout` (the Cart screen, the roster's Pay
+  and check in and its renewal flavor, the display's picks and approvals).
+- **Routes**: the answer that left holds names them (`chargeHolds: [{id,
+  clientId}]`, inside T113's record). `GET /api/charge-holds?clientId=`
+  (device session; `?walkin=1` for the walk-in notices) lists standing
+  ones. `POST /api/charge-holds/acknowledge {id}` (device session and a
+  signed-in teacher, logged with the staff id) is the only release before
+  the lapse; with a database it must LAND in the table (503 `unrecorded`
+  and the hold stands otherwise), and a pending hold answers 409.
 - **The screens ask the server** and keep their tab records as the
   instant local copy. The roster's Pay and check in asks on every open and
   shows a server hold like its own record (Close keeps it; Understood
-  acknowledges it). The Cart screen asks when it opens and when the
-  ticket's clients change, and shows every hold for the payer or a T90
-  recipient, and the roster's tab record for them, above the foot with its
-  Understood; Finalize waits on it. A 409 `held` shows the hold. An
-  outcome's own Understood acknowledges the holds its answer named. A tab
-  record whose server holds are gone (acknowledged on another iPad) lets
-  go; one that never reached the server (a request that died in the
-  browser, or still `charging`) waits for its own Understood.
+  acknowledges; a pending one offers Check again). The Cart screen asks
+  when it opens and when the ticket's clients change, shows every hold
+  for the payer or a T90 recipient and the roster's tab record for them
+  above the foot, and Finalize waits on them; on a walk-in ticket it shows
+  the walk-in notices, which do not hold Finalize. A 409 `held` shows the
+  hold. An outcome's Understood acknowledges the holds its answer named
+  and ALWAYS reads the server again for the ticket's clients, so a hold
+  the answer did not name is offered in the same view. A tab record whose
+  server holds are gone (acknowledged on another iPad) lets go; one that
+  never reached the server, or is still `charging`, waits for its own
+  Understood.
 
 ### A charge that may have moved money outlives the Cart screen (T249)
 

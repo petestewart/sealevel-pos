@@ -77,13 +77,14 @@ import {
   substituteSentence,
   type ResolvedSubstitute,
 } from "@/lib/substitute";
-import { beginIdempotent, idemKeyKnown } from "@/lib/idemstore";
+import { beginIdempotent } from "@/lib/idemstore";
 import {
+  claimCharge,
   heldSentence,
-  recordChargeHolds,
-  standingChargeHolds,
+  outcomeOf,
+  settleCharge,
   type ChargeHold,
-  type ChargeHoldKind,
+  type SettledKind,
 } from "@/lib/chargehold";
 import {
   DISPLAY_CARD_GONE,
@@ -548,34 +549,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
   }
 
-  /* T253: a charge for any client on this ticket that may have moved
-   * money, and that no teacher has acknowledged, holds every NEW charge
-   * for them: refused here, before T113's gate takes a slot, before any
-   * PIN or approval is spent and before any Mindbody call. A key the gate
-   * already holds is the same tap arriving again, and gets its first
-   * answer from the gate verbatim, hold or no hold. See
-   * src/lib/chargehold.ts. */
-  const ticketClients = chargeClientIds(payload);
-  if (!idemKeyKnown(request)) {
-    const holds = await standingChargeHolds(ticketClients);
-    if (holds.length > 0) {
-      console.warn(
-        `[charge-hold] refused a charge: client(s) ${holds
-          .map((h) => h.clientId)
-          .join(",")} held by ${holds.map((h) => h.id).join(",")} staff=${session.staffId}`,
-      );
-      return NextResponse.json(
-        {
-          error: heldSentence(holds),
-          reason: "held",
-          stage: "held",
-          holds,
-        },
-        { status: 409 },
-      );
-    }
-  }
-
   /* T113: the one new gate, and everything below it is unchanged. The
    * tap's own key decides whether this is a fresh tap or the same tap
    * arriving twice; a key already answered replays that answer and sends
@@ -585,52 +558,101 @@ export async function POST(request: Request) {
    * costs nothing at all. See src/lib/idemstore.ts. */
   const gate = await beginIdempotent(request, payload, String(session.staffId));
   if (gate.replay !== null) return gate.replay;
-  /* T241: a card the STUDENT typed on the customer iPad. The browser
-   * sends only the display request's id (`displayCard: { requestId }`);
-   * the card itself is taken here from the server's memory, BELOW the
-   * idempotency gate (so a replay never touches it) and claimed for this
-   * one checkout, which must come from the teacher and the tab whose
-   * ticket the student typed it on (T241 review), then spent once it has
-   * answered, unless the answer is a refusal that provably asked
-   * Mindbody to write nothing. From here on it is a typed card like T93's, through the same `typedCard` path, under the
-   * teacher's token: dry run, the write guard, T75, T103 and T240's
-   * tender binding apply unchanged (the method is still `typedcard`). */
-  const displayRef = readDisplayCardRef(payload);
-  if (displayRef !== null && "error" in displayRef) {
+
+  /* T253 (and its review): a charge for any client on this ticket that
+   * is still in flight, or that may have moved money and no teacher has
+   * acknowledged, holds every NEW charge for them. Asked AFTER the gate,
+   * so a key it already knows (the same tap again) replays its first
+   * answer verbatim, and the refusal is RECORDED against this key, so a
+   * delayed duplicate of a refused tap arriving after Understood replays
+   * the refusal instead of charging. Before any PIN, approval, display
+   * card or Mindbody call. A charge that passes writes a `pending` hold
+   * for each of its clients AHEAD of running (claimCharge), so a second
+   * iPad or a relaunched app cannot charge them while this one is still
+   * waiting on Mindbody; every way out of here below settles it. The
+   * house client is never held: a walk-in ticket that ends unknown leaves
+   * a studio-wide notice instead. See src/lib/chargehold.ts. */
+  const walkinTicket = isWalkinTicket(payload);
+  const claim = await claimCharge({
+    clientIds: chargeClientIds(payload),
+    walkin: walkinTicket,
+    staffId: String(session.staffId),
+    route: "/api/checkout",
+  });
+  if ("refused" in claim) {
+    const holds = claim.refused;
+    console.warn(
+      `[charge-hold] refused a charge: client(s) ${holds
+        .map((h) => h.clientId)
+        .join(",")} held by ${holds.map((h) => `${h.id}(${h.kind})`).join(",")} staff=${session.staffId}`,
+    );
     return gate.record(
-      NextResponse.json({ error: displayRef.error }, { status: 400 }),
+      NextResponse.json(
+        { error: heldSentence(holds), reason: "held", stage: "held", holds },
+        { status: 409 },
+      ),
     );
   }
-  const displayCard = displayRef;
-  let charged = payload;
-  if (displayCard !== null) {
-    /* Second review (D): a ticket this process closed (cancelled,
-     * refused, retired, expired) takes its card with it, whatever race
-     * its drop lost. */
-    const claim = displayRequestClosed(displayCard.requestId)
-      ? ({ ok: false, error: DISPLAY_CARD_GONE, code: "gone" } as const)
-      : claimDisplayCard(displayCard.requestId, {
-          clientId:
-            typeof payload?.clientId === "string" ? payload.clientId : "",
-          staffId: String(session.staffId),
-          presenter: displayCard.presenter,
-          lastFour: displayCard.lastFour,
-        });
-    if (!claim.ok) {
-      return gate.record(
-        NextResponse.json(
-          { error: claim.error, reason: "displaycard", card: claim.code },
-          { status: 409 },
-        ),
+  const ticket = claim.ticket;
+  /* What this charge has been settled as so far: "open" until the
+   * checkout answered, then its kind (null is definite). */
+  let settledAs: SettledKind | null | "open" = "open";
+  const settle = async (
+    kind: SettledKind | null,
+    message: unknown,
+    saleId: unknown,
+  ) => {
+    settledAs = kind;
+    return settleCharge(ticket, { kind, message, saleId });
+  };
+  try {
+    /* T241: a card the STUDENT typed on the customer iPad. The browser
+     * sends only the display request's id (`displayCard: { requestId }`);
+     * the card itself is taken here from the server's memory, BELOW the
+     * idempotency gate (so a replay never touches it) and claimed for this
+     * one checkout, which must come from the teacher and the tab whose
+     * ticket the student typed it on (T241 review), then spent once it has
+     * answered, unless the answer is a refusal that provably asked
+     * Mindbody to write nothing. From here on it is a typed card like T93's, through the same `typedCard` path, under the
+     * teacher's token: dry run, the write guard, T75, T103 and T240's
+     * tender binding apply unchanged (the method is still `typedcard`). */
+    const displayRef = readDisplayCardRef(payload);
+    if (displayRef !== null && "error" in displayRef) {
+      await settle(null, null, null);
+      return await gate.record(
+        NextResponse.json({ error: displayRef.error }, { status: 400 }),
       );
     }
-    /* Third review: the ticket takes no pick and no new card while this
-     * charge runs, nor after it, until the teacher's iPad offers again. */
-    closeTicketOffer(displayCard.requestId);
-    const { displayCard: _ref, ...rest } = payload;
-    charged = { ...rest, typedCard: claim.card };
-  }
-  try {
+    const displayCard = displayRef;
+    let charged = payload;
+    if (displayCard !== null) {
+      /* Second review (D): a ticket this process closed (cancelled,
+       * refused, retired, expired) takes its card with it, whatever race
+       * its drop lost. */
+      const dclaim = displayRequestClosed(displayCard.requestId)
+        ? ({ ok: false, error: DISPLAY_CARD_GONE, code: "gone" } as const)
+        : claimDisplayCard(displayCard.requestId, {
+            clientId:
+              typeof payload?.clientId === "string" ? payload.clientId : "",
+            staffId: String(session.staffId),
+            presenter: displayCard.presenter,
+            lastFour: displayCard.lastFour,
+          });
+      if (!dclaim.ok) {
+        await settle(null, null, null);
+        return await gate.record(
+          NextResponse.json(
+            { error: dclaim.error, reason: "displaycard", card: dclaim.code },
+            { status: 409 },
+          ),
+        );
+      }
+      /* Third review: the ticket takes no pick and no new card while this
+       * charge runs, nor after it, until the teacher's iPad offers again. */
+      closeTicketOffer(displayCard.requestId);
+      const { displayCard: _ref, ...rest } = payload;
+      charged = { ...rest, typedCard: dclaim.card };
+    }
     /* T220: what the rehearsal took off for a promotion code, filled in
      * by runCheckout and added to the answer of a sale that stands. */
     const promo: { applied: PromotionOutcome | null } = { applied: null };
@@ -644,17 +666,21 @@ export async function POST(request: Request) {
       writes = traced.writes;
     } catch (err) {
       if (displayCard !== null) settleDisplayCard(displayCard.requestId, true);
-      /* T253: a route that threw is an unknown outcome. */
-      await holdAfterCheckout(null, ticketClients, String(session.staffId));
       throw err;
     }
-    /* T253: an answer that may have moved money holds these clients, and
-     * says which holds it made, so the iPad that tapped can acknowledge
-     * exactly those. Inside T113's record, so a replay carries them too. */
-    ran = withHolds(
-      ran,
-      await holdAfterCheckout(ran, ticketClients, String(session.staffId)),
+    /* T253: the pending holds become what this answer leaves: cleared on
+     * a definite answer, held on one that may have moved money, and the
+     * answer names the holds it left, so the iPad that tapped can
+     * acknowledge exactly those. Inside T113's record, so a replay
+     * carries them too. */
+    const out = await outcomeOf(ran);
+    const left = await settle(
+      out.kind,
+      out.body?.error ??
+        (out.kind !== null ? "The charge did not say what happened." : null),
+      out.body?.saleId ?? null,
     );
+    ran = withHolds(ran, left, out.body);
     /* T241 review: spent by every answer that asked Mindbody to write
      * anything (sent, suppressed or refused alike: a rehearsal is a POST
      * too), and kept only for a refusal that provably asked nothing, our
@@ -681,6 +707,18 @@ export async function POST(request: Request) {
       await enrolAfterCheckout(answered, payload, session, rules),
     );
   } catch (err) {
+    /* T253 review (5): a throw anywhere after the claim (the checkout,
+     * or withPromotion, the display card, the enrolment or the record
+     * after it) answers 502 ambiguous, so the pending holds become
+     * ambiguous holds too, even over a definite answer settled above:
+     * the teacher is about to read "may or may not have gone through". */
+    if (settledAs === "open" || settledAs === null) {
+      await settle(
+        "ambiguous",
+        "The checkout stopped before it could say what happened.",
+        null,
+      ).catch(() => undefined);
+    }
     return gate.recordThrow(err);
   }
 }
@@ -688,8 +726,8 @@ export async function POST(request: Request) {
 /**
  * T253: every client a charge is for: the payer and each T90 recipient.
  * Read off the raw body, before any validation, because the hold check
- * runs first; a body with no usable ids holds nobody (the house client is
- * a client id like any other, and a hold on it is harmless).
+ * runs first. The house client is dropped by `claimCharge`: a blocking
+ * hold on it would stop every walk-in sale in the studio.
  */
 function chargeClientIds(payload: any): string[] {
   const ids = new Set<string>();
@@ -705,64 +743,19 @@ function chargeClientIds(payload: any): string[] {
   return [...ids];
 }
 
-/**
- * T253: what /api/checkout answered, read for a hold. Ambiguous (the
- * route's own flag, a 5xx it could not put words to, or a route that
- * threw: `res` null), sold-nothing (T103) and partial (T95/T90) hold every
- * client on the ticket; anything else holds nobody. Reads a CLONE, so the
- * answer that goes back (and that T113 keeps) is untouched.
- */
-async function holdAfterCheckout(
-  res: Response | null,
-  clientIds: string[],
-  staffId: string,
-): Promise<{ holds: ChargeHold[]; body: any }> {
-  let body: any = null;
-  try {
-    if (clientIds.length === 0) return { holds: [], body: null };
-    if (res !== null) {
-      body = await res.clone().json().catch(() => null);
-    }
-    /* A 4xx with no readable body is a refusal; anything else unreadable
-     * (a 200 or a 5xx) may have charged. */
-    const unreadable =
-      res === null || (body === null && (res.ok || res.status >= 500));
-    const kind: ChargeHoldKind | null =
-      body?.soldNothing === true
-        ? "sold-nothing"
-        : body?.partial === true
-          ? "partial"
-          : unreadable || body?.ambiguous === true
-            ? "ambiguous"
-            : null;
-    if (kind === null) return { holds: [], body };
-    const holds = await recordChargeHolds({
-      clientIds,
-      kind,
-      message:
-        res === null
-          ? "The checkout stopped before it could say what happened."
-          : (body?.error ?? null),
-      saleId: body?.saleId ?? null,
-      staffId,
-      route: "/api/checkout",
-    });
-    return { holds, body };
-  } catch (err) {
-    console.error(
-      `[charge-hold] could not read the checkout's answer for a hold: ${err instanceof Error ? err.message : String(err)}`,
-    );
-    return { holds: [], body };
-  }
+/** T253 review (4): a ticket that rides the house client: no client id
+ *  sent (the route charges it to POS_HOUSE_CLIENT_ID), or the house
+ *  client's own id. Decided here, never by a flag the browser sends. */
+function isWalkinTicket(payload: any): boolean {
+  const payer = typeof payload?.clientId === "string" ? payload.clientId.trim() : "";
+  const house = houseClientId();
+  return payer === "" || (house !== null && payer === house);
 }
 
-/** T253: the answer, with the holds it made named on it (`chargeHolds`,
+/** T253: the answer, with the holds it left named on it (`chargeHolds`,
  *  ids and clients only). Any other answer goes back untouched. */
-function withHolds(
-  res: Response,
-  made: { holds: ChargeHold[]; body: any },
-): Response {
-  if (made.holds.length === 0 || made.body === null || typeof made.body !== "object") {
+function withHolds(res: Response, holds: ChargeHold[], body: any): Response {
+  if (holds.length === 0 || body === null || typeof body !== "object") {
     return res;
   }
   const headers = new Headers(res.headers);
@@ -770,8 +763,8 @@ function withHolds(
   headers.set("content-type", "application/json");
   return new NextResponse(
     JSON.stringify({
-      ...made.body,
-      chargeHolds: made.holds.map((h) => ({ id: h.id, clientId: h.clientId })),
+      ...body,
+      chargeHolds: holds.map((h) => ({ id: h.id, clientId: h.clientId })),
     }),
     { status: res.status, headers },
   );

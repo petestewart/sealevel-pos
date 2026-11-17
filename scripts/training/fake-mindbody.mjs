@@ -446,6 +446,9 @@ const server = http.createServer((req, res) => {
  * 500, which the app reads as an unknown outcome, by POSTing
  * /__fake/fail-checkout?n=1. Not part of any Mindbody API. */
 let failCheckouts = 0;
+/* And POST /__fake/delay-checkout?ms=20000&n=1 holds the next N real
+ * checkouts that long before answering (T253 review: a slow Mindbody). */
+let delayCheckouts = { n: 0, ms: 0 };
 
 function handle(method, path, q, body, res) {
   console.log(`[fake-mb] ${method} ${path}${q.size ? "?" + q.toString().slice(0, 120) : ""}`);
@@ -453,6 +456,10 @@ function handle(method, path, q, body, res) {
     case "/__fake/fail-checkout": {
       failCheckouts = Number(q.get("n") ?? 1) || 0;
       return send(res, 200, { failCheckouts });
+    }
+    case "/__fake/delay-checkout": {
+      delayCheckouts = { n: Number(q.get("n") ?? 1) || 0, ms: Number(q.get("ms") ?? 20000) || 0 };
+      return send(res, 200, delayCheckouts);
     }
     case "/usertoken/issue": {
       const u = String(body.Username ?? "").toLowerCase();
@@ -695,6 +702,11 @@ function handle(method, path, q, body, res) {
     case "/sale/giftcardbalance":
       return send(res, 200, { BarcodeId: one(q, "barcodeId"), RemainingBalance: 0 });
     case "/sale/checkoutshoppingcart": {
+      if (body.Test !== true && !body.__delayed && delayCheckouts.n > 0) {
+        delayCheckouts.n -= 1;
+        setTimeout(() => handle(method, path, q, { ...body, __delayed: true }, res), delayCheckouts.ms);
+        return;
+      }
       if (body.Test !== true && failCheckouts > 0) {
         failCheckouts -= 1;
         return send(res, 500, { Error: { Message: "Internal error (fake)", Code: "InternalError" } });

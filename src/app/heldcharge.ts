@@ -76,6 +76,10 @@ export interface HeldCharge {
   /** The server holds behind it: the hold itself for "server", the ones
    *  the outcome made for a local record. */
   serverHoldIds?: string[];
+  /** T253 review: the server's write-ahead hold for a charge that has not
+   *  answered yet. It cannot be acknowledged; the screen offers to look
+   *  again instead. */
+  pending?: boolean;
 }
 
 /* ---------- T253: the server's holds ---------------------------------- */
@@ -84,7 +88,10 @@ export interface HeldCharge {
 export interface ServerHold {
   id: string;
   clientId: string;
-  kind: "ambiguous" | "sold-nothing" | "partial";
+  /** `pending`: a charge for them is running now and has not answered
+   *  (T253 review's write-ahead hold). `walkin`: the studio-wide walk-in
+   *  notice, which refuses nothing. */
+  kind: "pending" | "ambiguous" | "sold-nothing" | "partial" | "walkin";
   message: string | null;
   saleId: string | null;
   createdAt: number;
@@ -104,7 +111,12 @@ export function serverHoldsFrom(raw: unknown): ServerHold[] {
       id: h.id,
       clientId: h.clientId,
       kind:
-        h.kind === "sold-nothing" || h.kind === "partial" ? h.kind : "ambiguous",
+        h.kind === "sold-nothing" ||
+        h.kind === "partial" ||
+        h.kind === "pending" ||
+        h.kind === "walkin"
+          ? h.kind
+          : "ambiguous",
       message: typeof h.message === "string" ? h.message : null,
       saleId: typeof h.saleId === "string" ? h.saleId : null,
       createdAt: typeof h.createdAt === "number" ? h.createdAt : Date.now(),
@@ -130,7 +142,9 @@ export async function fetchServerHolds(
   }
 }
 
-/** Understood, on the server: one hold, by id. True when it is gone. */
+/** Understood, on the server: one hold, by id. True when it is gone; a
+ *  hold the server could not record as acknowledged, or whose charge is
+ *  still running, stays. */
 export async function acknowledgeServerHold(id: string): Promise<boolean> {
   try {
     const res = await fetch("/api/charge-holds/acknowledge", {
@@ -141,6 +155,19 @@ export async function acknowledgeServerHold(id: string): Promise<boolean> {
     return res.ok;
   } catch {
     return false;
+  }
+}
+
+/** T253 review (4): the studio-wide walk-in notices standing now, or null
+ *  when the server did not answer. */
+export async function fetchWalkinNotices(): Promise<ServerHold[] | null> {
+  try {
+    const res = await fetch("/api/charge-holds?walkin=1");
+    if (!res.ok) return null;
+    const body = await res.json().catch(() => null);
+    return body === null ? null : serverHoldsFrom(body.holds);
+  } catch {
+    return null;
   }
 }
 
@@ -162,7 +189,12 @@ export function holdIdsFrom(body: unknown, clientId?: string): string[] {
 export function heldFromServer(h: ServerHold): HeldCharge {
   return {
     source: "server",
-    stage: h.kind === "ambiguous" ? "ambiguous" : "sold-nothing",
+    stage:
+      h.kind === "pending"
+        ? "charging"
+        : h.kind === "sold-nothing" || h.kind === "partial"
+          ? "sold-nothing"
+          : "ambiguous",
     message:
       h.kind === "partial" && h.message === null
         ? "Part of the ticket was sold and part was not."
@@ -171,6 +203,7 @@ export function heldFromServer(h: ServerHold): HeldCharge {
     samePage: false,
     saleId: h.saleId,
     serverHoldIds: [h.id],
+    pending: h.kind === "pending",
   };
 }
 

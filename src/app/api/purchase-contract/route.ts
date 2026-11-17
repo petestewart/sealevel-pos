@@ -3,9 +3,10 @@ import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 
 import {
+  claimCharge,
   heldSentence,
-  recordChargeHolds,
-  standingChargeHolds,
+  outcomeOf,
+  settleCharge,
 } from "@/lib/chargehold";
 
 import {
@@ -124,7 +125,65 @@ function errMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+/**
+ * T253 (and its review): a live purchase is a charge like any other. A
+ * client held by a charge that is still running or may have moved money
+ * (src/lib/chargehold.ts) is refused before anything else, before a
+ * signature or a PIN is spent and before any Mindbody call; one that is
+ * not gets a `pending` hold written AHEAD of the purchase, settled by
+ * its answer: cleared when definite, an ambiguous hold when the
+ * membership MAY have started (or the route threw). The Test: true
+ * rehearsal charges nothing and is neither held nor holds.
+ */
 export async function POST(request: Request) {
+  const denied = requireSession(request);
+  if (denied) return denied;
+  const staff = await requireActor(request);
+  if (staff.denied) return staff.denied;
+  const peek: any = await request.clone().json().catch(() => null);
+  const clientId =
+    typeof peek?.clientId === "string" ? peek.clientId.trim() : "";
+  if (peek === null || peek?.test === true || clientId === "") {
+    return purchaseContractPost(request);
+  }
+  const claim = await claimCharge({
+    clientIds: [clientId],
+    walkin: false,
+    staffId: String(staff.session.staffId),
+    route: "/api/purchase-contract",
+  });
+  if ("refused" in claim) {
+    return NextResponse.json(
+      {
+        error: heldSentence(claim.refused),
+        reason: "held",
+        stage: "held",
+        holds: claim.refused,
+      },
+      { status: 409 },
+    );
+  }
+  try {
+    const res = await purchaseContractPost(request);
+    const out = await outcomeOf(res);
+    await settleCharge(claim.ticket, {
+      kind: out.kind,
+      message: out.body?.error ?? null,
+      saleId: null,
+    });
+    return res;
+  } catch (err) {
+    await settleCharge(claim.ticket, {
+      kind: "ambiguous",
+      message:
+        "The membership purchase stopped before it could say what happened. The contract MAY have been started.",
+      saleId: null,
+    }).catch(() => undefined);
+    throw err;
+  }
+}
+
+async function purchaseContractPost(request: Request) {
   const denied = requireSession(request);
   if (denied) return denied;
   /* T50: no staff session, no write. Before the body is read, so a
@@ -176,20 +235,6 @@ export async function POST(request: Request) {
     );
   }
   const test = payload?.test === true;
-  /* T253: a live purchase is a charge like any other, so a client held by
-   * a charge that may have moved money (see src/lib/chargehold.ts) is
-   * refused here too, before any Mindbody call and before a signature or
-   * a PIN is spent. The Test: true rehearsal charges nothing and is not
-   * held, so the dialog can still show the price. */
-  if (!test) {
-    const holds = await standingChargeHolds([clientId]);
-    if (holds.length > 0) {
-      return NextResponse.json(
-        { error: heldSentence(holds), reason: "held", stage: "held", holds },
-        { status: 409 },
-      );
-    }
-  }
   /* T99: the chosen start date. Absent, or today's own key, is today's
    * behaviour exactly. A bad one never reaches Mindbody. */
   const rawStart = payload?.startDate;
@@ -664,18 +709,6 @@ export async function POST(request: Request) {
         return gone;
       }
       const ambiguous = isAmbiguous(err);
-      /* T253: a membership that MAY have started holds the client. */
-      if (ambiguous) {
-        await recordChargeHolds({
-          clientIds: [clientId],
-          kind: "ambiguous",
-          message:
-            "The membership purchase did not answer. The contract MAY have been started.",
-          saleId: null,
-          staffId: String(session.staffId),
-          route: "/api/purchase-contract",
-        }).catch(() => undefined);
-      }
       await fileReceipt(
         ambiguous
           ? `ambiguous: ${errMessage(err)}`

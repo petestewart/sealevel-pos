@@ -22842,3 +22842,71 @@ were re-run unchanged and passed, the approval drive included. Not
 driven: the roster's view of a Cart sold-nothing record with a sale id
 (built, shown only when the record has one), a T90 partial's per-recipient
 holds (the code holds every client id on the ticket), the lapse.
+
+### T253 review of 1bbe146: holds written ahead, refusals recorded, walk-ins noticed (2026-11-17)
+
+The review found 1bbe146 not yet safe. Each finding, as judged:
+
+1. HIGH, agreed: a hold written only after the answer let a relaunched
+   app or a second iPad charge the same client while Mindbody was still
+   slow. Built as asked: `claimCharge` writes a `pending` hold per ticket
+   client after T113's gate takes a NEW key and before anything else
+   (memory and table, the memory check and claim in one tick), refusing
+   "started at ... and has not answered yet"; `settleCharge` clears it
+   on a definite answer or converts it in place (same id) to ambiguous,
+   sold-nothing or partial; a pending hold with no answer after 3 minutes
+   or with no owning request in this process (a restart) becomes
+   ambiguous, never cleared. `/api/purchase-contract`'s live purchase is
+   claimed and settled the same way (a wrapper around the old handler).
+2. MEDIUM-LOW, agreed: the 409 now comes after `beginIdempotent` and is
+   recorded with `gate.record`, so a delayed duplicate of a refused tap
+   replays the refusal. `idemKeyKnown` (1bbe146) is gone.
+3. Covered by 1.
+4. Agreed, as decided: a walk-in ticket (no client id, or the house
+   client's own, decided on the server) never makes a blocking hold; one
+   that ends unknown, sold-nothing or partial leaves a studio-wide
+   `walkin` notice under the house client's id, shown on every walk-in
+   ticket on the Cart screen with its own Understood and never holding
+   Finalize. The comment calling a house-client hold harmless is gone;
+   `claimCharge` and `standingChargeHolds` drop the house client's id.
+5. LOW, agreed: any throw after the claim settles the holds as ambiguous,
+   even over a definite answer already settled (the teacher reads "may or
+   may not have gone through").
+6. LOW, agreed: with a database, an acknowledgement the table did not
+   take answers 503 `unrecorded`, is undone in memory and the hold
+   stands. Late-landing writes: every write is the hold's whole state,
+   upserted by id and chained per hold, so a slow first insert cannot
+   land over a later acknowledgement. Multi-instance noted, not built.
+7. LOW (UX), agreed: the Cart screen's Understood always reads the
+   server again for the ticket's clients and shows what it finds in the
+   same view; the roster's already did.
+
+Verified: tsc and next build clean. Chromium against the fake (which can
+now hold the next real checkout `POST /__fake/delay-checkout?ms=&n=` and
+fail it `.../fail-checkout?n=`), app :3250, fake :4250, a fresh `pos250`:
+(a) A charged Taylor from Pay and check in with Mindbody held 12 s: a
+`pending` row was in the table within 2.5 s; B (its own context, Jordan)
+read "A charge for Taylor Brooks started at ... and has not answered
+yet." with Check again and no Charge; a fresh context (the relaunch) was
+refused 409 with that sentence; acknowledging the pending hold answered
+409; (f) Alex Morgan's sale went through meanwhile in 24 ms; A's sale
+stood after 12 s with Taylor checked in, the row read `cleared|outcome`,
+B's Check again found nothing and B could charge Taylor. (b) Jordan Kim
+held 8 s then failed: B was refused "not answered yet" during it, A's
+502 named the SAME hold id, and B then read it as ambiguous. (c) the app
+killed 4 s into a 15 s charge for Sam Okafor and restarted: Sam was held
+as ambiguous ("The server restarted (or lost track) while this charge
+was waiting for Mindbody, so it may have gone through."), in memory and
+in the row. (d) B's tap refused 409, the hold acknowledged, the same key
+replayed: the recorded 409 byte for byte, no new hold; a new key then
+charged. (e) a walk-in Kombucha sale that failed left only a `walkin`
+row on the house client; another walk-in sale, with no id and with the
+house client's id, went through; B's Cart screen on a walk-in ticket
+showed "A walk-in sale at ... may have gone through. Check Mindbody
+before ringing up a walk-in again." without holding Finalize, and its
+Understood acknowledged it on the server. (6) with the table renamed
+away, Understood answered 503 "could not be recorded, so the hold
+stands", the next charge was still refused and the row stayed open; with
+the table back it was recorded with the teacher's staff id. The T250,
+T252 and earlier T253 drives were re-run on the new build and passed
+(approval drive included).

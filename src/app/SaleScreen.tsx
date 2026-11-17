@@ -39,6 +39,7 @@ import {
   acknowledgeServerHold,
   CART_HELD_KEY,
   fetchServerHolds,
+  fetchWalkinNotices,
   holdIdsFrom,
   readRosterHeld,
   serverHoldsFrom,
@@ -2670,6 +2671,11 @@ function PaymentPanel(props: {
   const [ticketHolds, setTicketHolds] = useState<ServerHold[]>([]);
   const [ticketLocal, setTicketLocal] = useState<RosterHeld[]>([]);
   const [holdAckBusy, setHoldAckBusy] = useState(false);
+  /** T253 review (6): an Understood the server could not record. */
+  const [holdAckNote, setHoldAckNote] = useState<string | null>(null);
+  /** T253 review (4): the studio-wide walk-in notices, shown on a walk-in
+   *  ticket (no client attached). They refuse nothing. */
+  const [walkinNotes, setWalkinNotes] = useState<ServerHold[]>([]);
   /** Whether a hold on a client of this ticket stands (shown above the
    *  foot): Finalize waits on its Understood. */
   const ticketHeld = ticketHolds.length > 0 || ticketLocal.length > 0;
@@ -3928,10 +3934,49 @@ function PaymentPanel(props: {
   const acknowledgeTicketHold = async (ids: string[], localClient?: string) => {
     if (holdAckBusy) return;
     setHoldAckBusy(true);
+    setHoldAckNote(null);
     try {
-      for (const id of ids) await acknowledgeServerHold(id);
+      let failed = false;
+      for (const id of ids) {
+        if (!(await acknowledgeServerHold(id))) failed = true;
+      }
+      if (failed) {
+        setHoldAckNote(
+          "The server could not record the Understood, so the hold stands. Try again in a moment.",
+        );
+      }
       if (localClient !== undefined) writeRosterHeld(localClient, null);
       await loadTicketHolds();
+    } finally {
+      setHoldAckBusy(false);
+    }
+  };
+
+  /* T253 review (4): on a walk-in ticket, the walk-in notices, read when
+   * the ticket becomes a walk-in one and whenever its first line goes on. */
+  const walkinTicket = client === null && cart.length > 0;
+  const loadWalkinNotes = useCallback(async () => {
+    const notes = await fetchWalkinNotices();
+    if (notes !== null) setWalkinNotes(notes);
+  }, []);
+  useEffect(() => {
+    if (!walkinTicket) {
+      setWalkinNotes([]);
+      return;
+    }
+    void loadWalkinNotes();
+  }, [walkinTicket, loadWalkinNotes]);
+  const acknowledgeWalkinNote = async (id: string) => {
+    if (holdAckBusy) return;
+    setHoldAckBusy(true);
+    setHoldAckNote(null);
+    try {
+      if (!(await acknowledgeServerHold(id))) {
+        setHoldAckNote(
+          "The server could not record the Understood. Try again in a moment.",
+        );
+      }
+      await loadWalkinNotes();
     } finally {
       setHoldAckBusy(false);
     }
@@ -3943,12 +3988,15 @@ function PaymentPanel(props: {
     const ids = ownHoldIdsRef.current;
     setResult(null);
     setOwnHoldIds([]);
-    if (ids.length > 0) {
-      void (async () => {
-        for (const id of ids) await acknowledgeServerHold(id);
-        await loadTicketHolds();
-      })();
-    }
+    /* T253 review (7): always read the server again for this ticket's
+     * clients, so a hold the answer did not name (an unreadable answer,
+     * a dead request) is offered here, in this view, rather than met as
+     * a refusal on the next tap. A walk-in ticket reads its notices. */
+    void (async () => {
+      for (const id of ids) await acknowledgeServerHold(id);
+      await loadTicketHolds();
+      if (walkinTicket) await loadWalkinNotes();
+    })();
   };
   const ticketNameOf = (id: string): string =>
     client !== null && client.id === id
@@ -6639,7 +6687,14 @@ function PaymentPanel(props: {
               {ticketHolds.map((h) => (
                 <div key={h.id} className="sale-stop pay-split" role="alert">
                   <p className="pay-split-head">
-                    {`A charge for ${ticketNameOf(h.clientId)} at ${new Date(
+                    {h.kind === "pending"
+                      ? `A charge for ${ticketNameOf(h.clientId)} started at ${new Date(
+                          h.createdAt,
+                        ).toLocaleTimeString([], {
+                          hour: "numeric",
+                          minute: "2-digit",
+                        })} and has not answered yet.`
+                      : `A charge for ${ticketNameOf(h.clientId)} at ${new Date(
                       h.createdAt,
                     ).toLocaleTimeString([], {
                       hour: "numeric",
@@ -6659,13 +6714,56 @@ function PaymentPanel(props: {
                     <p className="pay-split-why">{`Sale ${h.saleId}.`}</p>
                   ) : null}
                   <p className="pay-split-why">
-                    Check it in Mindbody before charging them again.
-                    Finalize Sale waits until you tap Understood.
+                    {h.kind === "pending"
+                      ? "Another iPad (or this one, before it reloaded) is waiting on Mindbody for it. Finalize Sale waits until it has answered."
+                      : "Check it in Mindbody before charging them again. Finalize Sale waits until you tap Understood."}
                   </p>
+                  {h.kind === "pending" ? (
+                    <button
+                      className="class-change pay-dismiss"
+                      disabled={holdAckBusy}
+                      onClick={() => void loadTicketHolds()}
+                    >
+                      Check again
+                    </button>
+                  ) : (
+                    <button
+                      className="class-change pay-dismiss"
+                      disabled={holdAckBusy}
+                      onClick={() => void acknowledgeTicketHold([h.id])}
+                    >
+                      Understood
+                    </button>
+                  )}
+                </div>
+              ))}
+              {holdAckNote !== null ? (
+                <p className="sale-stop" role="status">
+                  {holdAckNote}
+                </p>
+              ) : null}
+              {/* T253 review (4): a walk-in sale that may have gone
+                  through, studio-wide. Read on every walk-in ticket; it
+                  never holds Finalize (a block on the house client would
+                  stop every walk-in sale), it asks the teacher to look. */}
+              {walkinNotes.map((n) => (
+                <div key={n.id} className="pass-note pay-split" role="status">
+                  <p className="pay-split-head">
+                    {`A walk-in sale at ${new Date(n.createdAt).toLocaleTimeString(
+                      [],
+                      { hour: "numeric", minute: "2-digit" },
+                    )} may have gone through. Check Mindbody before ringing up a walk-in again.`}
+                  </p>
+                  {n.message ? (
+                    <p className="pay-split-why">{n.message}</p>
+                  ) : null}
+                  {n.saleId ? (
+                    <p className="pay-split-why">{`Sale ${n.saleId}.`}</p>
+                  ) : null}
                   <button
                     className="class-change pay-dismiss"
                     disabled={holdAckBusy}
-                    onClick={() => void acknowledgeTicketHold([h.id])}
+                    onClick={() => void acknowledgeWalkinNote(n.id)}
                   >
                     Understood
                   </button>

@@ -2123,17 +2123,30 @@ export interface ChargeHoldRow {
   acknowledgedBy: string | null;
 }
 
-/** Whether the row landed; false means "memory carries it". */
-export async function insertChargeHold(row: ChargeHoldRow): Promise<boolean> {
+/**
+ * T253 review: the hold's WHOLE state, written over whatever the row
+ * holds (an upsert by id), because this process's memory is the record
+ * and the table its durable copy: a pending hold, its conversion, its
+ * clearing and its acknowledgement are each one write of the current
+ * state, chained per id in order by the caller, so a late-landing first
+ * insert can never undo a later state. Whether the row landed; false
+ * means "memory carries it".
+ */
+export async function upsertChargeHold(row: ChargeHoldRow): Promise<boolean> {
   try {
     const p = await ready();
     if (!p) return false;
     await p.query(
       `INSERT INTO charge_holds
          (id, site, client_id, kind, message, sale_id, staff_id, route,
-          created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-       ON CONFLICT (id) DO NOTHING`,
+          created_at, acknowledged_at, acknowledged_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+       ON CONFLICT (id) DO UPDATE SET
+         kind = EXCLUDED.kind,
+         message = EXCLUDED.message,
+         sale_id = EXCLUDED.sale_id,
+         acknowledged_at = EXCLUDED.acknowledged_at,
+         acknowledged_by = EXCLUDED.acknowledged_by`,
       [
         row.id,
         row.site,
@@ -2144,11 +2157,13 @@ export async function insertChargeHold(row: ChargeHoldRow): Promise<boolean> {
         row.staffId,
         row.route,
         new Date(row.createdAt),
+        row.acknowledgedAt === null ? null : new Date(row.acknowledgedAt),
+        row.acknowledgedBy,
       ],
     );
     return true;
   } catch (err) {
-    logDbError("charge-hold-insert", err);
+    logDbError("charge-hold-write", err);
     return false;
   }
 }
