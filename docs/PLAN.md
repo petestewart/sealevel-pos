@@ -47,10 +47,13 @@ Cheap, and each one removes a guess. All are read-only or `Test: true`.
 | # | Probe | Answers | Status |
 |---|---|---|---|
 | B1 | `POST /sale/checkoutshoppingcart` with a candidate price/discount key in item `Metadata`, `Test: true`, compare returned total | Whether the POS can set a cart price directly. If yes, the $21 SKU is unnecessary | **Mostly answered from the spec (2026-08-30): CheckoutItemWrapper.DiscountAmount discounts a cart line directly, so the $21 SKU is unnecessary. One Test: true probe still owed for quantity semantics and permission gating; see TICKETS.** |
-| B2 | `GET /sale/alternativepaymentmethods` with `LocationId=98` | The HTTP 400 that gates all Apple Pay scoping | Not run. **Deprioritised 2026-11-15**: counter Apple Pay is Phase 4's reader, not this redirect flow |
+| B2 | `GET /sale/alternativepaymentmethods` with `LocationId=98` | The HTTP 400 that gates all Apple Pay scoping | Not run. **Deprioritised 2026-11-15**: counter Apple Pay is Phase 4's reader, not this redirect flow. A script exists if it is wanted (T255, Pete asked for Apple Pay 2026-11-09): `scripts/probe-applepay.ts`, read-only by default; `--initiate <clientId> <productId>` adds a `Test: true` initiate in each plausible Payments shape |
 | B3 | Re-run `mindbody:probe-payments --live` against a client with a current card | Whether a charge actually settles through Stripe. Only ever reached "card is expired" | **Answered by use (Pete, 2026-11-15)**: the counter has charged stored cards live for months, and typed cards in testing. Open only for T238's under-$10 charge |
 | B4 | Confirm a per-client Mindbody-hosted card capture page exists and is reachable by URL | Whether Phase 3 card capture is buildable at all | Not run |
 | B5 | `scripts/probe-promo-code.ts <client> <code> <option> --create 28`: makes a throwaway one-use code, prices the cart without it and with it twice, deactivates it | Whether Mindbody honours a promotion code on the rehearsal, whether SubTotal stays pre-discount, its refusal wording, and whether pricing spends a one-use code | **Answered, prod, 2026-11-14 (Pete, dummy client 100042041).** An inactive code: 4xx "Promotion code is not active.", repriced without it. A valid one-use code for 581: HONOURED on `Test: true`, $49.00 -> $21.00, DiscountTotal $28.00, SubTotal $49.00, T75 agreeing; priced twice, applied twice, so pricing does NOT spend it. Along the way: `addpromocode` takes `Amount`/`Percent` while the list reads `FlatRate`, and answers `PromotionID: 0` |
+| B6 | `scripts/probe-giftcard-free.ts <clientId>` | Whether ANY zero payment makes `purchasegiftcard` issue a card at face value, which is what a 100% discount on a gift card needs (Pete asked again 2026-11-09, T255) | Written 2026-09-19, not run |
+| B7 | First, the drawer's record of the next refused gift card sale (which call, which payment, Mindbody's words). Then, if it is the tender: a `GiftCard` payment on `checkoutshoppingcart`, `Test: true`, a real barcode with a balance, once with T83's `Metadata` as a JSON STRING (what ships), once as an OBJECT `{amount, cardNumber}` | What Pete's "when finalizing a sale with a Gift card - 'missing key account' bug" (2026-11-09, T255) was: a gift card SPENT (the tender's Metadata shape) or a gift card SOLD from the account (T108, `purchasegiftcard` with `DebitAccount`), and which shape Mindbody reads | Not run. T255 claimed the string was the cause and switched to the object; the merge kept the string because no recorded call ties the refusal to the shape |
+| B8 | Dummy client 100042041, the write guard narrowed to it, `POS_DRY_RUN=false`, prod: ONE real `checkoutshoppingcart` (not `Test: true`) with two card payments, a good card (the stored card or a typed one, $1.00) beside a typed card number built to decline, for a small item. Then read `/sale/sales` for the client and look at the good card's own activity (the processor's dashboard or statement) for an authorization or a charge, and again a day later | Whether Mindbody voids card A's authorization when card B in the same checkout declines (T255 review). Until it is answered, `/api/checkout` answers a 4xx on a split with two or more card legs as AMBIGUOUS, holds the client (T253) and offers no retry | Not run |
 | R1 | `GET /sale/custompaymentmethods` on 471 and on -99 | What exists, and the response key: the spec says `PaymentMethods` (sale.yml:2798) while `scripts/probe-giftcard-free.ts` reads `CustomPaymentMethods`, so that script may have printed "none configured" wrongly. Read both | Not run (T222) |
 | R2 | `checkoutshoppingcart`, `Test: true`, a Custom payment with the new id | Whether Mindbody accepts it, and in which key casing | Not run (T222) |
 | R3 | R2 with a `Notes` key carrying a PaymentIntent id | Whether `SalePayment.Notes` (sale.yml:4557) can carry the link, which would make the match exact inside Mindbody | Not run (T222) |
@@ -263,6 +266,15 @@ signs the buyer up for it, so the counter does not stop at the sale.
   nothing until a row exists, and nothing on screen says so.
 - [ ] Still unseen: whether Mindbody spends the sold pass on the
   enrollment (the request carries no `ClientServiceId`).
+
+**Pete's counter list, 2026-11-09 (T255; written as T219 on its branch, renumbered when it met main's T219):**
+
+- [x] Item search on the cart screen, over the loaded catalog and gift cards, no Mindbody call.
+- [x] A sale split across up to four parts: the saved card and any number of typed cards beside the account, cash and a gift card, in one checkout call. Each card leg is charged exactly what it pays (T238: no $10 floor on any leg). A refusal of a split with two or more cards is held as ambiguous until B8 says what a decline does to the other card.
+- [x] A payment line taken for the whole sale follows the total through a discount instead of having to be chosen again.
+- [ ] The gift card tender's "missing key account" refusal at Finalize: waits on B7. The merge kept T83's string `Metadata`; the object form is the by-hand thing to try.
+- [ ] A 100% discount on a gift card: waits on B6.
+- [ ] Apple Pay: Phase 4's reader (2026-11-15), not the B2 redirect flow.
 
 ---
 

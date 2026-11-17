@@ -1464,7 +1464,16 @@ export function checkoutPaymentPayload(
    * thing to try is the other shape -- an object, `{ Amount, CardNumber
    * }` -- and NOT an automatic retry: a refused payment type is a clean
    * nothing-charged failure, and a money call must never quietly try
-   * itself again in a different shape. */
+   * itself again in a different shape.
+   *
+   * T255 (2026-11-09) switched this to that object on the strength of
+   * Pete's report "when finalizing a sale with a Gift card - 'missing key
+   * account' bug". No record of that call is in the repo, the sentence
+   * names no amount, and "a sale with a Gift card" may as well be a gift
+   * card SOLD from the account (T108) as one spent, so the merge with
+   * main kept this string and left the question to probe B7 in PLAN.md:
+   * the drawer's copy of the next refusal, or a `Test: true` of both
+   * shapes, decides it. */
   if (p.type === "GiftCard") {
     return {
       Type: "GiftCard",
@@ -1533,7 +1542,8 @@ export interface CheckoutOutcome {
  * /api/checkout, which fires only from an explicit Charge tap.
  *
  * Payments takes ONE entry for every ordinary sale, and since T28 may
- * take TWO for an explicit split. The vendored schema is on side:
+ * take TWO for an explicit split (up to FOUR since T255, several of them
+ * typed cards if the customer hands over two). The vendored schema is on side:
  * `Payments` is a plain `type: array` of CheckoutPaymentInfo with no
  * maxItems or any other constraint (sale.yml:5643-5649), so nothing
  * forbids two entries -- though note the T28 sandbox caveat: the Test:
@@ -1586,8 +1596,9 @@ export async function checkoutCart(
       "checkoutCart needs a payment unless the discount covers the entire sale.",
     );
   }
-  if (payments.length > 2) {
-    throw new Error("checkoutCart takes one or two payment entries.");
+  /* T255: up to four, the split's limit in /api/checkout. */
+  if (payments.length > 4) {
+    throw new Error("checkoutCart takes one to four payment entries.");
   }
   for (const p of payments) {
     if (!Number.isFinite(p.amount) || p.amount < 0) {

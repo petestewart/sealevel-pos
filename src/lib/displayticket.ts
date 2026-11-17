@@ -218,7 +218,7 @@ export function tendersFromCharge(input: unknown): TicketTender[] | null {
   const split = body["split"];
   if (split !== undefined && split !== null) {
     const legs = (split as { legs?: unknown })?.legs;
-    if (!Array.isArray(legs) || legs.length === 0 || legs.length > 2) {
+    if (!Array.isArray(legs) || legs.length === 0 || legs.length > MAX_TENDERS) {
       return null;
     }
     const out: TicketTender[] = [];
@@ -251,8 +251,9 @@ export function displayFirstName(name: string | null): string | null {
 /** A ticket is a handful of lines; a longer one is a bug, not a sale. */
 const MAX_LINES = 40;
 const MAX_NAME = 120;
-/** T240: /api/checkout takes one method or exactly two split legs. */
-const MAX_TENDERS = 2;
+/** T240: /api/checkout takes one method or a split; T255 raised the
+ *  split to four legs (MAX_SPLIT_LEGS in /api/checkout). */
+const MAX_TENDERS = 4;
 
 function money(v: unknown): number | null {
   if (typeof v !== "number" || !Number.isFinite(v)) return null;
