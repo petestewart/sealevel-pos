@@ -10810,7 +10810,10 @@ is worse than a refusal.
   is unchanged and nothing about it is negotiated here; if Mindbody
   refuses, that is a plain refusal with nothing else written, and it is
   never retried in another shape. Until that probe is run, this feature
-  is proved only against the mock.
+  is proved only against the mock. **Answered: verified live by Pete,
+  2026-11-17**, through T250's roster "Pay and check in": a client's
+  account charged past its balance with the teacher's PIN, and Mindbody
+  accepted it.
 - Verified on the ticket's harness (mock Mindbody on :4594, `next start`
   on :3094, scratch `t94/`): route tests A to G (no token 409 with the
   balance named and nothing written; a garbage token 401 before any
@@ -22693,6 +22696,10 @@ approval id and the token, Taylor was checked in at -$25.00. Not driven:
 the dark palette (tokens only), and Mindbody itself accepting a
 `DebitAccount` past the balance, which is still T94's open live probe.
 
+**Verified live by Pete, 2026-11-17** ("works"): the roster's Pay and
+check in charged a client's account past its balance with the teacher's
+PIN, and Mindbody accepted it. That also answers T94's open question.
+
 ## T252. The roster dialog keeps a charge that may have gone through (review of PR #16, 2026-11-17)
 
 The review, in its own words: "the roster's "Pay and check in" dialog
@@ -22910,3 +22917,140 @@ stands", the next charge was still refused and the row stayed open; with
 the table back it was recorded with the teacher's staff id. The T250,
 T252 and earlier T253 drives were re-run on the new build and passed
 (approval drive included).
+
+
+## T245. The roster's trash can offers "Late cancel" (Pete, 2026-11-17)
+
+Pete, asked how a no-show is charged: "yes we need that as an option. when
+they press the trash can it should pop up a 'late cancel/no show' option."
+Then, asked about a fee and a lost class: "all we do is mark them Late
+Cancel in the Mindbody UI. check 7:30 pm Yin with Sound Bath w/ Liz
+Saunders from last night, Andie Thompson was a late cancel. and no we do
+not take a class away, that is all we do."
+
+### What Mindbody holds for one (read live, site 471, 2026-11-17, read-only)
+
+Class 112992 (2026-11-16 19:30, Yin with Sound Bath, Liz Saunders). Andie's
+visit 1305761 (client 100042103) is STILL on the class's visit list with
+`LateCancelled: true`, `SignedIn: false`, `Missed: true` (the class is
+over), `AppointmentStatus: "Cancelled"`, her ClassPass `ServiceId` 567467
+still attached, and `LastModifiedDateTime` 2026-11-17T13:50Z: it was
+marked the morning after. So the studio's late cancel MARKS the visit; it
+does not remove the booking, charge a fee, or move a pass.
+
+`POST /client/updateclientvisit` takes `Execute` (client.yml
+UpdateClientVisitRequest: "Possible values are: Cancel, Latecancel,
+Unlatecancel"). `{VisitId, Execute: "Latecancel"}` is the API's version of
+that mark, and `Unlatecancel` undoes it. (`removeclientfromclass` with
+`LateCancel: true` removes the booking instead, which is not what the
+studio does; do not use it here.) Neither has been run live by this app.
+
+### To do
+
+- [x] The roster row's trash can opens a small choice instead of a plain
+      confirm, two 64px buttons: "Cancel booking" (today's
+      `/api/cancel-visit`, unchanged) and "Late cancel" (with a line under
+      it: "Marks it in Mindbody as a late cancel. No fee, nothing taken
+      off their pass."). Offer the trash (and so Late cancel) on a row
+      that is not checked in, for a class that has started or ended as
+      well as one ahead, since a no-show is usually marked afterwards.
+- [x] Late cancel posts a new route (`/api/late-cancel`, or a `lateCancel`
+      option on an existing visit route) that sends ONLY `{VisitId,
+      Execute: "Latecancel"}` through `mindbody()` with the client id for
+      the write guard, under the teacher's token (`requireActor`, T49),
+      so dry run and the write guard apply and a suppressed write says so.
+      Pessimistic like check-in: the row spins until Mindbody answers.
+- [x] A late-cancelled row stays on the roster, greyed, reading "Late
+      cancel" (the roster read already carries `LateCancelled`; make sure
+      such visits are shown, not filtered, and are not counted as booked
+      in the header counters), with a quiet "Undo" that sends `Execute:
+      "Unlatecancel"` the same way.
+- [x] A refusal shows Mindbody's sentence and changes nothing on the row.
+- [x] `scripts/probe-latecancel.ts <clientId> <visitId>`: reads the visit,
+      sends `Latecancel`, reads it back, sends `Unlatecancel`, reads it
+      back, printing `LateCancelled`, `SignedIn`, `ServiceId` and the
+      pass's `Remaining` each time. Usage for the dummy client under
+      `POS_DRY_RUN=false POS_WRITE_CLIENT_IDS=100042041`.
+- [x] Docs: CLAUDE.md (the roster's trash, the Execute codes, and a Mindbody
+      note: the studio's late cancel marks the visit and keeps the pass),
+      PLAN if it lists cancellation.
+- [x] tsc, next build, and a Chromium drive against the fake (teach the
+      fake `Execute` on `updateclientvisit` if it does not know it): the
+      trash offers both choices; Late cancel greys the row and it stays;
+      Undo restores it; Cancel booking removes the row as today.
+- [ ] Pete (or the main session with his OK): run the probe once on John
+      NewGuy's next booked visit and record what Mindbody answered.
+
+### Probed live (main session, prod site 471, 2026-11-17 about 6:00 AM)
+
+Dummy client 100042041, visit 1305809, class 138220 at 18:00 the same day,
+write guard on. `{VisitId, Execute: "Latecancel"}` was REFUSED, a 4xx,
+"Cancellation is outside allowed window.", and nothing changed.
+`{VisitId, Execute: "Unlatecancel"}` on that visit, which was not
+late-cancelled, answered 200 and changed nothing (LateCancelled false,
+AppointmentStatus Booked, pass 567229 still attached; only
+LastModifiedDateTime moved). So Mindbody enforces the studio's late-cancel
+window, and a late cancel twelve hours ahead of the class is refused with
+that sentence, which the dialog shows with nothing changed. Not yet seen:
+the window's size, and whether it is open AFTER the class (Andie's real one
+was marked the morning after); the main session re-runs the probe after
+tonight's class. Late cancel stays offered on rows ahead of the class:
+Mindbody decides. The last box above stays open for that run.
+
+### Built
+
+- `src/lib/roster.ts`: `lateCancelled` on `RosterEntry` (the visit's
+  `LateCancelled`, nothing filtered), and `setLateCancelled`, which sends
+  `{VisitId, Execute}` and nothing else through `mindbody()` with the
+  client id.
+- `src/app/api/late-cancel/route.ts`: `requireSession`, `requireActor`,
+  `runAsActor`; `{visitId, clientId, undo?}`; a suppressed write answers
+  `suppressed`; a Mindbody 4xx answers 409 `reason: "refused"` with its
+  sentence, anything else 502; a 200 whose Visit says the flag did not move
+  answers `applied: false`.
+- `src/app/page.tsx`: the trash dialog's two choices; `markLateCancel`
+  (pessimistic: the row's chip spins "marking" or "undoing" and the
+  dialog's button spins and holds the dialog open until the answer; the
+  row greys only on Mindbody's answer and the roster is read again; a 5xx
+  or `applied: false` reads the roster again too); the late row (greyed,
+  chip "late cancel", Undo in the trash's slot, no check-in, trash, pass
+  change or guest action); "signed up" and the checked-in panel's "of N"
+  leave late cancels out; search names a late cancel's standing.
+- `src/app/globals.css`: `.cancel-choices`, `.cancel-choice-btn`,
+  `.chip.late`, `.rrow.late`, `.late-undo`; tokens only.
+- The fake: `Execute` on `updateclientvisit` (Latecancel sets
+  LateCancelled and signs out, Unlatecancel clears it), TotalBooked leaves
+  late cancels out, `POST /__fake/refuse-execute?n=` (the next N answer
+  400 "Cancellation is outside allowed window.") and
+  `POST /__fake/delay-execute?ms=&n=`.
+- The training guide's "Fixing a mistake" paragraph, its 14-remove.png
+  (re-taken against the fake, same viewport and scale) and capture.cjs's
+  label for the trash.
+- `scripts/probe-latecancel.ts <clientId> <visitId> [classId]`, run only
+  against the fake (and refused by the write guard there for another
+  client); a signed-in or already late-cancelled visit is not sent.
+
+### Verified
+
+tsc and next build clean. Chromium against the fake (app :3245, fake :4245,
+a fresh `pos245`), class ahead (30003): the trash opened "Cancel Riley
+Thompson's booking, or mark a late cancel?" with "Cancel booking" and "Late
+cancel", each 64px, and the line under Late cancel. Late cancel with
+Mindbody held 3 s: the row's chip read "marking" with "Talking to
+Mindbody...", both dialog buttons and the X disabled, Escape did not close
+it; on the answer the row stayed, greyed (name rgb(96,93,93) against
+rgb(32,30,29)), chip "late cancel", Undo where the trash was; "signed up"
+10 -> 9; the fake's visit LateCancelled true, SignedIn false, pass still
+attached, and it received only `Execute,VisitId`. Search named Riley "late
+cancel". Undo (held 3 s: chip "undoing") restored the row and the counter
+to 10. A refused Late cancel showed "Cancellation is outside allowed
+window." in the dialog, row and counter unchanged, the fake's visit
+unchanged; a refused Undo kept the row late with the sentence under the
+name, and a second Undo worked. Cancel booking on Jamie Ortiz removed the
+row (10 -> 9) and the booking, as before. On an ENDED class (30002) the
+trash was offered on a signed-out row and Late cancel greyed it (signed up
+2 -> 1); the dark palette screenshot reads. With this browser's dry run on,
+Late cancel said "Dry run: the late cancel was not sent, nothing was
+written." and nothing changed. Not driven: the sandbox write guard on the
+roster (the route's suppression path is the same as dry run's), and a real
+Mindbody (the probe above is the live record).

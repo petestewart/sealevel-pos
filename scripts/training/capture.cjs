@@ -145,9 +145,9 @@ const flows = {
     await p.getByLabel("Check out Jamie Ortiz").click();
     await shot(p, "13-check-out", { wait: 600 });
     await p.getByRole("button", { name: "Cancel" }).click();
-    await p.getByLabel("Remove Dana Whitfield from this class").click();
+    await p.getByLabel("Cancel or late cancel Dana Whitfield").click();
     await shot(p, "14-remove", { wait: 600 });
-    await p.getByRole("button", { name: "Cancel" }).click();
+    await p.getByRole("button", { name: "Close" }).last().click();
     /* Riley's check-in uses the last session on the pass. */
     await p.getByLabel("Check in Riley Thompson").click();
     await shot(p, "15-last-session", { wait: 3000 });
