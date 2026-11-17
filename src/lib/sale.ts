@@ -1199,23 +1199,38 @@ function purchasedIds(entry: unknown): string[] {
 /**
  * Does this purchased item answer to this ordered line?
  *
- * The id has to match, and the item's own `IsService` (sale.yml:2314:
- * "the purchased item was a pricing option for a service") must not
- * CONTRADICT the line's type. Both id namespaces are small integers on
- * one site -- a product's barcode and a pricing option's ProductId can
- * coincide -- so without this a sale holding a pass could answer for a
- * retail product that was never sold (T103 review, proved against the
- * mock). Where the flag is absent nothing is contradicted and the
- * either-way match stands.
+ * Both id namespaces are small integers on one site -- a product's
+ * barcode and a pricing option's ProductId can coincide -- so a sale
+ * holding a pass must not answer for a retail product that was never
+ * sold (T103 review, proved against the mock). T103 kept them apart
+ * with the entry's `IsService` (sale.yml:2314); live Mindbody reports
+ * it TRUE for a retail product (T254), so a product line now matches
+ * on its exact barcode string only, and a pricing option on either id
+ * unless the entry says it is not a service.
  */
 function purchasedMatches(entry: unknown, line: CartLine): boolean {
   const id = String(line.metadataId).trim().toLowerCase();
+  const e = entry as Record<string, unknown> | null | undefined;
+  /* T254: a retail PRODUCT is matched on its barcode string and nothing
+   * else, and its IsService is not read. Live sale 428877 (site 471,
+   * 2026-11-17) holds Mat Rental, sent as product "0003", as
+   * `{Id: 3, BarcodeId: "0003", IsService: true}`: Mindbody reports
+   * IsService TRUE for a retail product, so the veto that stood here
+   * refused a sale that had sold everything ("nothing was sold", a
+   * false alarm at the counter on a $201.99 card sale). The barcode is
+   * the product's own id as the cart sent it, which a pricing option's
+   * numeric ProductId (or its zero-padded six-digit BarcodeId) does not
+   * collide with, and the entry's numeric Id is deliberately NOT a
+   * match for a product line, which is what keeps the two namespaces
+   * apart now that the flag cannot. */
+  if (line.type === "Product") {
+    const barcode = e?.["BarcodeId"];
+    return typeof barcode === "string" && barcode.trim().toLowerCase() === id;
+  }
   if (!purchasedIds(entry).includes(id)) return false;
-  const isService = (entry as Record<string, unknown> | null | undefined)?.[
-    "IsService"
-  ];
-  if (isService === true && line.type === "Product") return false;
-  if (isService === false && line.type === "Service") return false;
+  /* A pricing option still refuses an entry Mindbody says is NOT a
+   * service; IsService true is all it has ever been seen to say. */
+  if (e?.["IsService"] === false && line.type === "Service") return false;
   return true;
 }
 

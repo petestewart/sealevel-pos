@@ -767,7 +767,8 @@ function handle(method, path, q, body, res) {
         Id: l.found?.ProductId ?? l.id,
         BarcodeId: l.found?.Id ?? null,
         Name: l.found?.Name ?? "Item",
-        IsService: l.found?._kind === "Service",
+        /* T254: live Mindbody says true for a retail product too (sale 428877). */
+        IsService: true,
         Quantity: l.qty,
         Price: l.found?.Price ?? 0,
       }));

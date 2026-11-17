@@ -23054,3 +23054,33 @@ Late cancel said "Dry run: the late cancel was not sent, nothing was
 written." and nothing changed. Not driven: the sandbox write guard on the
 roster (the route's suppression path is the same as dry run's), and a real
 Mindbody (the probe above is the live record).
+
+## T254. A sale holding a retail product was refused as "nothing was sold" (2026-11-17)
+
+Pete, a photo from the counter: Beth sold Ed Walugembe (100036799) a 1
+Month Unlimited and a Mat Rental, $201.99 on card ...4347, and the Cart
+screen said "The payment went through and nothing was sold: the sale does
+not hold product 0003", filed that sentence on Ed's Notes, and refused
+Finalize. Sale 428877, read back from Mindbody, holds BOTH lines: the pass
+(`{Id: 403, BarcodeId: "000403", IsService: true}`, ClientService 567572,
+11/17 to 12/17) and the Mat Rental (`{Id: 3, BarcodeId: "0003",
+IsService: true}`), paid $201.99 by Visa/MC. Nothing was wrong with the sale.
+
+Cause: T103's review made `purchasedMatches` refuse an entry whose
+`IsService` is true for a `Product` line, to keep a product's barcode and
+a pricing option's ProductId apart. Live Mindbody reports `IsService: true`
+for a retail product, so every product line in a sale read failed the
+match. The fake reported false for products, which is why no drive caught
+it.
+
+- [x] `purchasedMatches` (src/lib/sale.ts): a Product line matches on its
+      exact `BarcodeId` string only (never the numeric `Id`), and ignores
+      `IsService`; a Service line matches either id unless `IsService:
+      false`. Checked against sale 428877's own JSON: passes; a missing
+      product, an empty basket and a product "403" beside pass 403 are
+      still refused. Residual: a Service line is still matched by a product
+      entry with the same numeric Id, which needs Mindbody to drop the
+      ordered pass AND add an unordered product of the same number.
+- [x] The fake reports `IsService: true` for products, as live does.
+- [ ] Pete: Ed's Notes hold the false sentence; delete it in Mindbody.
+      Tap Understood on the counter to release Ed's hold.

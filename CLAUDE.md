@@ -1421,6 +1421,14 @@ while `git clone` works, so clone the repo rather than fetching files.
   nothing). Each of those is logged and stands: a FALSE refusal tells a
   teacher at the counter that the money is gone and nothing was sold,
   which is worse than the bug this rail catches.
+  **A retail product comes back `IsService: true`** (T254, live sale
+  428877, 2026-11-17: Mat Rental, sent as product "0003", read back as
+  `{Id: 3, BarcodeId: "0003", IsService: true}`), so the T103 review's
+  veto on that flag refused a $201.99 card sale that had sold
+  everything, told the counter "nothing was sold", filed that sentence
+  on the client's Notes and held the client. A product line now matches
+  on its exact `BarcodeId` string only, a pricing option on `Id` (or
+  `BarcodeId`) unless the entry says `IsService: false`.
   The basket comes from the answer's own `PurchasedItems` when it
   carries one, else from the sale that `latestSale` already reads for
   the numeric id; when NEITHER says what the sale holds the outcome is
