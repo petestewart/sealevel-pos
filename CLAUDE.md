@@ -72,23 +72,26 @@ iPad**, and can type their own card there (Pete: "a student shouldnt have
 to hand them their card"). See Customer display below.
 
 **T242 (2026-11-17): the unpaid row's "Pay and check in" opens on the
-student's OWN passes** when they hold any Mindbody would take for this
-visit (Pete: "there should be an option to use one of their exisiting
-passes when they have one"): only those passes, each with a 64px "Use
-this pass and check in", and "Buy a pass instead" for T25's purchase view,
-unchanged. Which passes is Mindbody's answer, not ours: `GET
-/api/visit-passes` (`src/lib/visitpasses.ts`) asks each current pass with
-classes left with a `Test: true` `updateclientvisit` on the service
-account, in parallel; only a 4xx about the request hides one, and a
-suppressed check, a 5xx or a refusal of the caller leaves it shown. Test on
-this endpoint has never been watched live, so the first check per server
-process is asked alone with the visit read before and after; a visit that
-came back paid logs `TEST IGNORED`, says so on the dialog, and later opens
-show every current pass unchecked. The tap is `/api/visit-payment` then
-`/api/checkin`, the existing routes under the teacher's token, pessimistic,
-no money and no approval; a refused or suppressed assignment checks nobody
-in. The student may pick on the customer iPad too ("Your passes", below);
-the first tap from either side wins (`payFlight`).
+student's OWN passes** when they hold any that may pay for this visit
+(Pete: "there should be an option to use one of their exisiting passes
+when they have one"): only those passes, each with a 64px "Use this pass
+and check in", and "Buy a pass instead" for T25's purchase view,
+unchanged. **The list is built from READS ONLY** (`GET /api/visit-passes`,
+`src/lib/visitpasses.ts`, a signed-in teacher, the visit must be this
+client's): current passes with a class left, less guest passes, less a
+pass whose `Program` is known and differs from the class's known
+`ClassDescription.Program` (either unknown keeps the pass). **Never ask
+Mindbody with `Test: true` on `updateclientvisit`**: nobody has seen it
+honoured there, and if it is not, every check is a real reassignment of a
+real student's visit on the service account (the T242 review removed
+exactly that). The real assignment's refusal, in Mindbody's words with
+nobody checked in, is the backstop. The tap is `/api/visit-payment` then
+`/api/checkin`, the existing routes under the teacher's token,
+pessimistic, no money and no approval; a refused or suppressed assignment
+checks nobody in, and after a failed check-in (or an assignment with no
+answer) nothing else in the dialog writes until the row is checked. The
+student may pick on the customer iPad too ("Your passes", below); the
+first tap from either side wins (`payFlight`).
 
 **`docs/PLAN.md` is the execution plan**: ordered work items, what each one is
 done when, the probes still to run, and the questions blocked on Pete. Start
@@ -690,14 +693,18 @@ and keeps the key-to-ClientService map on the request's server-only half
 (`private.offer`). A tap posts `{requestId, key}` to `POST
 /api/display/pass` (display cookie only); `choosePass` checks the key
 against that stored offer, moves the scene to "One moment" at once (one
-offer, one pick, from either side) and emits `pass-pick` to the teacher's
+offer, one pick, from either side; it holds a minute at most) and emits
+`pass-pick` to the teacher's
 stream with the id. The teacher's iPad hears it through `useTenderPick`'s
 `applyPass` (the stream the waiver block already holds, plus a 1.5s poll
 of `GET /api/display/passes`, acted on once per pick id, for this tab's
 scene and a pass its own list shows) and runs the same two writes as the
 teacher's tap. **Nobody waits on the student**: the teacher's buttons work
 throughout, and the scene then reads "Done" or "Please see the front
-desk" for the summary's eight seconds. Closing the dialog or "Buy a pass
+desk" for the summary's eight seconds; after an assignment that changed
+nothing the list goes back up on the same request, with fresh keys and
+the old pick cleared (a replace back to `offer` always clears it).
+Closing the dialog or "Buy a pass
 instead" cancels it by request id; a busy screen changes nothing on the
 teacher's side. The display still adds no write path to Mindbody.
 
@@ -1426,9 +1433,11 @@ while `git clone` works, so clone the repo rather than fetching files.
   unpaid row's dialog does sell the pass, and since T242 it first offers
   a pass the student already holds; free entry stays in the purchase
   view.)
-- **T242's `Test: true` on `updateclientvisit` is unverified live.** The
-  first open per server process checks it (see the T242 note above);
-  Pete's last T242 box is the live run on the dummy client.
+- **T242 is unverified live, and its list cannot see every rule.** It
+  filters by program only, from reads; a pass Mindbody refuses for
+  another reason (a membership restriction) is offered and the tap is
+  refused in Mindbody's words. Pete's last T242 box is the live run on
+  the dummy client.
 
 - **Card charges are live-proven by use, not by a recorded probe** (Pete,
   2026-11-15: "weve been using the app for months", and typed cards have

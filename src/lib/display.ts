@@ -210,6 +210,8 @@ export const SIGNUP_TTL_MS = 4 * 60 * 60 * 1000;
  *  it down does not leave one student's passes for the next, and inside
  *  armExpiry's timer window, so it leaves with nobody asking. */
 export const PASSES_TTL_MS = 5 * 60 * 1000;
+/** T242: and "One moment" (a pass chosen, the writes running) a minute. */
+export const PASSES_WORKING_TTL_MS = 60 * 1000;
 /** T204: two minutes with no touch and a sign-up in progress returns the
  *  screen to idle and discards the partial form, so a student who
  *  wandered off cannot hold the screen against the next sale and the
@@ -1011,6 +1013,11 @@ export async function presentRequest(input: {
   ) {
     held.payload = input.payload;
     held.private = input.private ?? {};
+    /* T242 review: a NEW offer (the teacher's iPad offering the list
+     * again, or the next student's on the same tab) is a fresh question:
+     * the last pick belongs to the offer it was made on, and left here it
+     * would refuse the next tap as "already checking you in". */
+    if (input.payload.mode === "offer") held.passPick = null;
     held.version = (held.version ?? 1) + 1;
     held.presentedAt = now;
     held.expiresAt = now + (input.ttlMs ?? PASSES_TTL_MS);
@@ -1661,6 +1668,11 @@ export async function choosePass(
     passName,
   };
   c.version = (c.version ?? 1) + 1;
+  /* T242 review: "One moment" holds a minute at most, as the teacher's
+   * own `working` present does, so a student is never left on it if the
+   * teacher's iPad never hears the pick. */
+  c.expiresAt = now + PASSES_WORKING_TTL_MS;
+  armExpiry(c, now);
   void boundedDb(
     updateDisplayRequestPayload(
       c.id,

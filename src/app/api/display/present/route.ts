@@ -6,6 +6,7 @@ import { randomBytes } from "node:crypto";
 
 import {
   PASSES_TTL_MS,
+  PASSES_WORKING_TTL_MS,
   PAYLOAD_LIMIT_BYTES,
   SUMMARY_TTL_MS,
   isDisplayRequestKind,
@@ -245,7 +246,7 @@ export async function POST(request: Request) {
       built.value.mode === "offer"
         ? PASSES_TTL_MS
         : built.value.mode === "working"
-          ? 60_000
+          ? PASSES_WORKING_TTL_MS
           : SUMMARY_TTL_MS;
   }
 

@@ -740,8 +740,10 @@ or the student should be able to select using it. no need to have to wait
 on the student for that."
 
 When the roster's "Pay and check in" dialog opens on the student's own
-passes (the passes Mindbody would accept for this visit, each asked with a
-`Test: true` `updateclientvisit`), the teacher's iPad puts the same list on
+passes (current passes with a class left, less guest passes and passes
+from a known other program than the class's, all from reads; Mindbody's
+refusal of the real assignment is the backstop), the teacher's iPad puts
+the same list on
 the display: each pass's name, classes left and expiry, and a 64px "Use
 this pass". It is NOT a wait and NOT an approval: no money moves, the
 teacher's own "Use this pass and check in" works the whole time, and the
@@ -767,7 +769,12 @@ first tap from either side wins.
   ("Please see the front desk", when the assignment or the check-in did not
   land). The tab that put the scene up replaces it in place; anything else
   meets the ordinary "busy" rule. The offer holds five minutes at most,
-  "One moment" a minute, `done` and `help` the summary's eight seconds.
+  "One moment" a minute (whether the student's pick or the teacher's tap
+  put it there), `done` and `help` the summary's eight seconds. A replace
+  back to `offer` clears the last pick; after a refused or suppressed
+  assignment the teacher's iPad offers the list again that way, four
+  seconds after "Please see the front desk". After a failed check-in it
+  does not: the pass may already be on the visit.
 - **It comes down** when the dialog closes or the teacher taps "Buy a pass
   instead" (cancelled by request id, so nothing else on the screen is
   touched). If the screen is busy or not connected, the dialog works

@@ -1,44 +1,39 @@
 /**
- * T242: which of a client's own passes Mindbody would accept for ONE
- * visit, so the roster's "Pay and check in" dialog can offer them before
- * it offers a purchase.
+ * T242: which of a client's own passes the roster's "Pay and check in"
+ * dialog offers for ONE unpaid visit, before it offers a purchase.
  *
  * Pete, 2026-11-17: "when the client has a pass and they have not paid
  * for a class ... there should be an option to use one of their exisiting
- * passes when they have one." A pass can be current and still not cover
- * the class (another program, a membership restriction), and those rules
- * live in Mindbody, so they are not rebuilt here. Each candidate is asked
- * of Mindbody instead, the way T221 asks per pass: the same write the
- * teacher's tap will make, `POST /client/updateclientvisit` with
- * `{VisitId, ClientServiceId}`, carrying `Test: true` (client.yml
- * UpdateClientVisitRequest: "input information is validated, but not
- * committed"), one per candidate, in parallel, on the service account.
+ * passes when they have one."
  *
- * Only a 4xx about the REQUEST hides a pass. A suppressed check (dry run,
- * the write guard: `Test` rides a POST, so mindbody() suppresses it like
- * any write, as it does T221's Test pricing), a 5xx, a dead transport and
- * a refusal of the CALLER (a permission the service account lacks says
- * nothing about the pass) all leave it SHOWN: a check that cannot answer
- * must never send a student holding a pass to the till. The real write's
- * refusal, in Mindbody's own words, is the backstop.
+ * READS ONLY. Nothing here sends a write-shaped call of any kind. The
+ * first build asked Mindbody about each pass with a `Test: true`
+ * `updateclientvisit`, and the T242 review showed why that was unsafe:
+ * nobody has seen Mindbody honour `Test` on that endpoint, and if it does
+ * not, every check is a real reassignment of a real student's visit, on
+ * the service account, with no teacher named and nobody told. So the
+ * list is built from what is already readable:
  *
- * `Test` on this endpoint has never been watched live. If Mindbody
- * IGNORED it, every check would be a real assignment, so the FIRST time a
- * check answers 200 in a process, the visit is read before and after
- * (`visitPayment`, the class's own visit list): an unpaid visit that came
- * back carrying a pass means Test was not honoured. That is logged
- * loudly, reported to the screen, and every later open in this process
- * skips the checks and shows every current pass with classes left (the
- * ticket's own fallback). Once a verification finds the visit untouched,
- * the process trusts Test and stops reading.
+ * - the client's current passes (`fetchPasses`, `/client/clientservices`
+ *   with ShowActiveOnly), less guest passes (T69: a guest pass checks in
+ *   a guest, never the member) and passes with no class left;
+ * - the class's own visit list (`/class/classvisits`), which says whose
+ *   visit this is (a visit that is not this client's is refused, since
+ *   this read decides what a teacher is offered to write) and, from the
+ *   class's `ClassDescription.Program` (class.yml Class/ClassDescription),
+ *   which program the class belongs to;
+ * - and each pass's own `Program` (client.yml ClientService). A pass
+ *   whose program is KNOWN and differs from the class's KNOWN program is
+ *   left out; where either is unknown the pass is kept.
  *
- * Reads plus Test calls only: nothing in this file commits anything.
+ * Anything else that stops a pass paying for the class (a membership
+ * restriction, a rule this does not see) is Mindbody's to say: the real
+ * assignment, under the teacher's token, is refused in Mindbody's own
+ * words and nobody is checked in. That refusal is the backstop.
  */
 import { isGuestPass } from "./guestpass";
 import { fetchPasses, type PassInfo } from "./clientcontext";
-import { isActorRefusal, mindbody, mindbodyHttpStatus } from "./mindbody";
-import { visitPayment } from "./roster";
-import { plainRefusal } from "./sale";
+import { mindbody } from "./mindbody";
 
 export interface VisitPass {
   /** `ClientService.Id`, what `/api/visit-payment` takes. */
@@ -49,29 +44,27 @@ export interface VisitPass {
   expires: string | null;
 }
 
-export interface VisitPasses {
-  /** The passes to offer, in the order Mindbody listed them. */
-  passes: VisitPass[];
-  /** Candidates Mindbody refused for this visit, with its sentence (for
-   *  the log and the drawer; the screen shows only what is offered). */
-  hidden: { id: number; name: string; reason: string }[];
-  /** Candidates whose check settled nothing (suppressed, 5xx,
-   *  transport, a refusal of the caller): shown. */
-  unknown: number;
-  /** How the checks went: `checked` (Mindbody answered), `suppressed`
-   *  (every check was held back by dry run or the write guard),
-   *  `ignored` (this process found Test not honoured, so nothing was
-   *  asked), or `none` (no candidates). */
-  tested: "checked" | "suppressed" | "ignored" | "none";
-  /** True only on the open that found Test was ignored: the visit was
-   *  unpaid before the checks and carries a pass after them. */
-  testIgnoredNow?: boolean;
-}
+export type VisitPasses =
+  | {
+      ok: true;
+      /** The passes to offer, in the order Mindbody listed them. */
+      passes: VisitPass[];
+      /** Current passes left out because their program is not the
+       *  class's (for the log; the screen shows only what is offered). */
+      otherProgram: { id: number; name: string }[];
+      /** The pass this visit ALREADY carries, by name, when it carries
+       *  one: the roster the dialog opened from was stale (another iPad,
+       *  a reopen a second after a write). Null when the visit is unpaid
+       *  or the visit list was not read (no candidates). */
+      alreadyPaidWith: string | null;
+    }
+  | { ok: false; status: number; error: string };
 
-/** A current pass worth asking about: it can be written with (an id),
- *  it is not a guest pass (T69: a guest pass checks in a guest, never the
- *  member), and it has a class left (or Mindbody keeps no count). */
-export function candidatePasses(passes: readonly PassInfo[]): VisitPass[] {
+/** A current pass worth offering at all: an id to write with, not a
+ *  guest pass, and a class left (or no count kept). */
+export function candidatePasses(passes: readonly PassInfo[]): (VisitPass & {
+  programId: number | null;
+})[] {
   return passes
     .filter(
       (p): p is PassInfo & { id: number } =>
@@ -85,168 +78,97 @@ export function candidatePasses(passes: readonly PassInfo[]): VisitPass[] {
       remaining: p.remaining,
       count: p.count,
       expires: p.expires,
+      programId: p.programId,
     }));
 }
 
-const G = globalThis as typeof globalThis & {
-  __posVisitPassTest?: "unverified" | "honoured" | "ignored";
-};
-function testState(): "unverified" | "honoured" | "ignored" {
-  return (G.__posVisitPassTest ??= "unverified");
+function num(v: unknown): number | null {
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
 
-type Outcome =
-  | { kind: "ok" }
-  | { kind: "suppressed" }
-  | { kind: "unknown" }
-  | { kind: "refused"; reason: string };
-
-async function testOne(
-  clientId: string,
-  visitId: number,
-  clientServiceId: number,
-): Promise<Outcome> {
-  try {
-    const res = await mindbody<{ DryRun?: boolean; WriteSuppressed?: boolean }>(
-      "/client/updateclientvisit",
-      {
-        method: "POST",
-        body: { VisitId: visitId, ClientServiceId: clientServiceId, Test: true },
-        /* The payload names no client, so the write guard reads this. */
-        clientId,
-      },
-    );
-    if (res?.DryRun || res?.WriteSuppressed) return { kind: "suppressed" };
-    return { kind: "ok" };
-  } catch (err) {
-    const status = mindbodyHttpStatus(err);
-    if (status !== null && status < 500 && !isActorRefusal(err)) {
-      return {
-        kind: "refused",
-        reason: plainRefusal(err instanceof Error ? err.message : String(err)),
-      };
-    }
-    return { kind: "unknown" };
-  }
-}
-
-/** Read the visit back after a Test check answered 200 on a visit that
- *  was unpaid: true when it now carries a pass (Test was ignored). */
-async function verifyUntouched(
-  clientId: string,
-  visitId: number,
+/** The class's visit list: who this visit belongs to, what it carries,
+ *  and the class's program. One metered read, the roster's own call. */
+async function readVisit(
   classId: number,
-): Promise<boolean> {
-  try {
-    const after = await visitPayment(classId, visitId);
-    if (after === null) return false;
-    if (after.clientServiceId !== null) {
-      G.__posVisitPassTest = "ignored";
-      console.error(
-        `[visit-passes] TEST IGNORED: visit ${visitId} for client ${clientId} ` +
-          `was unpaid before a Test check and now carries pass ` +
-          `${after.clientServiceId} (${after.pricingOption ?? "unnamed"}). ` +
-          `updateclientvisit did not honour Test: true. Later opens show ` +
-          `every current pass unchecked.`,
-      );
-      return true;
-    }
-    G.__posVisitPassTest = "honoured";
-    console.log(
-      `[visit-passes] Test verified: visit ${visitId} still unpaid after a ` +
-        `Test check; updateclientvisit honours Test`,
-    );
-    return false;
-  } catch {
-    /* Unverified stays unverified; the next open tries again. */
-    return false;
+  visitId: number,
+): Promise<{
+  found: boolean;
+  clientId: string | null;
+  paidWith: string | null;
+  classProgramId: number | null;
+}> {
+  const body = await mindbody(`/class/classvisits?ClassId=${classId}`);
+  const visits: any[] = body?.Class?.Visits ?? body?.Visits ?? [];
+  const visit = visits.find((v) => num(v?.Id) === visitId);
+  const classProgramId = num(body?.Class?.ClassDescription?.Program?.Id);
+  if (!visit) {
+    return { found: false, clientId: null, paidWith: null, classProgramId };
   }
+  const owner = visit.ClientId ?? visit.Client?.Id;
+  const paidWith = visit.Service?.Name ?? visit.ServiceName ?? null;
+  return {
+    found: true,
+    clientId: owner === undefined || owner === null ? null : String(owner),
+    paidWith: typeof paidWith === "string" && paidWith ? paidWith : null,
+    classProgramId,
+  };
 }
 
 export async function usablePassesForVisit(input: {
   clientId: string;
   visitId: number;
-  /** The class the visit is in, for the one-time Test verification. */
-  classId: number | null;
+  classId: number;
 }): Promise<VisitPasses> {
   const { clientId, visitId, classId } = input;
+  /* Both reads at once, so a client with passes waits for one round
+   * trip; a client with none is answered as soon as their passes are,
+   * without waiting on the class. */
+  const visitRead = readVisit(classId, visitId);
+  visitRead.catch(() => undefined);
   const candidates = candidatePasses(await fetchPasses(clientId));
   if (candidates.length === 0) {
-    return { passes: [], hidden: [], unknown: 0, tested: "none" };
+    return { ok: true, passes: [], otherProgram: [], alreadyPaidWith: null };
   }
-  if (testState() === "ignored") {
+  const visit = await visitRead;
+  if (!visit.found) {
+    return {
+      ok: false,
+      status: 404,
+      error: "That booking is not on this class any more. Refresh the roster.",
+    };
+  }
+  if (visit.clientId !== null && visit.clientId !== clientId) {
     console.warn(
-      `[visit-passes] client ${clientId} visit ${visitId}: Test was found ` +
-        `ignored by updateclientvisit earlier in this process, so ` +
-        `${candidates.length} current pass(es) are shown unchecked`,
+      `[visit-passes] refused: visit ${visitId} on class ${classId} belongs ` +
+        `to client ${visit.clientId}, not ${clientId}`,
     );
-    return { passes: candidates, hidden: [], unknown: 0, tested: "ignored" };
-  }
-  /* The one-time verification: read the visit first, while it is still
-   * unpaid, so "after" has something to be compared with. */
-  let before: number | null | undefined;
-  const verify = testState() === "unverified" && classId !== null;
-  if (verify) {
-    try {
-      const v = await visitPayment(classId, visitId);
-      before = v === null ? undefined : v.clientServiceId;
-    } catch {
-      before = undefined;
-    }
-  }
-  /* Until this process has seen Test honoured, ONE candidate is asked
-   * alone and the visit read back before the rest are asked: if Test is
-   * ignored, that costs one real assignment rather than one per pass. */
-  let outcomes: Outcome[];
-  let testIgnoredNow = false;
-  if (verify && before === null) {
-    const first = candidates[0] as VisitPass;
-    const firstOutcome = await testOne(clientId, visitId, first.id);
-    if (firstOutcome.kind === "ok") {
-      testIgnoredNow = await verifyUntouched(clientId, visitId, classId as number);
-    }
-    const rest = testIgnoredNow
-      ? candidates.slice(1).map((): Outcome => ({ kind: "unknown" }))
-      : await Promise.all(
-          candidates.slice(1).map((p) => testOne(clientId, visitId, p.id)),
-        );
-    outcomes = [firstOutcome, ...rest];
-  } else {
-    outcomes = await Promise.all(
-      candidates.map((p) => testOne(clientId, visitId, p.id)),
-    );
+    return {
+      ok: false,
+      status: 409,
+      error: "That booking belongs to someone else. Refresh the roster.",
+    };
   }
   const passes: VisitPass[] = [];
-  const hidden: VisitPasses["hidden"] = [];
-  let unknown = 0;
-  let suppressed = 0;
-  candidates.forEach((p, i) => {
-    const o = outcomes[i];
-    if (o?.kind === "refused") {
-      hidden.push({ id: p.id, name: p.name, reason: o.reason });
-      return;
+  const otherProgram: { id: number; name: string }[] = [];
+  for (const { programId, ...p } of candidates) {
+    if (
+      visit.classProgramId !== null &&
+      programId !== null &&
+      programId !== visit.classProgramId
+    ) {
+      otherProgram.push({ id: p.id, name: p.name });
+      continue;
     }
-    if (o?.kind === "suppressed") suppressed += 1;
-    if (o?.kind === "unknown" || o?.kind === "suppressed") unknown += 1;
     passes.push(p);
-  });
-  const tested: VisitPasses["tested"] = testIgnoredNow
-    ? "ignored"
-    : suppressed === candidates.length
-      ? "suppressed"
-      : "checked";
+  }
   console.log(
     `[visit-passes] client ${clientId} visit ${visitId}: ` +
-      `${candidates.length} candidate(s), shown [${passes.map((p) => p.id).join(", ")}], ` +
-      `hidden [${hidden.map((h) => `${h.id}: ${h.reason}`).join("; ")}]` +
-      (unknown > 0 ? `, unsettled ${unknown}` : "") +
-      ` (${tested})`,
+      `${candidates.length} current, offered [${passes.map((p) => p.id).join(", ")}]` +
+      (otherProgram.length > 0
+        ? `, another program [${otherProgram.map((p) => p.id).join(", ")}]`
+        : "") +
+      (visit.classProgramId === null ? " (class program unknown)" : "") +
+      (visit.paidWith !== null ? `, visit already paid with ${visit.paidWith}` : ""),
   );
-  return {
-    passes,
-    hidden,
-    unknown,
-    tested,
-    ...(testIgnoredNow ? { testIgnoredNow: true } : {}),
-  };
+  return { ok: true, passes, otherProgram, alreadyPaidWith: visit.paidWith };
 }
