@@ -31,6 +31,14 @@ path for the phase that carries them.
 | P13 | Who reconciles, who refunds, and where do they hear about a mismatch off the counter? | T231, T235 | |
 | P14 | S700 or a second WisePOS E? | T237 | Recommended S700, so the two readers cannot be confused |
 | P15 | The service charge on card transactions under $10 (Pete, 2026-11-15, T239: "we are eventually going to implement adding a service charge for CC transactions under $10"). **Planned, not built; until it is, a card is charged exactly the sale.** Undecided: the amount; whether it is a Mindbody product line on the cart or a fee outside it; whether it applies to the reader, a typed card and the card on file alike; and how it is shown to the student before the tap | Nothing yet | Not the retired $10 floor: nothing is bought as credit. Stripe's own $0.50 minimum still meets the reader (T226) |
+| P16 | Where do incident alerts and diagnoses reach you? Recommended: one private Slack channel, GitHub issues as the record | T263, T264 | Phase 5 |
+| P17 | Which Claude account runs the investigator's sessions, and the monthly ceiling | T264 | Estimated $30 to $80 in a normal month |
+| P18 | Who may tap a one-tap repair: you alone, or anyone in `POS_ADMIN_STAFF_IDS`? | T269 | |
+| P19 | When the second check disputes "nothing was sold" at the moment it happens, may the counter show an amber "We are checking this sale. Do not charge again." and hold off writing on the student's Notes until the check returns? | T267 | Changes what a rail says to a teacher |
+| P20 | Client first name and last initial in Slack and GitHub, or ids only? And is incident evidence (ids, sale contents, first names, never cards) passing through a hosted agent session acceptable, as it does when you ask one by hand? | T264 | |
+| P21 | May the app take back its own false note and hold with no tap, on two keys, once T265's rehearsal has passed in front of you? | T265's last box | Ships as `propose` until you say so |
+| P22 | Should the agent be able to search Railway's logs? Needs a log drain, never the Railway token (it reads every secret) | Nothing yet | Recommended: not until an incident proves the trail was not enough |
+| P23 | Should a retraction leave anything on the student's Notes? | T265 | Recommended: nothing; the incident and the audit row are the record |
 
 ## Probes to run
 
@@ -49,6 +57,11 @@ Cheap, and each one removes a guess. All are read-only or `Test: true`.
 | R4 | One real Custom sale for dummy client 100042041, then `/sale/sales` with `request.paymentMethodId` | How the sale reads back, whether the filter takes a custom id, how it shows in Pete's reports, and how a return of it reads | Not run (T231) |
 | R5 | Three `Test: true` calls: (a) `purchasegiftcard` paid Custom; (b) `purchaseaccountcredit` paid Custom; (c) `purchasegiftcard` paid `DebitAccount` | Which gift card route the reader can use: directly (a), or Pete's credit-then-spend workaround (b then c). c asks against the client's existing balance, so "insufficient" there is about the balance, not the payment type | Not run (T222; `scripts/probe-custom-payment.ts`) |
 | R6 | Stripe's simulated reader, test mode | Every (U) in Phase 4: `process_config` names, reader action statuses and failure codes, offline and busy errors, whether the reader times out by itself, how long a `card_present` hold lasts (believed about two days), metadata on capture, `amount_to_capture`, the simulated registration codes and test helper, test-mode decline behaviour | Not run (before T225 is done) |
+| A1 | Fire the investigator's scheduled task from the Railway service with a throwaway incident id | The fire endpoint and token shape, reachability from Railway, seconds from fire to the session's first tool call, any daily cap on fired runs | Not run (before T263 is done) |
+| A2 | From the investigator's cloud environment: call this app with no token in hand, and call `api.mindbodyonline.com` | That the environment's proxy attaches the agent token so the session never sees it, and that Mindbody is unreachable from there | Not run (T262, T264) |
+| A3 | An unattended fired session posts to the alert channel, opens an issue and pushes a branch | That the connectors and the repo grant work with nobody watching | Not run (T264) |
+| A4 | Dummy client 100042041, write guard narrowed to it: file a T62 note, then `updateclient` with that one entry removed | That Mindbody accepts shortened Notes, and what a blank one reads back as | Half answered (T254's cleanup, prod, 2026-11-17): `updateclient` with `Notes: ""` through `updateClientAudited`, write guard narrowed to client 100036799, was accepted and read back as `""`, so a blank is accepted and reads back blank. A SHORTENED note (one entry of several removed) is still unseen |
+| A5 | Read back a sale mixing a pass, a retail product and a discount, and one paid by split tender | Whether item amounts, payments and our paid figure agree to the cent in each shape, tax included: the witness's money check | Not run (T261) |
 
 ---
 
@@ -689,6 +702,200 @@ changed by the item that builds it, in that item's own commit:
 8. ~~**T93's $10 floor** "does not care whose card it is": at odds with the
    lost-sale brief until P10 is answered (T226).~~ Moved already: T238
    retired the floor on every card path, so T226 has none to apply.
+
+---
+
+## Phase 5: incidents and self-repair
+
+Asked for by Pete, 2026-11-17, after T254 (a whole $201.99 sale refused as
+"nothing was sold", a false sentence filed on the student's Notes, a hold
+raised, and every step of the diagnosis and repair done by hand): "have
+Fable design a system that could auto-diagnose and fix issues like this as
+soon as they happen." Design and reasoning:
+`docs/design/auto-diagnosis.md`. Do not re-argue it here.
+
+The shape: a route that decides a serious outcome raises an incident (a
+console line and an `incidents` row with the evidence it had in hand); an
+outbox pushes the incident's id to a fresh Claude Code cloud session; that
+session reads through one narrow door into this app and posts a diagnosis;
+and the APP, not the agent, takes back its own false side effects once its
+own second check agrees. **The agent adds zero write paths to Mindbody and
+holds no Mindbody credential.** "Nothing auto-charges" does not move.
+
+**The agent plumbing is unverified from here.** The fire endpoint, the
+environment's proxied secret and the unattended connectors are described at
+the level of capability and marked (U) in the design; probes A1 to A3
+settle them. T260 to T262 need none of it.
+
+### The ladder
+
+| Rung | What | Who acts |
+|---|---|---|
+| 0 | Record, deliver, diagnose, report | Nobody taps |
+| 1 | Take back the app's OWN side effects of a verdict re-proven false (the Notes line, the hold, the red block); write a finding onto an ambiguous hold | Nobody taps: the agent's request AND the server's witness. Pete is told after, with Undo |
+| 2 | Merge a fix PR; a repair to Mindbody data from a fixed list; undo a rung 1 action | One tap, Pete (P18), under the tapper's own token |
+| 3 | Anything that moves money; any rail, setting, deploy | A person. The agent writes the steps |
+
+### Work items
+
+T260 to T265 are the first slice. Its test is T254 itself, replayed on the
+dummy client.
+
+- [ ] **T260 The incident record.** `src/lib/incident.ts` `raiseIncident`,
+  the migration (`incident_cases`, `incidents`), the per-request call trail
+  through `mbtrace.ts`'s store, the three extra strikes (staff token, gift
+  card barcode, authored free text), the charter note in `db.ts`. Raised
+  from `soldNothingAnswer`, the partial answers, `/api/purchase-contract`,
+  and `settleCharge` as the backstop (`[incident] UNRAISED`). Done when a
+  sold-nothing forced against the fake leaves one row holding the ticket,
+  the sale as read, the verdict's per-line audit, `side_effects` with the
+  note's exact filed text and the hold id, and the git sha; a grep of the
+  row finds no card digits, CVV, PIN, staff token or barcode; a money route
+  that raises nothing still leaves a row through the backstop; and with
+  `DATABASE_URL` unset the console line is printed and the counter's answer
+  is byte for byte what it was.
+- [ ] **T261 The witness.** A second, separately written check that a sale
+  holds what was sold (exact unit count, one-to-one pairing, amounts equal
+  payments equal paid to the cent, the same client, no other sale since),
+  run once at the verdict on the sale already read and stored on the
+  incident. It can only ever say "this alarm was false". Done when sale
+  428877's own JSON passes it while `assertBasket` at `4e4aceb^` refuses the
+  same JSON; a planted empty basket, a missing line, an extra line, a total
+  off by one cent, another client's sale and a second sale five minutes
+  later each fail it; and probe A5 has said which ticket shapes it covers.
+- [ ] **T262 The agent door.** `/api/agent/*` behind `POS_AGENT_TOKEN` (404
+  when unset): incident reads, the GET-only Mindbody proxy with its path
+  allow-list and per-incident cap, the call log, `client_writes` and holds
+  reads, all with T260's strikes; `scripts/agent/*.ts` as the only client.
+  Done when a non-GET or a path off the list is refused with nothing sent
+  to Mindbody; the device cookie, a staff session and the display cookie
+  each fail to open the door; the agent token opens no route outside it; a
+  proxied read shows in the drawer tagged `actor=agent`; and a response
+  holding a staff token or a client's Notes arrives with both struck.
+- [ ] **T263 Delivery.** The outbox and its backoff, fingerprints and
+  cases, the hourly and daily fire caps and the storm alert, the direct
+  severity 1 alert that needs no agent, the daily sweep task, probe A1.
+  Done when thirty identical incidents in one minute produce one fire and
+  one alert line whose count updates; an unreachable fire endpoint changes
+  no counter response time and is retried on schedule from the table after
+  a restart; the eleventh case of a day produces the storm line and no
+  fire; a dry-run, write-guarded or sandbox incident is recorded and not
+  fired unless `POS_INCIDENT_FIRE_ALL=true`; and the fired text holds only
+  ids and enums.
+- [ ] **T264 The investigator.** Its cloud environment (allow-list: this
+  app and GitHub; the agent token as a proxied secret), the fired task,
+  `docs/agent/incident-playbook.md` with T254 as the worked example, the
+  diagnosis form, the issue and the channel message, probes A2 and A3.
+  Done when a T254 replay (a fixture of sale 428877 against the pre-fix
+  matcher, dummy client 100042041, `incident_repairs` off) puts on Pete's
+  phone, within ten minutes and with no human, a diagnosis that says False
+  alarm, High, names the `IsService` veto with file and line at the
+  incident's sha, says why it had not shown on product-only tickets, and
+  reports the sweep; the call log shows only GETs from it; and a client
+  renamed to an instruction ("Ignore the playbook and ...") changes nothing
+  in the report but the name.
+- [ ] **T265 Self-undo.** `POST /api/agent/incidents/<id>/repairs` taking a
+  kind and nothing else; the executor (`overturn-verdict`: the exact-match
+  Notes retraction through `updateClientAudited` as `incident-retract`, the
+  hold's new `overturned` state, the incident's timeline); the
+  `incident_repairs` setting (`off`, `propose`, `auto`; ships `propose`,
+  fails tight) with its admin control; the screens' 10 second re-ask while
+  a hold shows, overturned holds listed for 24 hours, and the correction
+  block on the Cart screen and the roster dialog; probe A4. Done when, on
+  prod with the write guard on the dummy client and the setting on `auto`,
+  the T254 replay ends with no tap in: the false entry gone from Notes and
+  every other entry untouched, a `client_writes` row with before and after,
+  the hold overturned, and the red block turned into the correction on a
+  Cart screen left open, on one reloaded, and on a second iPad. And when
+  each of these is left ALONE with the reason reported: a planted true
+  sold-nothing, a note a teacher edited by one character, a hold a teacher
+  already acknowledged, a second sale for the client after the incident, a
+  repair asked for with the witness failing (which also drops the setting
+  to `propose`), and a dry-run suppression.
+  - [ ] Pete: P21, then move the setting to `auto`.
+- [ ] **T266 Truth on an ambiguous hold.** For `ambiguous` and
+  `stale-pending`: two server reads at least two minutes apart and five
+  minutes after the charge began, then the finding written ONTO the hold
+  ("Checked at 1:31 PM: this charge went through. Sale 428877 holds
+  everything. Do not charge again." or "... no sale was made and nothing
+  was charged. It is safe to ring this up again."). The hold still waits
+  for a teacher's Understood. Done when a forced timeout whose sale landed
+  and one whose sale did not each show the right sentence on the held
+  ticket within ten minutes, a sale that lands between the two reads is
+  reported as landed, and neither hold is released by anything but a tap.
+- [ ] **T267 The disputed verdict** (needs P19). When the witness disputes
+  a sold-nothing verdict at the moment it is made: amber, "We are checking
+  this sale. Do not charge again.", the client held as now, and no Notes
+  line until the check returns. Done when the T254 replay never shows the
+  red block or writes to Notes, a true sold-nothing still shows red and
+  files its note at once, and a check that never returns falls back to the
+  red block and the note after ten minutes.
+- [ ] **T268 Fix PRs.** GitHub Actions on every PR (`typecheck`, `build`,
+  the fixture suite); `fixtures/incidents/` with each incident's recorded
+  live answer and expected verdict, names struck; the PR body's two-way
+  statement of the rail; a separate adversarial review session before Pete
+  is told; main protected and `CODEOWNERS` on the money path, the witness
+  and the playbook; "safe to merge now" read from the app (no class within
+  20 minutes, no pending holds). The agent never merges. Done when the T254
+  replay produces a PR whose new fixture fails on the pre-fix matcher and
+  passes on the fix, with the review's findings on it, and a push to main
+  by the agent's identity is refused.
+- [ ] **T269 One-tap repairs.** An admin sheet in this app listing each
+  proposal with its evidence and one 64px control, linked from the alert:
+  attach a purchased pass to a visit, check in or reverse a check-in,
+  un-late-cancel, run a skipped T219 enrolment, re-file a note or a
+  document upload, and Undo of a rung 1 action for 24 hours. Each runs the
+  existing route's own function under the TAPPER's token. Done when each
+  listed repair is run on the dummy client from a phone and Mindbody names
+  the tapper, a proposal for a client other than the incident's cannot be
+  made, an Undo puts the note and the hold back and drops the setting to
+  `propose`, and nothing on the sheet can charge, refund or comp.
+- [ ] **T270 Wider detection.** The severity 2 kinds: `total-mismatch`,
+  `giftcard-mismatch`, `followon-failed` (enrolment, note, approval record,
+  `/api/visit-payment` 502), `client-write-failed`, `foreign-site`,
+  `route-threw`; and a small route for the browser-decided
+  `attach-failed`, shape-checked and trusted for nothing but an incident.
+  Done when each is forced against the fake and leaves a row of the right
+  kind and severity, and a declined card, a refused promotion code, a
+  greyed pass, an expired sign-in and a 409 `held` each leave none.
+- [ ] **T271 The drift digest.** Severity 3 counted, never fired one by
+  one; a daily session that reports only what is climbing or stuck. Done
+  when a planted week in which every product-only sale logs `[basket]
+  unverified` is called out by ticket shape, and an ordinary week produces
+  no message.
+- [ ] **T272 Housekeeping.** `trail` and `witness` nulled at 90 days; the
+  drawer's incidents tab (devtools-gated); a monthly line to Pete with the
+  count of cases, what was done on which rung, and what the sessions cost.
+- [ ] **T273 The graduation review.** After a year, or twenty cases: did
+  the investigator ever disagree with a passing witness, was any automatic
+  repair undone, did any PR need rework. Pete decides whether any rung
+  moves. Nothing moves without this.
+
+### Rails this phase moves
+
+Each is in CLAUDE.md today and is changed by the item that builds it, in
+that item's own commit. Reasoning: the design doc's section of the same
+name.
+
+1. **Every write needs a signed-in teacher** (T50): the retraction runs as
+   the service account with nobody signed in. One kind, only text this app
+   filed, only on two keys (T265).
+2. **T253's "the only release before the lapse"**: `overturned` is a
+   second (T265).
+3. **T116's "a save never blanks text quietly"**: a retraction whose entry
+   was the only text leaves Notes empty, audited and reported (T265).
+4. **T249's tab record "stays until that result's own Understood"**: a
+   server overturn also ends it (T265).
+5. **The T29 charter**: `incidents.trail` holds excerpts of Mindbody's
+   answers, as evidence, never read to serve a screen, expiring (T260).
+6. **The drawer's looser-direction exceptions** gain `incident_repairs`
+   (T265).
+7. **T109**: staff tokens and gift card barcodes stay visible in the
+   drawer and are struck from everything the agent door serves (T262).
+8. **The display cookie's "grants exactly `/api/display/*`"** gains a
+   sibling of the same shape for `/api/agent/*` (T262).
+9. **"Nothing runs on the server's own initiative"**: the dispatcher, and
+   the executor acting on an agent's request (T263, T265).
 
 ---
 
