@@ -43,6 +43,8 @@ export async function POST(request: Request) {
   let takenOver = false;
   let scope: "live" | "reset" | null = null;
   let confirm = false;
+  /** T244 review: the scene the teacher was asked about, on "Clear it". */
+  let confirmedHeld: string | null = null;
   try {
     const body: unknown = await request.json();
     if (body !== null && typeof body === "object") {
@@ -50,6 +52,7 @@ export async function POST(request: Request) {
       takenOver = b["takenOver"] === true;
       if (b["scope"] === "live" || b["scope"] === "reset") scope = b["scope"];
       confirm = b["confirm"] === true;
+      if (typeof b["held"] === "string") confirmedHeld = b["held"];
     }
   } catch {
     /* No body: a plain cancel. */
@@ -69,7 +72,10 @@ export async function POST(request: Request) {
   if (scope === "reset") {
     const staffId = actor.session.staffId;
     const done = await cancelRequest(Date.now(), {
-      only: (held) => confirm || isQuietScene(held),
+      /* A confirmation clears only the kind of scene it was given for:
+       * if a different one is up now, the teacher is asked again. */
+      only: (held) =>
+        isQuietScene(held) || (confirm && confirmedHeld !== null && held === confirmedHeld),
     });
     if (!done.cancelled && done.held !== null && !isQuietScene(done.held)) {
       return NextResponse.json(

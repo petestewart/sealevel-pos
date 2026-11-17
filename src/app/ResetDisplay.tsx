@@ -25,6 +25,9 @@ export default function ResetDisplay(props: {
 }) {
   const [busy, setBusy] = useState(false);
   const [question, setQuestion] = useState<string | null>(null);
+  /** T244 review: the scene the question was about, echoed on "Clear it"
+   *  so the server refuses to clear something else that came up since. */
+  const [askedAbout, setAskedAbout] = useState<string | null>(null);
   const [line, setLine] = useState<string | null>(null);
 
   const reset = async (confirm: boolean) => {
@@ -34,11 +37,15 @@ export default function ResetDisplay(props: {
       const res = await fetch("/api/display/cancel", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ scope: "reset", ...(confirm ? { confirm } : {}) }),
+        body: JSON.stringify({
+          scope: "reset",
+          ...(confirm ? { confirm, held: askedAbout } : {}),
+        }),
       });
       const body = await res.json().catch(() => null);
       if (res.status === 409 && body?.reason === "confirm") {
         setQuestion(String(body.error ?? "Clear the customer screen?"));
+        setAskedAbout(typeof body.held === "string" ? body.held : null);
         return;
       }
       if (!res.ok) {
@@ -66,7 +73,10 @@ export default function ResetDisplay(props: {
               type="button"
               className={props.buttonClass}
               disabled={busy}
-              onClick={() => setQuestion(null)}
+              onClick={() => {
+                setQuestion(null);
+                setAskedAbout(null);
+              }}
             >
               Cancel
             </button>

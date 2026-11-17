@@ -170,7 +170,17 @@ export function useDisplayMirror(active: boolean): DisplayMirror {
       if (payload === null) {
         up.current = false;
         if (alive.current) setShowing(false);
-        await fetch("/api/display/cancel", { method: "POST" });
+        /* T244 review: scoped, so the mirror can only ever take down a
+         * live ticket or a summary. Without a per-tab owner (not on this
+         * branch) another iPad's reconcile can leave `up` stale here, and
+         * an unscoped cancel would then wipe a waiver or sign-up a student
+         * is in the middle of. Approvals end through useSaleApproval's
+         * own cancel. */
+        await fetch("/api/display/cancel", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ scope: "live" }),
+        });
         return;
       }
       /* T244: the student closed this very ticket; nothing changed since. */
@@ -199,6 +209,13 @@ export function useDisplayMirror(active: boolean): DisplayMirror {
           lastRequestId.current =
             typeof body?.requestId === "string" ? body.requestId : null;
           lastKey.current = closureKey(payload);
+          /* T244 review: a different cart is now showing, so a Close
+           * remembered for an earlier one (e.g. one that raced this
+           * present) must not hold back a later return to it. */
+          if (closedKey.current !== null && closedKey.current !== lastKey.current) {
+            closedKey.current = null;
+            if (alive.current) setClosedByCustomer(false);
+          }
         }
         if (alive.current) setShowing(payload.mode === "live");
         return;

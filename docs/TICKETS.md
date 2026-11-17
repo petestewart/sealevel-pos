@@ -21337,3 +21337,27 @@ Postgres, a production build, a signed-in teacher and a paired display
 - Not seen on a real iPad: a discarded-and-reloaded Safari tab firing
   these events was simulated (reload, and a dispatched
   `visibilitychange`), not reproduced on iPadOS.
+
+### Review (2026-11-17)
+
+An independent review found it safe to ship for a counter with one teacher
+iPad. Three findings fixed in a follow-up commit:
+
+- **The mirror's own cancel is now scoped to a live ticket or summary.**
+  Without per-tab ownership (not on this branch), another iPad's reconcile
+  could leave this tab believing its ticket was still up, and its plain
+  cancel on emptying the cart could then wipe a waiver or sign-up a
+  student was in the middle of.
+- **"Clear it" is tied to the scene it asked about.** The confirm echoes
+  the scene kind; if something else has come up since, the teacher is
+  asked again instead of it being cleared.
+- **A student's Close no longer holds back a later return to that cart**
+  once a different cart has been shown (a race between the Close and an
+  in-flight present).
+
+Noted, not changed: the hold-back after Close ignores a price change on
+the same lines (a promotion code or discount after the student closed it);
+after a confirmed Reset of an approval the teacher's wait reads
+"Customer screen disconnected" and a reset waiver dialog keeps waiting
+until closed (recoverable by retry or PIN); the header mark is now a 64px
+button.
