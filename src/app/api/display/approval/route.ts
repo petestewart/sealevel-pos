@@ -2,7 +2,13 @@ import { NextResponse } from "next/server";
 
 import { requireActor } from "@/lib/actor";
 import { requireSession } from "@/lib/auth";
-import { displayConnected, loadRequest, pairedDisplay, pickFor } from "@/lib/display";
+import {
+  displayConnected,
+  loadRequest,
+  noteApprovalPolled,
+  pairedDisplay,
+  pickFor,
+} from "@/lib/display";
 import { isApproveTicket } from "@/lib/displayticket";
 
 export const dynamic = "force-dynamic";
@@ -40,6 +46,9 @@ export async function GET(request: Request) {
   if (held === null || !isApproveTicket(held.kind, held.payload)) {
     return NextResponse.json({ status: "unknown", connected });
   }
+  /* T241 third review: somebody is waiting on this approval, so it is
+   * not an orphan another iPad may retire. */
+  noteApprovalPolled(held.id);
   return NextResponse.json({
     status: held.status,
     approved: held.status === "completed" && held.result?.approved === true,

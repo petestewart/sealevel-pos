@@ -21,6 +21,7 @@ import { readWaiverPayload } from "@/lib/displaywaiver";
 import { MAX_PASSES, readPassesPayload } from "@/lib/displaypasses";
 import { readClientFirstName } from "@/lib/clients";
 import { getWaiver } from "@/lib/waiver";
+import { displayTypedCardAllowed } from "@/lib/approval";
 
 export const dynamic = "force-dynamic";
 
@@ -150,6 +151,24 @@ export async function POST(request: Request) {
           typeof input.clientId === "string" ? input.clientId.trim() : "",
       };
     }
+  }
+  /* T241 (Pete: "hide it behind a flag so i can turn it off if it
+   * becomes annoying"): with the studio's setting off, "A different
+   * card" is never offered, whatever the teacher's iPad sent. Read only
+   * when the offer carries it, so an ordinary present costs no read. */
+  if (
+    input.kind === "ticket" &&
+    Array.isArray(scene.choices) &&
+    (scene.choices as { choice?: unknown }[]).some(
+      (c) => c?.choice === "typedcard",
+    ) &&
+    !(await displayTypedCardAllowed()).on
+  ) {
+    const kept = (scene.choices as { choice?: unknown }[]).filter(
+      (c) => c?.choice !== "typedcard",
+    );
+    const { choices: _all, ...rest } = scene;
+    scene = kept.length > 0 ? { ...rest, choices: kept } : rest;
   }
   /* T241 review: every ticket names the tab that presented it, on the
    * server-only half, so the hub can keep two iPads' tickets apart: a
@@ -409,6 +428,8 @@ export async function POST(request: Request) {
          * own sign-up, because that is the one case the teacher's screen
          * words differently and offers Take over for. */
         ...(presented.holdingSignup === true ? { holdingSignup: true } : {}),
+        /* T241 third review: another iPad's approval holds it. */
+        ...(presented.foreignApproval === true ? { foreignApproval: true } : {}),
       },
       { status: presented.status },
     );

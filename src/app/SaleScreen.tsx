@@ -1961,6 +1961,10 @@ function ticketDiscountParts(
  * single flight, the availability rules, the honest outcomes and the
  * server's authority over every number are all exactly as they were.
  */
+/** T241 third review: where an unknown charge outcome is kept across a
+ *  reload of this tab. No card data, ever. */
+const UNCERTAIN_KEY = "pos_uncertain_charge";
+
 function PaymentPanel(props: {
   cart: readonly CartEntry[];
   priced: PricedResult | null;
@@ -2243,7 +2247,8 @@ function PaymentPanel(props: {
    * line's amount and its X. Cancel on the approval panel is the way
    * back to them. What the student approves is what is charged.
    */
-  const tenderHeld = approvalFlow.pending;
+  /* (T241 third review: `tenderHeld` is defined below, once the result
+   * it also reads exists.) */
   /** Comp stays OUT of the list: it is a whole-sale gesture with its own
    *  hold, not a tender. Arming it clears the lines; adding a line
    *  disarms it. The two can never both be set.
@@ -2522,6 +2527,78 @@ function PaymentPanel(props: {
   const [charging, setCharging] = useState(false);
   const [result, setResult] = useState<ChargeResult | null>(null);
   /**
+   * T241 third review: a charge whose outcome is UNKNOWN is showing (an
+   * ambiguous answer, or the hold a student's card left). Until the
+   * teacher taps that result's own Understood, nothing on this screen
+   * may charge or change the tender, for EVERY tender, and the customer
+   * screen offers no way to pay: a second tap after an unknown outcome
+   * is the double charge this app never invites.
+   */
+  const outcomeOpen = result?.kind === "ambiguous" || pickHold;
+  const tenderHeld = approvalFlow.pending || outcomeOpen;
+  /** The display request a held outcome was about, for the record kept
+   *  across a reload (no card data, ever). */
+  const uncertainRequest = useRef<string | null>(null);
+  /** Third review: the one handling of an unknown outcome on a student's
+   *  card: the line off without a word, the pick's sentence gone (so
+   *  nothing reads as "enter it again"), and the hold set. */
+  const holdForUncertain = (requestId: string) => {
+    uncertainRequest.current = requestId;
+    tenderPick.clear();
+    setLines((cur) => cur.filter((l) => l.source !== "typedcard"));
+    setPickHold(true);
+  };
+  /* Third review (6): an unknown outcome survives a reload of this tab.
+   * Only that the last charge needs checking, when, and the display
+   * request it was about; never a card detail. The writer is declared
+   * first so it skips the mount, and the reader then restores. */
+  const outcomeRestored = useRef(false);
+  useEffect(() => {
+    if (!outcomeRestored.current) return;
+    try {
+      if (outcomeOpen) {
+        window.sessionStorage.setItem(
+          UNCERTAIN_KEY,
+          JSON.stringify({
+            at: Date.now(),
+            requestId: uncertainRequest.current,
+          }),
+        );
+      } else {
+        window.sessionStorage.removeItem(UNCERTAIN_KEY);
+      }
+    } catch {
+      /* No storage: the hold lasts as long as this page, as before. */
+    }
+  }, [outcomeOpen]);
+  useEffect(() => {
+    try {
+      const raw = window.sessionStorage.getItem(UNCERTAIN_KEY);
+      if (raw !== null) {
+        const saved = JSON.parse(raw) as { at?: unknown; requestId?: unknown };
+        uncertainRequest.current =
+          typeof saved.requestId === "string" ? saved.requestId : null;
+        const when =
+          typeof saved.at === "number"
+            ? new Date(saved.at).toLocaleTimeString([], {
+                hour: "numeric",
+                minute: "2-digit",
+              })
+            : null;
+        setResult({
+          kind: "ambiguous",
+          message: `A charge from this iPad${
+            when !== null ? ` at ${when}` : ""
+          } was left with an unknown outcome when the page reloaded.`,
+        });
+        setPickHold(true);
+      }
+    } catch {
+      /* Nothing to restore. */
+    }
+    outcomeRestored.current = true;
+  }, []);
+  /**
    * T95 review: the latch on a ticket that was PARTLY sold. The route's
    * sentence says which half landed; the ticket still holds every line,
    * including the gift cards that are now real cards in Mindbody with
@@ -2717,9 +2794,8 @@ function PaymentPanel(props: {
     setFreshBalanceReport(null);
     /* T239: a tender started over is judged afresh. */
     setAutoLineId(null);
-    /* T241 second review: and a new ticket is not held by the last one's
-     * outcome. */
-    setPickHold(false);
+    /* T241 third review: an unknown outcome's hold is NOT cleared here;
+     * only its own Understood does that. */
     setTenderTouched(false);
     setComp(null);
     setCompCleared(false);
@@ -3486,6 +3562,8 @@ function PaymentPanel(props: {
     !pricing &&
     total !== null &&
     !charging &&
+    /* T241 third review: never while an unknown outcome is showing. */
+    !outcomeOpen &&
     /* T43 review: never while the reason dialog is open. The scrim covers
        the Charge button, but a keyboard Tab leaves the dialog and lands on
        it, and Enter there charged the tender the teacher was in the middle
@@ -3736,13 +3814,14 @@ function PaymentPanel(props: {
    * house client's, so `client === null` offers neither the account nor
    * a card on file.
    */
-  /* N1: the hold lifts once the teacher has dismissed the result (or the
-   * ticket starts over). */
+  /* N1: the hold lifts once the teacher has dismissed the result. Third
+   * review: ONLY then, by that result's own Understood or OK, never by a
+   * tender edit or a ticket starting over. */
   useEffect(() => {
     if (result === null) setPickHold(false);
   }, [result]);
   const choicesFrozen =
-    pickHold ||
+    outcomeOpen ||
     charging ||
     partialLock !== null ||
     (result !== null &&
@@ -3826,7 +3905,7 @@ function PaymentPanel(props: {
       return "This sale is already done.";
     }
     if (partialLock !== null) return "Part of this ticket is already sold.";
-    if (pickHold) return "The last charge needs checking first.";
+    if (outcomeOpen) return "The last charge needs checking first.";
     if (comped) return "The sale is comped.";
     if (totalCents === null || totalCents <= 0) {
       return "The ticket is still being priced.";
@@ -3910,22 +3989,10 @@ function PaymentPanel(props: {
       requestId === props.mirrorRequestId() ||
       requestId === approvalFlow.requestId(),
     firstName: displayFirstName(client?.name ?? null),
-    apply: (pick) => {
-      const refused = applyPick(pick);
-      /* Second review (F): a card pick this screen refuses is a card the
-       * server holds that no line names, or one that replaced the card
-       * the line does name. Released by request id either way; a line
-       * that still names the request then finds nothing at Finalize and
-       * says so, rather than charging a card it does not show. */
-      if (refused !== null && pick.choice === "typedcard") {
-        void fetch("/api/display/card/release", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ requestId: pick.requestId }),
-        }).catch(() => undefined);
-      }
-      return refused;
-    },
+    /* Second review (F): a card pick refused here is released by
+       request id inside the hook, as is one for a ticket this screen no
+       longer owns (third review). */
+    apply: applyPick,
   });
   pickReceive.current = tenderPick.receive;
   props.pickInbox.current = tenderPick.receive;
@@ -4152,6 +4219,9 @@ function PaymentPanel(props: {
           [IDEMPOTENCY_HEADER]: idemKey,
         },
         body: JSON.stringify({
+          /* T241 third review: this tab, so a PIN-approved charge takes
+             down only this tab's own approval. */
+          presenter: presenterId(),
           items: saleLines.map((line) => ({
             type: line.item.type,
             metadataId: line.item.id,
@@ -4258,7 +4328,15 @@ function PaymentPanel(props: {
        * result stands), because a second charge after an unknown outcome
        * is the thing this app never invites. */
       if (typedCard?.displayRequestId !== undefined) {
+        /* Third review: a claim refused because the card was already
+         * SPENT by an earlier attempt, or is being charged right now, is
+         * an unknown outcome too, never "nothing was charged". */
+        const cardBusy =
+          res.status === 409 &&
+          body?.reason === "displaycard" &&
+          (body?.card === "spent" || body?.card === "charging");
         const uncertain =
+          cardBusy ||
           body === null ||
           res.status >= 500 ||
           body?.ambiguous === true ||
@@ -4266,9 +4344,7 @@ function PaymentPanel(props: {
           body?.partial === true ||
           (body?.suppressed && typeof body?.summary === "string");
         const refusedCard =
-          res.status === 409 &&
-          body?.reason === "displaycard" &&
-          body?.card !== "charging";
+          res.status === 409 && body?.reason === "displaycard" && !cardBusy;
         const definite =
           !uncertain &&
           (refusedCard ||
@@ -4283,13 +4359,17 @@ function PaymentPanel(props: {
               : "The customer's card is no longer held. Ask them to enter it again.",
           );
         } else if (uncertain) {
-          /* And the pick's own sentence goes, so nothing on screen reads
-           * as an invitation to take the card again. */
-          tenderPick.clear();
-          if (body?.displayCardSpent === true) {
-            setLines((cur) => cur.filter((l) => l.source !== "typedcard"));
+          holdForUncertain(typedCard.displayRequestId);
+          if (cardBusy) {
+            /* The route's own sentence says what is known; it is shown
+             * as the unknown outcome it is, never as "Not charged". */
+            setResult({
+              kind: "ambiguous",
+              message: typeof body?.error === "string" ? body.error : "",
+            });
+            onClientDataStale();
+            return;
           }
-          setPickHold(true);
         }
       }
       if (body === null && (res.ok || res.status >= 500)) {
@@ -4602,7 +4682,12 @@ function PaymentPanel(props: {
       }
     } catch {
       /* The request itself died between us and the server: the outcome
-       * is UNKNOWN, and the one wrong move is to invite a retry. */
+       * is UNKNOWN, and the one wrong move is to invite a retry. Third
+       * review: and a student's card on the tender is handled exactly as
+       * for any other unknown outcome. */
+      if (typedCard?.displayRequestId !== undefined) {
+        holdForUncertain(typedCard.displayRequestId);
+      }
       setResult({ kind: "ambiguous", message: "" });
       onClientDataStale();
     } finally {
@@ -5652,6 +5737,8 @@ function PaymentPanel(props: {
     ? null
     : tenderPick.settling
       ? "The customer just changed how they are paying"
+    : outcomeOpen
+      ? "The last charge needs checking first. Tap Understood when you have."
     : charging
       ? "Charging..."
       : partialLock !== null

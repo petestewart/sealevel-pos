@@ -537,6 +537,24 @@ answer could be the LOOSER one (a stored `review` flipping to
 asked for), and it falls to the environment only when this process has
 never had an answer.
 
+T241's "students can type a card on the customer screen" sits beside
+them and, like T207's, is NOT a rail exception (Pete, 2026-11-17: "i
+think we can keep that for now and remove it once we actually have
+stripe ... let's hide it behind a flag so i can turn it off if it
+becomes annoying"). `display_typed_card` in `app_settings`, DEFAULT ON,
+with `POS_DISPLAY_TYPED_CARD` as the no-database fallback (only `false`
+or `0` turn it off), read and stored exactly like T205's
+(`displayTypedCardAllowed` in `src/lib/approval.ts`, `PUT
+/api/admin/display-typed-card`, a 64px admin control, the log naming
+the staff id). Off, the SERVER removes a way to pay: "A different card"
+is stripped from every offer `/api/display/present` stores,
+`/api/display/card` refuses with nothing held, and switching it off
+drops every card already held (each teacher's line then meets "no
+longer held" at Finalize, as for any released card). On, a student's
+card still reaches Mindbody only through the teacher's own checkout.
+The teacher's own typed-card modal is unaffected. It is to be REMOVED,
+with the feature, once Phase 4's reader exists (PLAN, Phase 4).
+
 ## Customer display (T200 to T205, T207, T208; Phase 2.5)
 
 A second iPad on the counter, facing the student, at `/display`. Design:
@@ -741,7 +759,9 @@ only on the approval: it has no live mirror.
 
 **"A different card" is typed by the STUDENT on the display** (T241,
 Pete: "i dont want teachers to have to do that. a student shouldnt have
-to hand them their card."). `src/app/display/CardForm.tsx` is T93's
+to hand them their card."), while the studio's `display_typed_card`
+setting is on (default; see Settings tab: off, it is never offered and
+`/api/display/card` refuses). `src/app/display/CardForm.tsx` is T93's
 fields and validator (`cc-number` kept for Scan Credit Card; the display
 runs `useVisualViewport`), posting to `POST /api/display/card`, which
 validates with `parseTypedCard` and holds it in `src/lib/displaycard.ts`:
@@ -759,8 +779,14 @@ teacher's line shows ("for a different sale" otherwise). **Every
 teacher-side cancel names its tab** (`cancelOnDisplay`), and the hub
 refuses, as a no-op, a cancel of a ticket another tab owns, except a
 live mirror on an explicit Take over (an approval is never taken). A
-tab leaving (pagehide) cancels its own live ticket with a keepalive
-request naming it. It is
+tab leaving (pagehide) cancels its own live ticket AND its own
+outstanding approval with a keepalive request naming it. A PIN-approved
+checkout takes down only its own tab's approval (the checkout body
+names the presenter). A present that meets ANOTHER iPad's approval is
+"busy" with `foreignApproval`, and the teacher reads "The customer
+screen is showing another sale's approval." with Wait and Approve sale
+and no Take over; an approval its owner has not polled for a minute is
+an orphan, and the next present retires it. It is
 **released** on the approval's 30 minutes (a timer sweeps, so a closed
 tab cannot leave it in memory), on cancel, on the student's own Cancel
 of the approval, on expiry, unpair, a present that changes the lines,
@@ -777,14 +803,26 @@ T75, T103, T240's binding unchanged; the word is still "Card"), and
 (`src/lib/mbtrace.ts` counts non-GET calls inside the checkout; a
 suppressed write counts), keeping it only for a refusal that provably
 asked nothing. An answer that spent it says `displayCardSpent`, and a
-refused claim is a 409 `reason: "displaycard"` with a `card` code. **"Ask
+refused claim is a 409 `reason: "displaycard"` with a `card` code. The
+server REMEMBERS a spent card per request (third review), so a later
+claim answers `spent`, and the browser treats `spent` and `charging` as
+UNKNOWN outcomes, never "nothing was charged". A claim also closes the
+ticket's offer: no pick and no new card are taken until the teacher's
+iPad offers again, which it does only once the result is settled. **"Ask
 them to enter it again" is shown ONLY after a definite outcome that
 charged nothing**: a refused claim (other than another checkout holding
 it), a 4xx refusal, or a whole-ticket suppression. After an outcome that
 may have moved money (no readable answer, a 5xx, ambiguous, sold
 nothing, partial, a part-suppressed T90 ticket) the line comes off
 without a word and no way to pay is offered on the display until the
-teacher has dismissed that result. "A different card" stays offered
+teacher has dismissed that result. **While an unknown outcome is
+showing (an ambiguous answer, or that hold) the Cart screen's Finalize
+and every tender control are locked, for EVERY tender, until that
+result's own Understood** (third review: a tile tap, a client change or
+a new ticket does not dismiss it), the fetch itself failing is handled
+the same way, and the outcome is kept in sessionStorage (no card data:
+that the last charge needs checking, when, and the request id) so a
+reload shows it again with the display's choices held. "A different card" stays offered
 while a typed card is the tender, and choices are offered on an empty
 tender too. For 1.5 seconds after a pick moves the tender, the charge
 control ignores taps with the sentence highlighted (`settling` on

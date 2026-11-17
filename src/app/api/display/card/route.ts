@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { chooseTypedCard, ensureDisplayLoaded, isPairedDisplay } from "@/lib/display";
 import { displayIdFrom } from "@/lib/displayauth";
 import { parseTypedCard } from "@/lib/typedcard";
+import { displayTypedCardAllowed } from "@/lib/approval";
 
 export const dynamic = "force-dynamic";
 
@@ -46,6 +47,17 @@ export async function POST(request: Request) {
   const requestId = typeof input.requestId === "string" ? input.requestId : "";
   if (requestId.length === 0) {
     return NextResponse.json({ error: "requestId required" }, { status: 400 });
+  }
+  /* T241: the studio's setting, read on every card. Off, nothing is
+   * validated, held or passed on. */
+  if (!(await displayTypedCardAllowed()).on) {
+    return NextResponse.json(
+      {
+        error:
+          "Cards cannot be entered on this screen. Please pay at the front desk.",
+      },
+      { status: 409 },
+    );
   }
   const parsed = parseTypedCard(input.card);
   if (parsed.card === null) {

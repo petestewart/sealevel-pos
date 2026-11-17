@@ -71,6 +71,17 @@ export function readTenderPick(value: unknown): TenderPick | null {
   };
 }
 
+/** Let go of the card the server holds on `requestId`. Best effort; the
+ *  card's own 30 minutes and the checkout's last-four check are the
+ *  backstops. */
+function releaseCard(requestId: string): void {
+  void fetch("/api/display/card/release", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ requestId }),
+  }).catch(() => undefined);
+}
+
 /** How long the teacher's sentence stands. Long enough to read across a
  *  queue; a new pick or a new ticket replaces it sooner. */
 const NOTE_MS = 15_000;
@@ -173,14 +184,25 @@ export function useTenderPick(input: {
     const pick = readTenderPick(value);
     if (pick === null) return;
     if (seen.current.has(pick.pickId)) return;
-    if (!ownsRef.current(pick.requestId)) return;
     /* A pick on another tab's ticket is that tab's (T241 review). */
     if (pick.presenter !== undefined && pick.presenter !== presenterId()) return;
+    if (!ownsRef.current(pick.requestId)) {
+      /* Third review: this tab's own pick on a ticket it no longer shows
+       * (the mirror was retired, the approval ended). A card typed on it
+       * is let go of rather than left held with no line naming it. */
+      remember(pick.pickId);
+      if (pick.choice === "typedcard") releaseCard(pick.requestId);
+      return;
+    }
     remember(pick.pickId);
     const who = nameRef.current ?? "The customer";
     const word = choiceTeacherWord(pick.choice);
     const refused = applyRef.current(pick);
     if (refused !== null) {
+      /* Second review (F): a card pick refused here is a card the server
+       * holds that no line names (or one that replaced the card a line
+       * does name), so it is released by request id. */
+      if (pick.choice === "typedcard") releaseCard(pick.requestId);
       setNote(`${who} asked to pay by ${word}. ${refused} Nothing changed.`);
       return;
     }

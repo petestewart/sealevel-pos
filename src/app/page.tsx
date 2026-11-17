@@ -6895,6 +6895,9 @@ function FrontDesk({
             [IDEMPOTENCY_HEADER]: newIdempotencyKey(),
           },
           body: JSON.stringify({
+          /* T241 third review: this tab, so a PIN-approved charge takes
+             down only this tab's own approval. */
+          presenter: presenterId(),
             items: [
               {
                 type: paySelected.type,
