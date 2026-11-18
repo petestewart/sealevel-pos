@@ -23774,3 +23774,17 @@ rehearsal's AmountPaid must equal the request, and the real answer's
 AmountPaid, the sale's one line and a fresh balance delta must all equal
 it, or the outcome is money-moved-wrong with the hold kept. Sale 428932
 ($2) and 428953 ($1) are real cash on the dummy client.
+
+### T256: the API cannot void a credit sale (main session, Pete asked to void the test sales, 2026-11-18 04:35Z)
+
+`POST /sale/returnsale {SaleId: 428953}` (the $1 Cash credit sale on
+100042041; the spec says only comp-paid service, product or gift card
+sales are returnable) was ACCEPTED: ReturnSaleID 428954, Amount -1,
+TrainerID 100000140. But the return is not a void. Sale 428954 holds one
+"account adjustment" line at -$1 (Quantity -1, IsService false) and pays
+the refund with Payment Type "Account" (Method 16), so the credit came
+off and went straight back on: the balance stayed -1.50, and 428953's $1
+Cash still stands, its line marked `Returned: true`. So a credit sale is
+undone only in Mindbody's own UI (Return / Void), and the app must never
+offer an undo through `returnsale` for credit. Sale 428932 ($2 cash) was
+left alone; Pete voids both in Mindbody's UI.
