@@ -23653,7 +23653,7 @@ Driven against the fake after the fix (Chromium, 1180x820):
   outcome with Understood, and Finalize dark ("The last charge needs
   checking first"). No sale in the fake.
 
-## T256. Add credit to a student's account (Pete, 2026-11-18) — STOPPED at the probe
+## T256. Add credit to a student's account (Pete, 2026-11-18)
 
 Pete: "we need to add the ability to add credit to a student's account. in
 mindbody we do it by ringing up a sale with the item ADD CREDIT to ACCOUNT.
@@ -23697,7 +23697,7 @@ to ACCOUNT ($11.00, no tax) beside Boxed Water, $15.00, paid at once.
   across calls, Test calls possibly included. The card was not charged
   (the sale's only payment is Cash).
 
-### What is on the branch, and switched off
+### What was on the branch at 868e3da, switched off (superseded by "Built" below)
 
 - `purchaseCredit` (src/lib/sale.ts) generalised to Cash, StoredCard and
   CreditCard with a `test` flag and `PaymentProcessingFailures`; NOTHING
@@ -23716,7 +23716,7 @@ to ACCOUNT ($11.00, no tax) beside Boxed Water, $15.00, paid at once.
   ticket rules (one tender, never account or gift card, no discount). No
   shelf cell or keypad yet, so nothing reaches it.
 
-### Owed before building
+### Owed before building (answered: see the controlled run and "Built" below)
 
 - Why identical Test bodies answered 1 then 2, and whether a Test call
   leaves a line a later real call checks out. Read the dummy client's
@@ -23788,3 +23788,117 @@ Cash still stands, its line marked `Returned: true`. So a credit sale is
 undone only in Mindbody's own UI (Return / Void), and the app must never
 offer an undo through `returnsale` for credit. Sale 428932 ($2 cash) was
 left alone; Pete voids both in Mindbody's UI.
+
+### Built (2026-11-18), the flag ON
+
+Pete agreed to two Mindbody steps behind one Finalize ("that's fine with
+me"). No live Mindbody call was made for this build; everything below was
+driven against the fake.
+
+- [x] **"Add credit" on the Cart screen.** It sits under Retail, in its
+      own "Account credit" child, and search finds it for "credit",
+      "account" or "add". A keypad amount (T35) puts ONE "Account credit"
+      line on the ordinary ticket, untaxed, and the total includes it.
+      "Change amount" on the row reopens the keypad; the X takes the line
+      off; quantity never moves. The cell is greyed with the reason, never
+      hidden, when there is no client, when the walk-in client is attached
+      (`/api/stored-card` now answers `houseClient`, a boolean about the
+      client asked for), when the ticket holds a gift card or a line for
+      someone else, or while a discount or a promotion code is on it. A
+      gift card or a recipient cannot join a credit ticket either.
+      (`src/app/SaleScreen.tsx`: `CreditItem` and `isOffCartLine` near
+      the top, `creditWhy`, `addCredit` and `creditCell` before the totals
+      area, the keypad modal before the gift card pad.)
+- [x] **One tender, through `purchaseaccountcredit`.** Cash, the card on
+      file or a typed card (T241's student-typed card too). Never the
+      account balance, never a gift card, never a split, discount,
+      promotion code, override or overdraft: the payment panel greys those
+      tiles with the reason (`addReason`, `creditReason`, `discountBlock`)
+      and `/api/checkout` refuses each before any PIN, approval or
+      Mindbody call (`creditShapeRefusal` in `src/lib/accountcredit.ts`).
+- [x] **Credit only:** rehearse with `Test: true` and assert AmountPaid to
+      the cent; the one real call under the teacher's token; then
+      AmountPaid, the sale read by id (`saleById`,
+      `/sale/sales?request.saleId=`) holding EXACTLY ONE line of that
+      amount (`creditSaleProblem`: count and amount, not the id alone),
+      and a fresh balance that rose by the amount. Any one failing is
+      money-moved-wrong: 502 `ambiguous`, so T253 holds the client.
+- [x] **Credit plus other lines, one swipe:** the cart rehearsal (T75)
+      and the credit rehearsal for the WHOLE ticket both run before any
+      money moves; step 1 buys credit for the whole ticket on the tender
+      and is checked as above; step 2 checks the cart out on
+      `DebitAccount` for its GrandTotal, with T103/T254's basket
+      assertion; a final balance read must equal the starting balance plus
+      the credit. A step 2 that is refused, does not answer, is suppressed
+      or ends the staff session after step 1 stood is a PARTIAL in words
+      ("$14.99 was added to Sam Okafor's account (sale N). The items were
+      not sold (...): their $3.99 is on the account. Sell them again
+      paying by account."), held by T253, nothing retried. The
+      account never dips below what step 1 added: step 2 takes back only
+      the cart's part of it. The credit sale's id is marked seen, so step
+      2's sale lookup cannot name it.
+- [x] **Approval (T203/T240):** the cart hash carries `credit|<cents>`
+      and the tender, so a tender or an amount changed after the student
+      approved is refused, nothing charged. The customer screen shows the
+      credit as a line ("Account credit $11.00") and the subtotal includes
+      it.
+- [x] **Done screen:** "$11.00 added to their account", "Balance now
+      $X" read from Mindbody after the sale, and both sale ids on a mixed
+      ticket.
+- [x] **No undo through `returnsale`** (the section above): none was
+      added.
+- [x] The fake: `purchaseaccountcredit` raises the balance (Test changes
+      nothing), books an "account adjustment" line (Id 422, category 23)
+      that `/sale/sales?request.saleId=` reads back, `DebitAccount` lowers
+      the balance, and `/__fake/fail-credit`, `/__fake/lose-credit`,
+      `/__fake/refuse-checkout` and `/__fake/fail-checkout` force the bad
+      outcomes. The fake also has Boxed Water ($3.62, taxed).
+- [x] `tsc --noEmit` and `next build` clean.
+
+### Verified against the fake (Chromium 1180x820, app :3256, fake :4256, no database)
+
+- Jordan Kim, $11.00 credit, Cash: one `purchaseaccountcredit` $11.00
+  Cash, the sale holds one "account adjustment", balance $0.00 -> $11.00,
+  done screen "Balance now $11.00". The same on the card on file (...7311).
+- Casey Park (no card on file), $11.00 on a typed card (...1111): one
+  CreditCard payment of $11.00, balance $0.00 -> $11.00.
+- Taylor Brooks, $11.00 credit plus Boxed Water ($3.62 + $0.37 tax in
+  the fake = $3.99; ticket $14.99) on the card on file: ONE card payment of $14.99 (sale
+  N, the credit), then sale N+1 for Boxed Water paid $3.99 DebitAccount;
+  balance $0.00 -> $11.00; the done screen named both sales.
+- Forced step 2 refusal (Sam Okafor, cash): partial, the sentence above,
+  balance $14.99 (the items' money on the account), a `partial` hold.
+  Forced step 2 500: the same as partial with "MAY have gone through on
+  the account for $3.99", `ambiguous` and `partial`, held.
+- Forced step 1 500 (`fail-credit`): ambiguous, "MAY have been taken",
+  held. Forced lost credit (`lose-credit`): the sale stood and the balance
+  did not move, answered ambiguous naming the sale and both figures,
+  held.
+- "customer approves each sale" on, a display paired: the customer screen
+  read "Account credit $11.00, Boxed Water $3.62, Subtotal $14.62, Tax
+  $0.37, Total $14.99, Paying by Card", and after Approve both steps
+  sold. With the tender switched to cash after Approve, and separately the
+  credit amount moved to $50, `/api/checkout` answered 409 `approval`,
+  nothing sold.
+- Dry run on this iPad: "Dry run: nothing was charged", no sale, balance
+  unchanged.
+- No client: the cell reads "Attach the client to add credit" and opens
+  no keypad. The walk-in client (Counter Walk-in) attached: "The walk-in
+  account holds no credit". A $0.00 entry leaves Done off.
+- Through the route: $0.00, the house client, no client, paid by account,
+  paid by gift card, a split, beside a gift card, with a discount, and
+  beside a line for someone else: each refused in words, nothing sent.
+
+### Not verified live
+
+- No real credit sale through the app. The rails rest on the controlled
+  run (sale 428953: Test, then real, ONE line, balance up by $1.00).
+- A MIXED ticket on real Mindbody: whether step 2's `DebitAccount` cart
+  sale takes the credit step 1 just put there, and what Mindbody's sale
+  list shows. Owed: one real mixed sale on the dummy client.
+- A stored card and a typed card as `purchaseaccountcredit`'s payment
+  have only been rehearsed (`Test: true`, the typed 4111 number). No
+  card was really charged for credit.
+- Whether `/sale/sales?request.saleId=` returns the credit sale at once.
+  If it lags, the lines go unverified (logged) and the balance check
+  still stands.

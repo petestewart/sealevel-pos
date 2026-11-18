@@ -4,14 +4,16 @@
  * it by ringing up a sale with the item ADD CREDIT to ACCOUNT. we can make
  * this more elegant in our app but the ability needs to be there").
  *
- * The ticket is its own Mindbody call, `POST /sale/purchaseaccountcredit`
- * (`purchaseCredit` in ./sale.ts), and so it stands ALONE: no cart line,
- * no gift card, no split, no discount and no promotion code beside it,
- * exactly as a gift card is its own `purchasegiftcard` per card. It rides
- * /api/checkout as `accountCredit: { amount }` so every rail that route
- * already holds applies unchanged: T113's key, T253's hold, T49's token,
- * T203/T240's approval with the tender bound, T241's display card, dry
- * run and the write guard.
+ * Credit is `POST /sale/purchaseaccountcredit` (`purchaseCredit` in
+ * ./sale.ts): the API cannot sell the studio's ADD CREDIT item at a price
+ * in a cart. It rides /api/checkout as `accountCredit: { amount }`, alone
+ * or beside ordinary cart lines (Pete agreed to two Mindbody steps behind
+ * one Finalize): credit for the whole ticket on ONE tender, then the lines
+ * paid from the account. Never beside a gift card, a split, a discount, a
+ * promotion code or a line for someone else. Every rail the route holds
+ * applies: T113's key, T253's hold, T49's token, T203/T240's approval with
+ * the credit and the tender bound, T241's display card, dry run and the
+ * write guard.
  *
  * This file is the pure half: the request's shape and the sentences. It
  * calls nothing. The selling is in /api/checkout.
@@ -19,11 +21,11 @@
  * Probe T256 (prod, 2026-11-18, dummy client 100042041): site 471 has NO
  * product named like credit or account in `/sale/products` or
  * `/sale/services`; the studio's "ADD CREDIT to ACCOUNT" is Mindbody's own
- * account payment item, under the system revenue category 23 "Payments on
- * Account". `purchaseaccountcredit` with `Test: true` answered `AmountPaid:
- * 1`, `SaleId: 0`, the client's id and no failures for a $1.00 Cash and a
- * $1.00 typed card payment, and the balance read -4.50 before and after
- * each, so the rehearsal moves nothing. See docs/TICKETS.md T256.
+ * account payment item (service 325, category 23 "Payments on Account"),
+ * and `purchaseaccountcredit` books service 422 "account adjustment". The
+ * controlled run (sale 428953) was clean: Test calls answered AmountPaid
+ * 1 and moved nothing, and Test then real booked ONE line. See
+ * docs/TICKETS.md T256.
  */
 import { CREDIT_MAX_USD, CREDIT_MIN_USD } from "./sale";
 
@@ -84,12 +86,23 @@ export function parseAccountCredit(
  */
 export function creditShapeRefusal(body: Record<string, unknown>): string | null {
   const has = (k: string) => body[k] !== undefined && body[k] !== null;
+  /* Pete, 2026-11-18: credit shares a ticket with ordinary items ("that's
+   * fine with me" to two Mindbody steps behind one Finalize). What it
+   * cannot share one with is a line bought for somebody else: the other
+   * lines are paid from THIS client's account, which pays for nobody
+   * else's cart (T90). */
   const items = body["items"];
-  if (Array.isArray(items) ? items.length > 0 : has("items")) {
+  if (
+    Array.isArray(items) &&
+    items.some((line) => {
+      const id = (line as { forClientId?: unknown } | null)?.forClientId;
+      return typeof id === "string" && id.trim() !== "";
+    })
+  ) {
     return (
-      "Account credit is its own sale in Mindbody, so it cannot share a " +
-      "ticket with anything else. Sell the rest on its own. Nothing was " +
-      "charged."
+      "Account credit cannot share a ticket with a line bought for someone " +
+      "else: the rest of the ticket is paid from this client's account. " +
+      "Sell that line on its own ticket. Nothing was charged."
     );
   }
   const gifts = body["giftCards"];

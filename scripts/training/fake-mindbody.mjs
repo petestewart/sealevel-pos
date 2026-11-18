@@ -115,6 +115,8 @@ const products = [
   { Id: "p100", ProductId: 2001, Name: "Water Bottle (1L)", Price: 3, OnlinePrice: 3, TaxRate: TAX, CategoryId: 36 },
   { Id: "p101", ProductId: 2002, Name: "Coconut Water", Price: 4.5, OnlinePrice: 4.5, TaxRate: TAX, CategoryId: 36 },
   { Id: "p102", ProductId: 2003, Name: "Electrolyte Packet", Price: 2, OnlinePrice: 2, TaxRate: TAX, CategoryId: 36 },
+  /* T256: the item beside ADD CREDIT on Pete's screenshot, $3.62 + tax = $4.00. */
+  { Id: "p104", ProductId: 2005, Name: "Boxed Water", Price: 3.62, OnlinePrice: 3.62, TaxRate: TAX, CategoryId: 36 },
   { Id: "p103", ProductId: 2004, Name: "Kombucha", Price: 5, OnlinePrice: 5, TaxRate: TAX, CategoryId: 36 },
   { Id: "p200", ProductId: 2101, Name: "Sealevel Tank Top", Price: 32, OnlinePrice: 32, TaxRate: TAX, CategoryId: 26 },
   { Id: "p201", ProductId: 2102, Name: "Sealevel Shorts", Price: 38, OnlinePrice: 38, TaxRate: TAX, CategoryId: 26 },
@@ -458,6 +460,7 @@ let refuseExecutes = 0;
  * POST /__fake/lose-credit?n=1 makes them book the sale and leave the
  * balance where it was. Not part of any Mindbody API. */
 let failCredits = 0;
+let refuseCheckouts = 0;
 let loseCredits = 0;
 /* And POST /__fake/delay-execute?ms=3000&n=1 holds the next N of them
  * that long, so the row's spinner can be seen. */
@@ -473,6 +476,10 @@ function handle(method, path, q, body, res) {
     case "/__fake/fail-credit": {
       failCredits = Number(q.get("n") ?? 1) || 0;
       return send(res, 200, { failCredits });
+    }
+    case "/__fake/refuse-checkout": {
+      refuseCheckouts = Number(q.get("n") ?? 1) || 0;
+      return send(res, 200, { refuseCheckouts });
     }
     case "/__fake/lose-credit": {
       loseCredits = Number(q.get("n") ?? 1) || 0;
@@ -774,6 +781,12 @@ function handle(method, path, q, body, res) {
       ) {
         return send(res, 400, { Error: { Message: "Card declined (fake)", Code: "CardDeclined" } });
       }
+      /* T256: POST /__fake/refuse-checkout?n=1 refuses the next N real
+       * checkouts with a 400, as Mindbody refusing a cart would. */
+      if (body.Test !== true && refuseCheckouts > 0) {
+        refuseCheckouts -= 1;
+        return send(res, 400, { Error: { Message: "Cart refused (fake)", Code: "InvalidParameter" } });
+      }
       if (body.Test !== true && failCheckouts > 0) {
         failCheckouts -= 1;
         return send(res, 500, { Error: { Message: "Internal error (fake)", Code: "InternalError" } });
@@ -826,7 +839,11 @@ function handle(method, path, q, body, res) {
       return send(res, 200, { ShoppingCart: { ...cart, Id: String(saleId), PurchasedItems: purchased } });
     }
     case "/sale/sales": {
-      return send(res, 200, { ...page(sales), Sales: sales.slice().reverse() });
+      /* T256: request.saleId reads one sale, which is how the app checks
+       * a credit sale's one line. */
+      const wantSale = one(q, "saleId");
+      const list = wantSale ? sales.filter((x) => String(x.Id) === String(wantSale)) : sales;
+      return send(res, 200, { ...page(list), Sales: list.slice().reverse() });
     }
     case "/sale/purchasecontract": {
       const c = contracts.find((x) => x.Id === Number(body.ContractId)) ?? contracts[0];
@@ -883,7 +900,7 @@ function handle(method, path, q, body, res) {
         return send(res, 500, { Error: { Message: "Internal error (fake)", Code: "InternalError" } });
       }
       const saleId = ++saleSeq;
-      sales.push({ Id: saleId, ClientId: who.Id, SaleDateTime: wall(new Date()), PurchasedItems: [{ Id: 0, Name: "Account Payment", IsService: false, Quantity: 1, Price: amount }], Payments: [pay] });
+      sales.push({ Id: saleId, ClientId: who.Id, SaleDateTime: wall(new Date()), PurchasedItems: [{ Id: 422, IsService: true, BarcodeId: null, Description: "account adjustment", CategoryId: 23, UnitPrice: amount, Quantity: 1, TotalAmount: amount, TaxAmount: 0 }], Payments: [pay] });
       if (loseCredits > 0) {
         /* The sale books and the balance does not move: what the route's
          * fresh balance read exists to catch. */

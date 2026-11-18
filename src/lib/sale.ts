@@ -1840,13 +1840,13 @@ export const CREDIT_MAX_USD = 2000;
  * take money for a special item and deliver nothing, and nobody has seen
  * what a cart sale of that product does to a balance.
  *
- * WARNING (T256, prod, 2026-11-18): `Test: true` here is NOT known to be
- * a clean rehearsal. Identical $1.00 Test bodies answered AmountPaid 1
- * and later AmountPaid 2, and a real $1.00 call then booked sale 428932
- * with two $1.00 "account adjustment" lines (service 422) paid $2.00.
- * Mindbody appears to carry pending credit lines across calls for a
- * client. Nothing may call this, Test or not, until that is understood;
- * /api/checkout's credit branch is switched off.
+ * T256, prod, 2026-11-18: rehearse-then-charge is clean (two Test calls
+ * answered AmountPaid 1 and 1, then Test plus real made sale 428953 with
+ * ONE "account adjustment" line, service 422, balance up by $1.00). Two
+ * processes buying credit for one client within seconds booked ONE sale
+ * with both lines (428932), so the caller must never run two at once for
+ * a client (T253's hold) and must check the answer, the sale's lines
+ * (`creditSaleProblem`) and the balance afterwards.
  *
  * `SalesRepId`, `ConsumerPresent` and `PaymentAuthenticationCallbackUrl`
  * are not sent: the write runs under the teacher's token (T49), as every
@@ -2719,6 +2719,86 @@ export async function latestSaleId(
   startedAt: Date,
 ): Promise<number | null> {
   return (await latestSale(clientId, startedAt)).id;
+}
+
+/**
+ * T256: one sale read by its id (`GET /sale/sales?request.saleId=`,
+ * sale.yml:1051), for the sale an account credit purchase answered with.
+ * The id is marked SEEN, so a cart checkout that follows for the same
+ * client cannot have latestSale name the credit sale as its own. A read:
+ * `found: false` when the list does not hold it (yet), and a thrown
+ * error or a timeout is answered as not found, never as a verdict.
+ */
+export async function saleById(saleId: number): Promise<{
+  found: boolean;
+  purchasedItems: unknown[] | null;
+  clientId: string | null;
+}> {
+  seenSaleIds.add(saleId);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const body = await Promise.race([
+      mindbody(
+        `/sale/sales?request.saleId=${encodeURIComponent(String(saleId))}`,
+      ),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () =>
+            reject(new Error(`no answer in ${SALE_LOOKUP_WAIT_MS / 1000}s`)),
+          SALE_LOOKUP_WAIT_MS,
+        );
+      }),
+    ]);
+    const sales: unknown[] = Array.isArray(body?.Sales) ? body.Sales : [];
+    const sale = sales.find(
+      (raw) => Number((raw as Record<string, unknown>)["Id"]) === saleId,
+    ) as Record<string, unknown> | undefined;
+    if (sale === undefined) {
+      return { found: false, purchasedItems: null, clientId: null };
+    }
+    const items = sale["PurchasedItems"];
+    return {
+      found: true,
+      purchasedItems: Array.isArray(items) ? items : null,
+      clientId: sale["ClientId"] == null ? null : String(sale["ClientId"]),
+    };
+  } catch (err) {
+    console.log(
+      `[sale-id] sale ${saleId} could not be read: ` +
+        (err instanceof Error ? err.message : String(err)),
+    );
+    return { found: false, purchasedItems: null, clientId: null };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * T256: whether a credit sale's lines are what `purchaseaccountcredit`
+ * should have booked for `amount`: EXACTLY ONE line, quantity one, worth
+ * the amount to the cent. Live Mindbody books it as service 422 "account
+ * adjustment" in category 23 (sales 428953 and 428932, 2026-11-18), but
+ * the match is on the count and the amount, never the id alone: sale
+ * 428932 held two such lines for one $2.00 payment, and only the count
+ * says so. Null when the lines agree, else the problem in words.
+ */
+export function creditSaleProblem(
+  items: readonly unknown[],
+  amount: number,
+): string | null {
+  if (items.length !== 1) {
+    return `the credit sale holds ${items.length} lines, not one`;
+  }
+  const line = items[0] as Record<string, unknown>;
+  const qty = num(line["Quantity"]) ?? 1;
+  const unit = num(line["UnitPrice"]);
+  const total = num(line["TotalAmount"]) ?? (unit === null ? null : unit * qty);
+  if (qty !== 1) return `the credit line's quantity is ${qty}, not 1`;
+  if (total === null) return "the credit line carries no amount";
+  if (Math.round(total * 100) !== Math.round(amount * 100)) {
+    return `the credit line is worth $${total.toFixed(2)}, not $${amount.toFixed(2)}`;
+  }
+  return null;
 }
 
 /**
