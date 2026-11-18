@@ -23241,8 +23241,15 @@ studio does; do not use it here.) Neither has been run live by this app.
       fake `Execute` on `updateclientvisit` if it does not know it): the
       trash offers both choices; Late cancel greys the row and it stays;
       Undo restores it; Cancel booking removes the row as today.
-- [ ] Pete (or the main session with his OK): run the probe once on John
-      NewGuy's next booked visit and record what Mindbody answered.
+- [x] Run live on John NewGuy (main session, Pete's OK, prod, write guard
+      on 100042041), visit 1305809 of class 138220 (18:00, 2026-11-17):
+      at ~06:00 `Latecancel` refused "Cancellation is outside allowed
+      window."; at 19:46, class over and never checked in, `Latecancel`
+      ACCEPTED (`LateCancelled: true`, AppointmentStatus "NoShow" ->
+      "Cancelled", pass 567229 attached, Remaining 99998 unchanged) and
+      `Unlatecancel` restored it ("NoShow", false, pass unchanged). The
+      studio's after-the-class practice works through the API; the
+      window's size before a class is unseen.
 
 ### Probed live (main session, prod site 471, 2026-11-17 about 6:00 AM)
 
