@@ -6719,12 +6719,35 @@ textarea.reason-note-field:disabled::placeholder {
   font-weight: 600;
 }
 
-.purchase-void {
+/* Pete, 2026-11-18: "the void button is way too big. make it smaller and
+ * to the right." The sale's meta line and its actions share one row; the
+ * control is a compact outlined button at the row's right end. */
+.purchase-foot {
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 4px 0 0;
+}
+
+.purchase-foot .purchase-meta {
+  margin: 0;
+  flex: 1 1 auto;
+}
+
+.purchase-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
+.purchase-void {
+  display: inline-flex;
+  align-items: center;
   justify-content: center;
-  min-height: 64px;
-  margin: 10px 0 0;
+  min-height: 48px;
+  min-width: 88px;
+  margin: 0;
   padding: 0 16px;
   border: 2px solid var(--stop);
   border-radius: 0;

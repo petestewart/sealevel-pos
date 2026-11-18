@@ -134,7 +134,7 @@ export function RecentPurchases({
       ) : null}
       {anyVoid ? (
         <p className="optins-msg purchases-help">
-          Opens Mindbody. Sign in there if asked; the void happens in Mindbody.
+          Void opens Mindbody. Sign in there if asked; the void happens in Mindbody.
         </p>
       ) : null}
       {sales.length > 0 ? (
@@ -167,6 +167,7 @@ export function RecentPurchases({
                     </li>
                   ))}
                 </ul>
+                <div className="purchase-foot">
                 <p className="purchase-meta">
                   Paid by {paidBy(s)}
                   <span className="purchase-no"> · sale {s.saleId}</span>
@@ -177,18 +178,22 @@ export function RecentPurchases({
                   ) : null}
                 </p>
                 {url ? (
-                  <a
-                    className="purchase-void"
-                    href={url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    onClick={() => {
-                      awayToVoid.current = true;
-                    }}
-                  >
-                    Void in Mindbody
-                  </a>
-                ) : s.noVoidWhy && !data?.linkWarning ? (
+                  <span className="purchase-actions">
+                    <a
+                      className="purchase-void"
+                      href={url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={() => {
+                        awayToVoid.current = true;
+                      }}
+                    >
+                      Void
+                    </a>
+                  </span>
+                ) : null}
+                </div>
+                {!url && s.noVoidWhy && !data?.linkWarning ? (
                   <p className="optins-msg">{s.noVoidWhy}</p>
                 ) : null}
               </li>
