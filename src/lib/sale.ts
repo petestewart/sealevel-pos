@@ -3,9 +3,10 @@
  *
  * T22 shipped the reads and the Test-mode pricing; T24 added the
  * writes that move money: `checkoutCart` (a real, non-Test
- * /sale/checkoutshoppingcart), `purchaseCredit` (/sale/purchaseaccountcredit,
- * which no card sale reaches since T238 retired the $10 card floor) and
- * nothing else. Every one of them
+ * /sale/checkoutshoppingcart), `purchaseCredit` (/sale/purchaseaccountcredit:
+ * no card sale has reached it since T238 retired the $10 card floor, and
+ * since T256 it is the counter's account credit ticket) and nothing
+ * else. Every one of them
  * goes through mindbody(), so dry run and the write guard intercept them
  * exactly as they intercept a check-in, and suppression is REPORTED to the
  * caller rather than dressed as success.
@@ -1783,68 +1784,121 @@ export interface CreditPurchaseOutcome {
   amountPaid: number | null;
   /** PurchaseAccountCreditResponse.SaleId (sale.yml:5913). */
   saleId: number | null;
+  /** PurchaseAccountCreditResponse.ClientId (sale.yml:5909), when the
+   *  answer names one: the account Mindbody says it credited. */
+  clientId: string | null;
   /** T53: PurchaseAccountCreditResponse.EmailReceipt (sale.yml:5918),
    *  "whether or not an email receipt was sent". True only when
    *  Mindbody said so; null on suppression or when the field is absent. */
   emailReceipt: boolean | null;
+  /** T256: PurchaseAccountCreditResponse.PaymentProcessingFailures
+   *  (sale.yml:5922), each entry's own words. Mindbody documents them for
+   *  an SCA challenge left pending, which is a payment in neither state;
+   *  any entry at all means the answer did not say the money moved
+   *  cleanly, and the route treats it so. Empty when there were none. */
+  failures: string[];
 }
 
+/** T256: the tenders account credit may be bought with. Never account
+ *  credit itself (a DebitAccount buying credit moves nothing anywhere
+ *  and books a sale), never a comp (credit given away is cash out of the
+ *  till), and not a gift card: nobody has seen `purchaseaccountcredit`
+ *  take one, and a bearer card turned into account money is its own
+ *  question (T256 in docs/TICKETS.md). */
+export type CreditTender = Extract<
+  CheckoutPayment,
+  { type: "Cash" } | { type: "StoredCard" } | { type: "CreditCard" }
+>;
+
+/** T256: the smallest and largest amount of credit the counter sells. A
+ *  cent is the floor (cardChargeable's rule: nothing is not a tender);
+ *  the ceiling is a typo guard, not a policy, and the keypad says it. */
+export const CREDIT_MIN_USD = 0.01;
+export const CREDIT_MAX_USD = 2000;
+
 /**
- * POST /sale/purchaseaccountcredit (sale.yml:1778): charge the stored
- * card for an amount of account credit.
+ * POST /sale/purchaseaccountcredit (sale.yml:1778): sell account credit
+ * to a client, paid with ONE tender.
  *
- * NOT CALLED by any sale today. It was the first half of the under-$10
- * card path (buy $10 of credit, then check the cart out on DebitAccount),
- * which T238 retired: a card is now charged what it pays in one
- * checkout. It is kept because Phase 4's gift card on the reader (PLAN
- * T232) may need a credit-then-spend path again; nothing else should
- * start calling it without reading T238.
+ * T24 wrote it for the under-$10 card path, T238 retired that path and
+ * left this unreached, and T256 (Pete, 2026-11-18: "we need to add the
+ * ability to add credit to a student's account") is what calls it again,
+ * from /api/checkout's account credit ticket and from
+ * scripts/probe-account-credit.ts. Generalised from the stored card to
+ * the three tenders `CreditTender` allows, and given `test`, so the
+ * route rehearses with `Test: true` before the real call exactly as a
+ * gift card purchase is rehearsed (T96).
  *
  * Request per PurchaseAccountCreditRequest (sale.yml:4774): ClientId
  * (4779), Test (4783), LocationId (4787), SendEmailReceipt (4791),
- * PaymentInfo (4808, a CheckoutPaymentInfo). There is NO top-level
- * Amount: the amount rides PaymentInfo.Metadata, so any amount can be
- * bought rather than a preconfigured SKU (design doc, "The amount is
- * dynamic"). The card is named by lastFour per the
- * StoredCard key set (sale.yml:3934).
+ * PaymentInfo (4808, ONE CheckoutPaymentInfo, the same shape a cart's
+ * Payments entry takes, built by checkoutPaymentPayload). There is NO
+ * top-level Amount: the amount rides PaymentInfo.Metadata, so any amount
+ * can be bought rather than a preconfigured SKU (design doc, "The amount
+ * is dynamic"). This is deliberately NOT the studio's "ADD CREDIT to
+ * ACCOUNT" retail product sold through a cart: T103 showed a cart can
+ * take money for a special item and deliver nothing, and nobody has seen
+ * what a cart sale of that product does to a balance.
+ *
+ * WARNING (T256, prod, 2026-11-18): `Test: true` here is NOT known to be
+ * a clean rehearsal. Identical $1.00 Test bodies answered AmountPaid 1
+ * and later AmountPaid 2, and a real $1.00 call then booked sale 428932
+ * with two $1.00 "account adjustment" lines (service 422) paid $2.00.
+ * Mindbody appears to carry pending credit lines across calls for a
+ * client. Nothing may call this, Test or not, until that is understood;
+ * /api/checkout's credit branch is switched off.
+ *
+ * `SalesRepId`, `ConsumerPresent` and `PaymentAuthenticationCallbackUrl`
+ * are not sent: the write runs under the teacher's token (T49), as every
+ * cart checkout does, and the cart path has never sent the SCA pair
+ * either. A pending SCA challenge would come back in
+ * PaymentProcessingFailures, which the caller reads.
  */
-export async function purchaseCredit(
-  clientId: string,
-  amount: number,
-  lastFour: string,
+export async function purchaseCredit(opts: {
+  clientId: string;
+  payment: CreditTender;
+  /** True for the rehearsal: Mindbody validates and moves nothing. */
+  test: boolean;
   /** T49: the signed-in teacher, when there is one. */
-  actor?: Actor | null,
-  /** T53: SendEmailReceipt (sale.yml:4791). The credit purchase is a
-   *  sale of its own in Mindbody's books, so it gets the same receipt
-   *  decision as the cart that follows it. */
-  sendEmailReceipt = false,
-): Promise<CreditPurchaseOutcome> {
+  actor?: Actor | null;
+  /** T53: SendEmailReceipt (sale.yml:4791). Never on a rehearsal. */
+  sendEmailReceipt?: boolean;
+}): Promise<CreditPurchaseOutcome> {
+  const { clientId, payment, test } = opts;
   if (!clientId) throw new Error("purchaseCredit needs a client id.");
-  if (!Number.isFinite(amount) || amount <= 0) {
+  if (
+    payment.type !== "Cash" &&
+    payment.type !== "StoredCard" &&
+    payment.type !== "CreditCard"
+  ) {
+    throw new Error("Account credit is bought with cash or a card.");
+  }
+  if (!cardChargeable(payment.amount)) {
     throw new Error("purchaseCredit needs a positive amount.");
+  }
+  if (Math.abs(payment.amount * 100 - Math.round(payment.amount * 100)) > 1e-6) {
+    throw new Error("purchaseCredit needs an amount in whole cents.");
   }
   const res = await mindbody("/sale/purchaseaccountcredit", {
     method: "POST",
     body: {
       ClientId: clientId,
-      Test: false,
+      Test: test,
       LocationId: STUDIO_LOCATION_ID,
-      SendEmailReceipt: sendEmailReceipt,
-      PaymentInfo: checkoutPaymentPayload({
-        type: "StoredCard",
-        amount,
-        lastFour,
-      }),
+      SendEmailReceipt: test ? false : opts.sendEmailReceipt === true,
+      PaymentInfo: checkoutPaymentPayload(payment),
     },
     clientId,
-    ...(actor ? { actor } : {}),
+    ...(opts.actor ? { actor: opts.actor } : {}),
   });
   if (res?.DryRun === true) {
     return {
       suppressed: "dry-run",
       amountPaid: null,
       saleId: null,
+      clientId: null,
       emailReceipt: null,
+      failures: [],
     };
   }
   if (res?.WriteSuppressed === true) {
@@ -1852,15 +1906,25 @@ export async function purchaseCredit(
       suppressed: "write-guard",
       amountPaid: null,
       saleId: null,
+      clientId: null,
       emailReceipt: null,
+      failures: [],
     };
   }
+  const failuresRaw: unknown[] = Array.isArray(res?.PaymentProcessingFailures)
+    ? res.PaymentProcessingFailures
+    : [];
+  const failures = failuresRaw.map((f: any) =>
+    String(f?.Message ?? f?.Type ?? JSON.stringify(f ?? null)).slice(0, 300),
+  );
   return {
     suppressed: null,
     amountPaid: num(res?.AmountPaid),
     saleId: num(res?.SaleId),
+    clientId: str(res?.ClientId) ?? (num(res?.ClientId) !== null ? String(res.ClientId) : null),
     emailReceipt:
       typeof res?.EmailReceipt === "boolean" ? res.EmailReceipt : null,
+    failures,
   };
 }
 

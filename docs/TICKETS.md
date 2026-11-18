@@ -23652,3 +23652,80 @@ Driven against the fake after the fix (Chromium, 1180x820):
   client in `/api/charge-holds`, the "may or may not have gone through"
   outcome with Understood, and Finalize dark ("The last charge needs
   checking first"). No sale in the fake.
+
+## T256. Add credit to a student's account (Pete, 2026-11-18) — STOPPED at the probe
+
+Pete: "we need to add the ability to add credit to a student's account. in
+mindbody we do it by ringing up a sale with the item ADD CREDIT to ACCOUNT.
+we can make this more elegant in our app but the ability needs to be
+there". His second screenshot: one Mindbody POS ticket holding ADD CREDIT
+to ACCOUNT ($11.00, no tax) beside Boxed Water, $15.00, paid at once.
+
+### Probe (prod, site 471, dummy client 100042041, 2026-11-18 ~04:14-04:24Z)
+
+`scripts/probe-account-credit.ts`, plus read-only scans of recent sales.
+
+- **No ADD CREDIT product in the catalog.** `/sale/products` (location 1,
+  98 and none; searchText credit, account, ADD CREDIT; categoryIds=23)
+  serves 34 products and none of them; `/sale/services` serves 37 and none,
+  and `request.serviceIds=325` (with includeDiscontinued) serves nothing.
+- **It is a system pricing option in category 23 "Payments on Account"**
+  (`/site/categories`: Service false, Active false), found only in sold
+  lines: sale 428302 (2026-11-09) holds `Id: 325, IsService: true,
+  Description "ADD CREDIT to ACCOUNT", CategoryId 23, UnitPrice 25,
+  TaxAmount 0`, paid $25 Visa/MC. The same category holds `Id: 422
+  "account adjustment"` (sale 428464, $10) and `Id: -6 "Payment on
+  Account"` (sale 428709, $0.41).
+- **In a cart it prices at $0.00 and no Metadata key sets a price**
+  (`Test: true`, Comp stub): service 325 alone SubTotal/Grand $0.00, and
+  the same with Metadata `Price`, `Amount`, `SalePrice`, `UnitPrice` or
+  `price` 11; beside Boxed Water the cart is $3.62 + $0.38 = $4.00, the
+  credit line still $0.00. Service -6 is refused "No item exists with the
+  specified ID." So route A (credit as an ordinary cart line) is NOT
+  viable: it is T103's custom-amount gift card again, a $0 line.
+- **`purchaseaccountcredit` with `Test: true` is not known to be clean.**
+  My calls (all `Test: true`, $1.00, PaymentInfo Metadata `{Amount: 1}`):
+  run 1, ~04:14-04:16Z: Cash -> `AmountPaid 1, SaleId 0, ClientId
+  100042041, no failures`; CreditCard 4111...1111 -> the same; balance
+  -4.50 after each. Run 2, ~04:17-04:21Z: Cash -> `AmountPaid 1`; balance
+  -4.50. Run 3, ~04:23:07-04:23:30Z: Cash -> `AmountPaid 2` (balance read
+  after it -4.50), CreditCard -> `AmountPaid 2` (balance read after it
+  -2.50). The main session's real $1.00 Cash call (Pete's OK) landed at
+  04:23:14Z between those two, answered `AmountPaid 2`, and booked sale
+  428932: TWO $1.00 "account adjustment" lines (service 422) on one $2.00
+  Cash payment. Mindbody appears to keep pending credit lines per client
+  across calls, Test calls possibly included. The card was not charged
+  (the sale's only payment is Cash).
+
+### What is on the branch, and switched off
+
+- `purchaseCredit` (src/lib/sale.ts) generalised to Cash, StoredCard and
+  CreditCard with a `test` flag and `PaymentProcessingFailures`; NOTHING
+  may call it until the pending-line question is settled.
+- `/api/checkout` takes `accountCredit: { amount }` as a stand-alone
+  ticket (shape refusals in src/lib/accountcredit.ts, before any PIN or
+  Mindbody call; client required, never the house client; a `Test: true`
+  rehearsal asserting AmountPaid; one real call under the teacher's token;
+  AmountPaid and a fresh balance delta asserted, else ambiguous so T253
+  holds the client), behind `ACCOUNT_CREDIT_ENABLED = false`: every credit
+  request is refused 409 with nothing sent.
+- `cartsha.ts` hashes `credit|<cents>` when present; the fake Mindbody's
+  `purchaseaccountcredit` raises the balance on a real call, changes
+  nothing on Test, and has `/__fake/fail-credit` and `/__fake/lose-credit`.
+- SaleScreen: the `CreditItem` line type and the payment panel's credit
+  ticket rules (one tender, never account or gift card, no discount). No
+  shelf cell or keypad yet, so nothing reaches it.
+
+### Owed before building
+
+- Why identical Test bodies answered 1 then 2, and whether a Test call
+  leaves a line a later real call checks out. Read the dummy client's
+  sales after a single Test call, then after a single real one.
+- The coordinator's rules for the build: the rehearsal's AmountPaid must
+  equal the request or nothing is charged; after the real call AmountPaid
+  and the fresh balance delta must equal the request, and the sale's
+  PurchasedItems must be exactly one "account adjustment" line of that
+  amount, else a money-moved-wrong outcome with a T253 hold.
+- A mixed ticket (credit beside retail, Pete's screenshot) would be two
+  Mindbody calls (a cart and a credit purchase), T90's partial-outcome
+  path; not started, by instruction.

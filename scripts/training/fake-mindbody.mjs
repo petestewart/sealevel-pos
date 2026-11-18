@@ -453,6 +453,12 @@ let delayCheckouts = { n: 0, ms: 0 };
  * calls carrying `Execute` answer a 400, as Mindbody refusing a late
  * cancel would. Not part of any Mindbody API. */
 let refuseExecutes = 0;
+/* T256: POST /__fake/fail-credit?n=1 makes the next N real account credit
+ * purchases take the money and answer a 500 (an unknown outcome), and
+ * POST /__fake/lose-credit?n=1 makes them book the sale and leave the
+ * balance where it was. Not part of any Mindbody API. */
+let failCredits = 0;
+let loseCredits = 0;
 /* And POST /__fake/delay-execute?ms=3000&n=1 holds the next N of them
  * that long, so the row's spinner can be seen. */
 let delayExecutes = { n: 0, ms: 0 };
@@ -463,6 +469,14 @@ function handle(method, path, q, body, res) {
     case "/__fake/fail-checkout": {
       failCheckouts = Number(q.get("n") ?? 1) || 0;
       return send(res, 200, { failCheckouts });
+    }
+    case "/__fake/fail-credit": {
+      failCredits = Number(q.get("n") ?? 1) || 0;
+      return send(res, 200, { failCredits });
+    }
+    case "/__fake/lose-credit": {
+      loseCredits = Number(q.get("n") ?? 1) || 0;
+      return send(res, 200, { loseCredits });
     }
     case "/__fake/refuse-execute": {
       refuseExecutes = Number(q.get("n") ?? 1) || 0;
@@ -831,8 +845,54 @@ function handle(method, path, q, body, res) {
       const value = gc && !gc.EditableByConsumer ? gc.CardValue : Number(amount);
       return send(res, 200, { BarcodeId: body.BarcodeId, Value: value, AmountPaid: Number(amount), SaleId: body.Test ? null : ++saleSeq });
     }
-    case "/sale/purchaseaccountcredit":
-      return send(res, 200, { SaleId: ++saleSeq, AmountPaid: body.Amount ?? 0 });
+    case "/sale/purchaseaccountcredit": {
+      /* T256: account credit, bought with ONE PaymentInfo: Cash, the
+       * StoredCard on file (by its last four) or a typed CreditCard. The
+       * amount rides the payment's Metadata, as live Mindbody's does
+       * (sale.yml:4774 has no Amount field). Test: true answers what a
+       * real one would and changes nothing, which is what probe T256 saw
+       * on prod (2026-11-18). A real one RAISES the balance by the amount
+       * and books a sale. The refusal words are invented. */
+      const who = byId(body.ClientId);
+      if (!who) return send(res, 400, { Error: { Message: "Client not found (fake)", Code: "InvalidParameter" } });
+      const pay = body.PaymentInfo ?? {};
+      const meta = typeof pay.Metadata === "string" ? (() => { try { return JSON.parse(pay.Metadata); } catch { return {}; } })() : (pay.Metadata ?? {});
+      const amount = Number(meta.Amount ?? meta.amount ?? NaN);
+      if (!Number.isFinite(amount) || amount <= 0) {
+        return send(res, 400, { Error: { Message: "Payment amount must be greater than zero (fake)", Code: "InvalidParameter" } });
+      }
+      if (pay.Type === "StoredCard") {
+        if (!who.ClientCreditCard || String(meta.LastFour ?? "") !== who.ClientCreditCard.LastFour) {
+          return send(res, 400, { Error: { Message: "No matching stored card (fake)", Code: "InvalidParameter" } });
+        }
+      } else if (pay.Type === "CreditCard") {
+        if (body.Test !== true && String(meta.CreditCardNumber ?? "") === "4000000000000002") {
+          return send(res, 400, { Error: { Message: "Card declined (fake)", Code: "CardDeclined" } });
+        }
+      } else if (pay.Type !== "Cash") {
+        return send(res, 400, { Error: { Message: `Invalid payment method ${pay.Type} (fake)`, Code: "InvalidParameter" } });
+      }
+      if (body.Test === true) {
+        return send(res, 200, { AmountPaid: amount, ClientId: who.Id, SaleId: 0, EmailReceipt: false, PaymentProcessingFailures: [] });
+      }
+      if (failCredits > 0) {
+        failCredits -= 1;
+        /* The money is taken and the answer is lost, which is the case a
+         * 500 cannot rule out. */
+        who.AccountBalance = Math.round(((who.AccountBalance ?? 0) + amount) * 100) / 100;
+        return send(res, 500, { Error: { Message: "Internal error (fake)", Code: "InternalError" } });
+      }
+      const saleId = ++saleSeq;
+      sales.push({ Id: saleId, ClientId: who.Id, SaleDateTime: wall(new Date()), PurchasedItems: [{ Id: 0, Name: "Account Payment", IsService: false, Quantity: 1, Price: amount }], Payments: [pay] });
+      if (loseCredits > 0) {
+        /* The sale books and the balance does not move: what the route's
+         * fresh balance read exists to catch. */
+        loseCredits -= 1;
+      } else {
+        who.AccountBalance = Math.round(((who.AccountBalance ?? 0) + amount) * 100) / 100;
+      }
+      return send(res, 200, { AmountPaid: amount, ClientId: who.Id, SaleId: saleId, EmailReceipt: body.SendEmailReceipt === true, PaymentProcessingFailures: [] });
+    }
     case "/sale/returnsale":
       return send(res, 200, { ReturnSaleID: ++saleSeq });
     case "/sale/alternativepaymentmethods":

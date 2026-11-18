@@ -40,6 +40,11 @@ import { createHash } from "node:crypto";
  *   approval of the same lines at $49.00 without it, or the reverse. The
  *   line is appended ONLY when a code is present, so every ticket
  *   without one hashes to exactly what it did before T220.
+ * - the account credit amount (T256), in cents, when the ticket is an
+ *   account credit purchase (`accountCredit: { amount }`). It is the
+ *   whole of what that ticket sells, so a student who approved $11.00 of
+ *   credit must not be charged on that approval for $50.00. Appended
+ *   ONLY when present, so every other ticket hashes exactly as before.
  *
  * WHAT IS DELIBERATELY NOT, and why:
  *
@@ -157,6 +162,16 @@ function promoLines(raw: unknown): string[] {
   return code === "" ? [] : [`promo|${code}`];
 }
 
+/** T256: the account credit line, or none. */
+function creditLines(raw: unknown): string[] {
+  if (raw === null || raw === undefined) return [];
+  const amount =
+    typeof raw === "object" && !Array.isArray(raw)
+      ? cents((raw as Record<string, unknown>)["amount"])
+      : null;
+  return [`credit|${amount === null ? "" : amount}`];
+}
+
 /** T240: the tender's lines, from `method` or `split.legs`. One word
  *  per leg, folded the way the student reads it (tenderWord's folding,
  *  repeated here so this file stays free of display imports): the
@@ -206,7 +221,8 @@ export function carriesTender(input: unknown): boolean {
  * reader) can see exactly what went in without reversing a digest.
  *
  * `input` is the body both routes already receive: `items`, `giftCards`,
- * `discount`, `promotionCode` and `clientId` at its top level, and since
+ * `discount`, `promotionCode`, `accountCredit` (T256) and `clientId` at
+ * its top level, and since
  * T240 `method` or `split`, read only with `{ tender: true }`.
  */
 export function canonicalCart(
@@ -229,6 +245,7 @@ export function canonicalCart(
     ...lines,
     discountText(body["discount"]),
     ...promoLines(body["promotionCode"]),
+    ...creditLines(body["accountCredit"]),
     /* T240: appended LAST and only when asked, so a hash made without
      * the tender is byte for byte the one made before T240. */
     ...(opts.tender === true ? tenderLines(body) : []),
