@@ -2822,8 +2822,8 @@ async function runCheckout(
               `gone through on the account for ${owed}. Check Mindbody before ` +
               "selling them again. Nothing was retried."
             : `${safeWords} The items were not sold (${errMessage(err)}): ` +
-              `their ${owed} is on the account. Sell them again paying by ` +
-              "account. Nothing was retried.",
+              `their ${owed} is on the account. Sell them again (paying by ` +
+              "account uses it). Nothing was retried.",
           stage: "checkout",
           partial: true,
           ambiguous,

@@ -2530,9 +2530,10 @@ function PaymentPanel(props: {
   const giftCardLines = cart.filter(isGiftCardLine);
   const saleLines = cart.filter((line) => !isOffCartLine(line));
   const hasGiftCard = giftCardLines.length > 0;
-  /* T256: an account credit ticket. It stands alone (SaleScreen refuses
-   * anything beside it), so with credit on the ticket there are no cart
-   * lines and no gift cards: the total is the amount typed. */
+  /* T256: account credit on the ticket. It may sit beside ordinary cart
+   * lines (the route buys credit for the whole total, then pays the lines
+   * from the account) but never beside a gift card, so the total is the
+   * credit typed plus the cart's priced total. */
   const creditLines = cart.filter(isCreditLine);
   const hasCredit = creditLines.length > 0;
   const creditTotal = roundToCents(
@@ -5440,11 +5441,19 @@ function PaymentPanel(props: {
         onClientDataStale();
         setPartialLock(
           body?.accountCredit
-            ? /* T256: step 1 bought the credit and step 2 did not sell
-                 the items; their money is on the account. */
-              "The credit was bought and the items were not sold. Empty " +
-                "the ticket and sell the items again paying by account; " +
-                "this ticket cannot be charged again."
+            ? body?.ambiguous === true
+              ? /* T256 review: step 2 did not ANSWER, so the items MAY
+                   have been sold on the account. Never tell the teacher
+                   they were not: selling them again would take the
+                   account twice. */
+                "The credit was bought, and the items MAY have been sold " +
+                  "on the account. Check Mindbody before selling them " +
+                  "again; this ticket cannot be charged again."
+              : /* T256: step 1 bought the credit and step 2 was refused;
+                   their money is on the account. */
+                "The credit was bought and the items were not sold. Empty " +
+                  "the ticket and sell the items again; this ticket cannot " +
+                  "be charged again."
             : "Part of this ticket was sold. Empty the ticket and ring up " +
                 "only what is still owed; this ticket cannot be charged again.",
         );

@@ -2737,9 +2737,20 @@ export async function saleById(saleId: number): Promise<{
   seenSaleIds.add(saleId);
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
+    /* T256 review: Mindbody answers NOTHING for a sale outside its default
+     * date window unless the read carries one (live, 2026-11-18: sale
+     * 428778 of 11/15 came back empty without dates and found with them).
+     * So bracket studio-local yesterday through the day after tomorrow,
+     * which holds a sale made just before or after local midnight. */
+    const now = Date.now();
+    const DAY = 24 * 60 * 60 * 1000;
+    const from = `${studioWall(new Date(now - DAY)).slice(0, 10)}T00:00:00`;
+    const to = `${studioWall(new Date(now + 2 * DAY)).slice(0, 10)}T00:00:00`;
     const body = await Promise.race([
       mindbody(
-        `/sale/sales?request.saleId=${encodeURIComponent(String(saleId))}`,
+        `/sale/sales?request.saleId=${encodeURIComponent(String(saleId))}` +
+          `&request.startSaleDateTime=${encodeURIComponent(from)}` +
+          `&request.endSaleDateTime=${encodeURIComponent(to)}`,
       ),
       new Promise<never>((_, reject) => {
         timer = setTimeout(

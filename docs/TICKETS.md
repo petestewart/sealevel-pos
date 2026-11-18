@@ -23902,3 +23902,22 @@ driven against the fake.
 - Whether `/sale/sales?request.saleId=` returns the credit sale at once.
   If it lags, the lines go unverified (logged) and the balance check
   still stands.
+
+### T256 review (of 916062c) and fixes
+
+An independent review found nothing that blocks merge. Fixed:
+- When step 2 does not ANSWER (timeout or 5xx), the route already said
+  the items MAY have been sold, but the Cart screen's lock said "the items
+  were not sold ... sell the items again paying by account", which could
+  take the account twice. The lock now says they MAY have been sold and
+  to check Mindbody first; the plain-refusal lock no longer tells the
+  teacher how to pay.
+- `saleById` now sends a studio-local date window (yesterday through the
+  day after tomorrow), since `/sale/sales?request.saleId=` answers nothing
+  outside its default window (sale 428778, 2026-11-18). Before this, a
+  miss was only "unverified", never a false verdict.
+- The step-2 refusal sentence no longer assumes a positive balance
+  ("paying by account uses it"); a stale "stands alone" comment fixed.
+Open for probe B9: a mixed sale for a client whose balance is already
+negative, where step 2's DebitAccount goes below zero without T94's PIN
+(nothing is overdrawn in substance: the tender paid the whole ticket).
