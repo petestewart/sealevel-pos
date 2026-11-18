@@ -23729,3 +23729,24 @@ to ACCOUNT ($11.00, no tax) beside Boxed Water, $15.00, paid at once.
 - A mixed ticket (credit beside retail, Pete's screenshot) would be two
   Mindbody calls (a cart and a credit purchase), T90's partial-outcome
   path; not started, by instruction.
+
+### T256: a cart line's price cannot be set through the API (main session, prod, 2026-11-18, Test: true only)
+
+Pete: "same with the UI when you first add it, then you have to manually
+enter the amount". So the main session priced service 325 "ADD CREDIT to
+ACCOUNT" for 100042041 in `checkoutshoppingcart` with `Test: true` in 19
+shapes: Metadata `{Id: 325}` plus each of Price, Amount, SalePrice,
+Value, CustomPrice, OpenPrice, ItemPrice, PriceOverride, OverridePrice,
+Cost, Total, UnitPrice, price, amount, value (11), Price as the string
+"11.00", and `Price`/`SalePrice` on the CheckoutItemWrapper itself. Every
+one priced the line at $0.00 (SubTotal 0, GrandTotal 0), and the
+wrapper's spec fields (sale.yml:3614) carry no price at all, only
+DiscountAmount and Quantity. Metadata sent as a JSON string is refused
+"The received Service's Metadata was missing key id.", and the item Type
+is limited: "Must be one of the following: Package, Product, Service,
+Tip" (a Tip needs `staffId` and is not credit). So the UI's typed price
+has no API equivalent that we can find, and account credit goes through
+`purchaseaccountcredit`. A ticket holding credit and other items is two
+calls; the one-card-charge shape is to buy credit for the WHOLE total with
+the card and pay the other lines from the account (the retired under-$10
+path's pattern).
