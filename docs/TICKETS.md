@@ -23921,3 +23921,119 @@ An independent review found nothing that blocks merge. Fixed:
 Open for probe B9: a mixed sale for a client whose balance is already
 negative, where step 2's DebitAccount goes below zero without T94's PIN
 (nothing is overdrawn in substance: the tender paid the whole ticket).
+
+## T257. A student's recent purchases, with a way to void one in Mindbody (Pete, 2026-11-18)
+
+Pete wants to see a student's recent sales in the app, with a way to void
+one. The API cannot void: `/sale/returnsale` returns comp sales only, and
+on a credit sale it refunds to the account (T256, "the API cannot void a
+credit sale"). So the void happens in Mindbody's own UI, and Pete: "the
+url for voiding a sale in the UI is
+https://clients.mindbodyonline.com/app/clients/100042110/account-details/void-edit?saleno=428778
+... we could possibly open mindbody to the correct page". The teacher
+signs in to Mindbody in Safari themselves ("that is up to the teacher").
+
+### Live facts (prod, read-only, 2026-11-18)
+
+- **The number in Mindbody's client URLs is the client's `UniqueId`, not
+  the editable `Id`** (main session): `.../app/clients/100037835/account-details`
+  opened the student whose `Id` is 10814 and `UniqueId` 100037835 (T114's
+  Stacia Sander).
+- `GET /client/clientpurchases?request.clientId=&request.startDate=&request.endDate=`
+  (client.yml:969; also `limit`, `offset`, `saleId`, `uniqueClientId`)
+  answers in about a second. A voided sale no longer appears.
+- `/sale/sales?request.saleId=` answers nothing for an older sale without
+  a date window (T256 review); the same caution is applied here: dates are
+  always sent, as studio wall-clock strings (`studioWall`).
+- **The shape** (this build's one read, dummy client 100042041, 90 days):
+  one element per PURCHASED LINE, each carrying the whole `Sale`. Sale
+  428528: `Sale {Id, SaleDate "2026-11-14T00:00:00Z", SaleTime
+  "16:44:30", SaleDateTime "2026-11-14T16:44:30Z", ClientId "100042041",
+  SalesRepId null, PurchasedItems [...], LocationId 1, Payments [{Id,
+  Amount 21, Method 1, Type "Cash", Notes null, TransactionId null}]}`,
+  then `Description "Welcome Back – 2 Weeks Unlimited ($49)"`,
+  `AccountPayment false`, `Price 49`, `AmountPaid 21`, `Discount 28`, `Tax
+  0`, `Returned false`, `Quantity 1`. `SaleDateTime` carries a "Z" on
+  digits that are SaleDate + SaleTime; it is read as studio wall-clock,
+  like every Mindbody datetime (T40), digit for digit. The answer carries
+  no UniqueId.
+
+### Built
+
+- [x] **`GET /api/client-purchases?clientId=&uniqueId=&days=`**
+      (`src/app/api/client-purchases/route.ts:27`): the device session and
+      a signed-in teacher (`requireActor`); `days` 30 by default, held to
+      1..90; 409 with the sentence for a T114 mismatch or no record, 502
+      when Mindbody does not answer. READS ONLY, on the service account,
+      nothing stored (T29).
+- [x] **`src/lib/clientpurchases.ts`**: two reads in parallel. The
+      record (`readRecord`, :151) through `pickClientRecord`, preferring
+      the UniqueId the screen holds; the purchases (`readPurchases`, :197)
+      over whole studio days, `from` the start of the day `days` back to
+      23:59:59 today, 100 a page, at most five pages (`truncated` beyond).
+      `groupSales` (:224) groups lines by `Sale.Id`, newest first, each
+      sale with its studio-local time, lines (description, quantity,
+      amount paid, price, discount, returned), payments as **type word and
+      amount only** (never `Notes` or an id; a 4+ digit run in a word is
+      struck), total paid, and returned / partly returned. `voidUrlFor`
+      (:135) builds the void page from digits only.
+- [x] **T114: no guessing.** A void link is offered only when ONE record
+      holds the id, its UniqueId is known and the sale's own
+      `Sale.ClientId` is this id. A shared id lists the sales (a purchase
+      line does not say which record it belongs to, and `uniqueClientId`
+      has never been tried live) with one sentence and no link; a sale
+      sold to another client id says so on its row; a UniqueId no record
+      carries refuses the read (409).
+- [x] **"Recent purchases" in the client profile modal**
+      (`src/app/RecentPurchases.tsx:44`, rendered under the profile card
+      at `src/app/page.tsx:10772`; `profileView` now carries the row's
+      UniqueId, :1798, :3521). It reads when the profile opens, with a
+      quiet spinner beside the heading and a `--stop` error line, and
+      "Show the last 90 days" (64px). Each sale: date and time, its lines
+      with amounts, the total paid, "Paid by Cash $9.93" (each method with
+      its amount), the sale number, "Returned" or "Partly returned", and a
+      64px outlined `--stop` **"Void in Mindbody"**, an `<a target="_blank"
+      rel="noopener noreferrer">` to
+      `https://clients.mindbodyonline.com/app/clients/<UniqueId>/account-details/void-edit?saleno=<SaleId>`,
+      checked again against that exact pattern in the browser. A link
+      rather than `window.open`: an out-of-scope URL from a Home Screen
+      web app is handed to Safari, a link is never eaten as a popup, and
+      its href is what can be checked. One line over the list: "Opens
+      Mindbody. Sign in there if asked; the void happens in Mindbody."
+      After a void link was tapped, the next `visibilitychange` to
+      visible (or `focus`, `pageshow`) reads the list again, so a voided
+      sale drops off. CSS under `/* T257` in `globals.css`, tokens only.
+- [x] **The fake** (`scripts/training/fake-mindbody.mjs`):
+      `/client/clientpurchases` from its recorded sales, in the live shape
+      (one record per line, `SaleDateTime` with a "Z", oldest first so the
+      app's sort is what puts the newest on top, date window, limit and
+      offset); six seeded sales (Alex Morgan 10101 has four in 30 days and
+      one at 50, one of two lines, one returned, one paid two ways; Sam
+      Okafor one); a checkout's payment is reported as a type word and
+      amount, never its Metadata. `POST /__fake/fail-purchases?n=1`,
+      `POST /__fake/void-sale?id=`, and `FAKE_MB_SHARED_ID=1` (a second,
+      inactive record under 10102).
+
+### Verified
+
+- `npx tsc --noEmit -p .` and `npx next build` clean.
+- Driven in Chromium against the fake (app :3257, fake :4257,
+  `FAKE_MB_SHARED_ID=1`): Alex Morgan's profile shows four sales in 30
+  days, newest first, the two-line sale as one; every void href is
+  `.../clients/<his UniqueId>/account-details/void-edit?saleno=<sale>`
+  with `target=_blank rel="noopener noreferrer"`; the control is 64px;
+  "Returned" and "Account $20.00, Cash $29.66" show; 90 days shows five;
+  tapping Void opened a new tab, and after the fake voided the sale and
+  the page saw `visibilitychange` the sale was gone. Chris Albright reads
+  "No purchases in the last 30 days." A failed read shows "Could not read
+  recent purchases: Internal error (fake)" with the profile card intact
+  and the roster still working. Sam Okafor's shared id lists his sale
+  with no void link and the sentence. The route answers 401 with no
+  device session.
+- One read-only `clientpurchases` call on prod for 100042041 (the shape
+  above). No writes anywhere.
+- **Not verified**: that the link opens Safari from the Home Screen app
+  on a real iPad, and Mindbody's void page itself (the sandbox here
+  cannot reach it). Pete's check: open a student with a sale, tap Void in
+  Mindbody, confirm Safari lands on that sale's void page, void a dummy
+  client's sale there, come back and see it gone.

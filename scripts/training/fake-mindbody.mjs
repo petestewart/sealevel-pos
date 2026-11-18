@@ -206,6 +206,12 @@ const clients = [
   client(10119, "Liam", "O'Connell"),
   client(10120, "Harper", "Nguyen"),
 ];
+/* T257: FAKE_MB_SHARED_ID=1 puts a second, inactive record under Sam
+ * Okafor's id 10102, as 10814 was on site 471 (T114), so a screen can be
+ * seen refusing to guess. Off by default. */
+if (process.env.FAKE_MB_SHARED_ID === "1") {
+  clients.push(client(10102, "Kati", "Oldrecord", { Status: "Inactive", Active: false }));
+}
 const byId = (id) => clients.find((c) => c.Id === String(id));
 
 /* Each client's passes (ClientServices). */
@@ -376,6 +382,32 @@ function classRow(d) {
 
 const sales = [];
 let saleSeq = 3100000;
+/* T257: a few sales already on the books, so a profile's "Recent
+ * purchases" has something to show: Alex Morgan (10101) has four in the
+ * last month (one of two lines, one with a line returned, one paid two
+ * ways) and one 50 days back, outside the default 30. Each ago() is a
+ * studio wall-clock time that many days and hours before now. */
+const ago = (days, hours = 0) => wall(new Date(now.getTime() - days * 86_400_000 - hours * 3_600_000));
+const seeded = [
+  { ClientId: "10101", SaleDateTime: ago(50), PurchasedItems: [{ Id: 1003, IsService: true, Description: "10 Class Series", Quantity: 1, UnitPrice: 210, TotalAmount: 210 }], Payments: [{ Type: "Visa", Amount: 210 }] },
+  { ClientId: "10101", SaleDateTime: ago(21, 3), PurchasedItems: [{ Id: 1005, IsService: true, Description: "Month Unlimited", Quantity: 1, UnitPrice: 189, TotalAmount: 189 }], Payments: [{ Type: "Visa", Amount: 189 }] },
+  { ClientId: "10101", SaleDateTime: ago(9, 5), PurchasedItems: [{ Id: 2001, IsService: true, BarcodeId: "p100", Description: "Water Bottle (1L)", Quantity: 2, UnitPrice: 3, TotalAmount: 6.62 }, { Id: 1007, IsService: true, Description: "Towel Rental", Quantity: 1, UnitPrice: 3, TotalAmount: 3.31 }], Payments: [{ Type: "Cash", Amount: 9.93 }] },
+  { ClientId: "10101", SaleDateTime: ago(4, 2), PurchasedItems: [{ Id: 2101, IsService: true, BarcodeId: "p200", Description: "Sealevel Tank Top", Quantity: 1, UnitPrice: 32, TotalAmount: 35.31, Returned: true }], Payments: [{ Type: "Account", Amount: 35.31 }] },
+  { ClientId: "10101", SaleDateTime: ago(1, 1), PurchasedItems: [{ Id: 2201, IsService: true, BarcodeId: "p300", Description: "Yoga Mat Towel", Quantity: 1, UnitPrice: 45, TotalAmount: 49.66 }], Payments: [{ Type: "Account", Amount: 20 }, { Type: "Cash", Amount: 29.66 }] },
+  { ClientId: "10102", SaleDateTime: ago(12), PurchasedItems: [{ Id: 1003, IsService: true, Description: "10 Class Series", Quantity: 1, UnitPrice: 210, TotalAmount: 210 }], Payments: [{ Type: "Mastercard", Amount: 210 }] },
+];
+for (const x of seeded) sales.push({ Id: ++saleSeq, LocationId: 1, ...x });
+/* The type word clientpurchases reports for a payment the app sent, and
+ * its amount. Never the card number or anything else in Metadata. */
+function paymentRow(p) {
+  if (typeof p?.Amount === "number" && !p?.Metadata) return { Type: String(p.Type ?? "Payment"), Amount: p.Amount };
+  const meta = typeof p?.Metadata === "string" ? (() => { try { return JSON.parse(p.Metadata); } catch { return {}; } })() : (p?.Metadata ?? {});
+  const word = { Cash: "Cash", StoredCard: "Visa", CreditCard: "Credit Card", DebitAccount: "Account", Comp: "Comp", GiftCard: "Gift Card" }[p?.Type] ?? String(p?.Type ?? "Payment");
+  return { Type: word, Amount: Number(meta.Amount ?? meta.amount ?? 0) };
+}
+/* T257: POST /__fake/fail-purchases?n=1 makes the next N clientpurchases
+ * reads answer a 500. Not part of any Mindbody API. */
+let failPurchases = 0;
 function priceCart(body) {
   let sub = 0;
   let tax = 0;
@@ -472,6 +504,55 @@ function handle(method, path, q, body, res) {
     case "/__fake/fail-checkout": {
       failCheckouts = Number(q.get("n") ?? 1) || 0;
       return send(res, 200, { failCheckouts });
+    }
+    case "/__fake/fail-purchases": {
+      failPurchases = Number(q.get("n") ?? 1) || 0;
+      return send(res, 200, { failPurchases });
+    }
+    case "/__fake/void-sale": {
+      /* T257: what a void in Mindbody's UI does to the list: the sale is
+       * gone from clientpurchases. Not part of any Mindbody API. */
+      const i = sales.findIndex((x) => String(x.Id) === String(q.get("id")));
+      if (i >= 0) sales.splice(i, 1);
+      return send(res, 200, { voided: i >= 0 });
+    }
+    case "/client/clientpurchases": {
+      /* T257: the shape prod answered for sale 428528 (2026-11-18): one
+       * record per purchased line with the whole Sale embedded,
+       * SaleDateTime with a "Z" on wall-clock digits. Oldest first, so
+       * the app's own sort is what puts the newest on top. */
+      if (failPurchases > 0) {
+        failPurchases -= 1;
+        return send(res, 500, { Error: { Message: "Internal error (fake)", Code: "InternalError" } });
+      }
+      const id = String(one(q, "clientId") ?? "");
+      const from = String(one(q, "startDate") ?? "0000").replace(/Z$/, "");
+      const to = String(one(q, "endDate") ?? "9999").replace(/Z$/, "");
+      const limit = Number(one(q, "limit") ?? 100) || 100;
+      const offset = Number(one(q, "offset") ?? 0) || 0;
+      const rows = [];
+      for (const x of sales.slice().sort((a, b) => a.SaleDateTime.localeCompare(b.SaleDateTime))) {
+        if (x.ClientId !== id || x.SaleDateTime < from || x.SaleDateTime > to) continue;
+        const sale = {
+          Id: x.Id,
+          SaleDate: `${x.SaleDateTime.slice(0, 10)}T00:00:00Z`,
+          SaleTime: x.SaleDateTime.slice(11),
+          SaleDateTime: `${x.SaleDateTime}Z`,
+          SalesRepId: null,
+          ClientId: x.ClientId,
+          PurchasedItems: x.PurchasedItems,
+          LocationId: 1,
+          Payments: (x.Payments ?? []).map(paymentRow),
+        };
+        for (const it of x.PurchasedItems) {
+          const qty = Number(it.Quantity ?? 1);
+          const price = Number(it.UnitPrice ?? it.Price ?? 0);
+          const paid = typeof it.TotalAmount === "number" ? it.TotalAmount : Math.round(price * qty * 100) / 100;
+          rows.push({ Sale: sale, Description: it.Description ?? it.Name ?? "Item", AccountPayment: false, Price: price, AmountPaid: paid, Discount: 0, Tax: 0, Returned: it.Returned === true, Quantity: qty });
+        }
+      }
+      const pageRows = rows.slice(offset, offset + limit);
+      return send(res, 200, { PaginationResponse: { RequestedLimit: limit, RequestedOffset: offset, PageSize: pageRows.length, TotalResults: rows.length }, Purchases: pageRows });
     }
     case "/__fake/fail-credit": {
       failCredits = Number(q.get("n") ?? 1) || 0;

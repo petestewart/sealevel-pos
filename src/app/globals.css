@@ -6608,6 +6608,154 @@ textarea.reason-note-field:disabled::placeholder {
   font-variant-numeric: tabular-nums;
 }
 
+/* T257: Recent purchases, under the profile card in the same modal and
+ * in the same idiom: a bordered surface, muted kicker, 16px floor. The
+ * void control is the one --stop thing here, because a void is
+ * destructive (in Mindbody, which is where it happens); outlined rather
+ * than filled, since the tap only opens a page. Tokens only. */
+.purchases {
+  margin-top: 12px;
+  padding: 0 16px 16px;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 17px;
+  line-height: 1.3;
+}
+
+.purchases-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.purchases-spin {
+  color: var(--muted);
+}
+
+.purchases-error {
+  margin: 0 0 8px;
+  padding: 10px 12px;
+  background: var(--stop-bg);
+  color: var(--stop);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.purchases-help {
+  margin-bottom: 8px;
+}
+
+.purchase-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.purchase {
+  padding: 10px 0 12px;
+  border-top: 1px solid var(--line);
+}
+
+.purchase:last-child {
+  border-bottom: 1px solid var(--line);
+}
+
+.purchase-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  font-weight: 600;
+}
+
+.purchase-total,
+.purchase-amt {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.purchase-lines {
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.purchase-line {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  font-size: 16px;
+}
+
+.purchase-desc {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.purchase-amt {
+  color: var(--muted);
+}
+
+.purchase-meta {
+  margin: 4px 0 0;
+  font-size: 16px;
+  color: var(--muted);
+}
+
+.purchase-no {
+  font-variant-numeric: tabular-nums;
+}
+
+.purchase-returned {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 0 6px;
+  background: var(--warn-bg);
+  color: var(--warn);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.purchase-void {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 64px;
+  margin: 10px 0 0;
+  padding: 0 16px;
+  border: 2px solid var(--stop);
+  border-radius: 0;
+  background: transparent;
+  color: var(--stop);
+  font-size: 17px;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.purchase-void:hover,
+.purchase-void:active {
+  background: var(--stop-bg);
+}
+
+.purchases-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 64px;
+  margin: 12px 0 0;
+  padding: 0 16px;
+  border: 2px solid var(--accent);
+  border-radius: 0;
+  background: transparent;
+  color: var(--accent);
+  font-size: 17px;
+  font-weight: 700;
+}
+
 
 /* --- Staff sign-in (T49) ---------------------------------------------
  * The header control beside Buy, the sign-in modal, the probe list and

@@ -191,6 +191,21 @@ account (`DebitAccount`); a step 2 that fails after step 1 is a partial
 `/sale/returnsale`**: it refunds to the account, so nothing moves.
 Verified on the fake; owed live: one real mixed sale (PLAN B9).
 
+**T257 (2026-11-18): the client profile shows "Recent purchases", each
+with "Void in Mindbody"** (Pete: see a student's recent sales, "with a way
+to void one"). The API cannot void (T256), so the 64px control is a link
+that opens Mindbody's own void page,
+`clients.mindbodyonline.com/app/clients/<UniqueId>/account-details/void-edit?saleno=<SaleId>`,
+in Safari, where the teacher signs in themselves; coming back to the app
+reads the list again, so a voided sale drops off. `GET
+/api/client-purchases` (device session and a signed-in teacher) reads
+`/client/clientpurchases` over a studio-local window (30 days, up to 90),
+groups the lines by sale, and passes payments as type and amount only.
+READS ONLY, nothing stored. A void link is offered only when one record
+holds the client id and its UniqueId is known (T114); a shared id lists
+the sales with a sentence and no link. Driven against the fake; the link
+opening Safari from the Home Screen app is not yet seen on an iPad.
+
 **`docs/PLAN.md` is the execution plan**: ordered work items, what each one is
 done when, the probes still to run, and the questions blocked on Pete. Start
 there. `docs/design/front-desk-pos.md` carries the reasoning behind every item
@@ -1692,6 +1707,16 @@ while `git clone` works, so clone the repo rather than fetching files.
   rehearsal). The `Test: true` rehearsal is the only thing that says a
   contract is sellable, which is one more reason the counter shows the
   rehearsal's own answer and never the list's.
+- **Void and refund exist only in Mindbody's UI, and its client URLs use
+  `UniqueId`** (T257, 2026-11-18). `/sale/returnsale` returns comp sales
+  only and refunds a credit sale to the account (T256), so the app never
+  voids: it links to `clients.mindbodyonline.com/app/clients/<UniqueId>/
+  account-details/void-edit?saleno=<SaleId>`. The number in that path is
+  the client's UniqueId, NOT the editable `Id` (`.../clients/100037835/
+  account-details` opened the student whose Id is 10814). And
+  `/client/clientpurchases` answers ONE element per purchased line, each
+  carrying its whole `Sale`, with `SaleDateTime` a "Z" on wall-clock
+  digits; a voided sale no longer appears in it.
 - **Categories live in `site.yml`, not `sale.yml`.** `GET /site/categories`
   exists; grepping only the Sale tag missed it once. `/site/liabilitywaiver`
   (the waiver's actual text) and `/site/paymenttypes` are next to it.
