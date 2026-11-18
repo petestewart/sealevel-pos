@@ -3,9 +3,10 @@
  *
  * T22 shipped the reads and the Test-mode pricing; T24 added the
  * writes that move money: `checkoutCart` (a real, non-Test
- * /sale/checkoutshoppingcart), `purchaseCredit` (/sale/purchaseaccountcredit,
- * which no card sale reaches since T238 retired the $10 card floor) and
- * nothing else. Every one of them
+ * /sale/checkoutshoppingcart), `purchaseCredit` (/sale/purchaseaccountcredit:
+ * no card sale has reached it since T238 retired the $10 card floor, and
+ * since T256 it is the counter's account credit ticket) and nothing
+ * else. Every one of them
  * goes through mindbody(), so dry run and the write guard intercept them
  * exactly as they intercept a check-in, and suppression is REPORTED to the
  * caller rather than dressed as success.
@@ -1783,68 +1784,121 @@ export interface CreditPurchaseOutcome {
   amountPaid: number | null;
   /** PurchaseAccountCreditResponse.SaleId (sale.yml:5913). */
   saleId: number | null;
+  /** PurchaseAccountCreditResponse.ClientId (sale.yml:5909), when the
+   *  answer names one: the account Mindbody says it credited. */
+  clientId: string | null;
   /** T53: PurchaseAccountCreditResponse.EmailReceipt (sale.yml:5918),
    *  "whether or not an email receipt was sent". True only when
    *  Mindbody said so; null on suppression or when the field is absent. */
   emailReceipt: boolean | null;
+  /** T256: PurchaseAccountCreditResponse.PaymentProcessingFailures
+   *  (sale.yml:5922), each entry's own words. Mindbody documents them for
+   *  an SCA challenge left pending, which is a payment in neither state;
+   *  any entry at all means the answer did not say the money moved
+   *  cleanly, and the route treats it so. Empty when there were none. */
+  failures: string[];
 }
 
+/** T256: the tenders account credit may be bought with. Never account
+ *  credit itself (a DebitAccount buying credit moves nothing anywhere
+ *  and books a sale), never a comp (credit given away is cash out of the
+ *  till), and not a gift card: nobody has seen `purchaseaccountcredit`
+ *  take one, and a bearer card turned into account money is its own
+ *  question (T256 in docs/TICKETS.md). */
+export type CreditTender = Extract<
+  CheckoutPayment,
+  { type: "Cash" } | { type: "StoredCard" } | { type: "CreditCard" }
+>;
+
+/** T256: the smallest and largest amount of credit the counter sells. A
+ *  cent is the floor (cardChargeable's rule: nothing is not a tender);
+ *  the ceiling is a typo guard, not a policy, and the keypad says it. */
+export const CREDIT_MIN_USD = 0.01;
+export const CREDIT_MAX_USD = 2000;
+
 /**
- * POST /sale/purchaseaccountcredit (sale.yml:1778): charge the stored
- * card for an amount of account credit.
+ * POST /sale/purchaseaccountcredit (sale.yml:1778): sell account credit
+ * to a client, paid with ONE tender.
  *
- * NOT CALLED by any sale today. It was the first half of the under-$10
- * card path (buy $10 of credit, then check the cart out on DebitAccount),
- * which T238 retired: a card is now charged what it pays in one
- * checkout. It is kept because Phase 4's gift card on the reader (PLAN
- * T232) may need a credit-then-spend path again; nothing else should
- * start calling it without reading T238.
+ * T24 wrote it for the under-$10 card path, T238 retired that path and
+ * left this unreached, and T256 (Pete, 2026-11-18: "we need to add the
+ * ability to add credit to a student's account") is what calls it again,
+ * from /api/checkout's account credit ticket and from
+ * scripts/probe-account-credit.ts. Generalised from the stored card to
+ * the three tenders `CreditTender` allows, and given `test`, so the
+ * route rehearses with `Test: true` before the real call exactly as a
+ * gift card purchase is rehearsed (T96).
  *
  * Request per PurchaseAccountCreditRequest (sale.yml:4774): ClientId
  * (4779), Test (4783), LocationId (4787), SendEmailReceipt (4791),
- * PaymentInfo (4808, a CheckoutPaymentInfo). There is NO top-level
- * Amount: the amount rides PaymentInfo.Metadata, so any amount can be
- * bought rather than a preconfigured SKU (design doc, "The amount is
- * dynamic"). The card is named by lastFour per the
- * StoredCard key set (sale.yml:3934).
+ * PaymentInfo (4808, ONE CheckoutPaymentInfo, the same shape a cart's
+ * Payments entry takes, built by checkoutPaymentPayload). There is NO
+ * top-level Amount: the amount rides PaymentInfo.Metadata, so any amount
+ * can be bought rather than a preconfigured SKU (design doc, "The amount
+ * is dynamic"). This is deliberately NOT the studio's "ADD CREDIT to
+ * ACCOUNT" retail product sold through a cart: T103 showed a cart can
+ * take money for a special item and deliver nothing, and nobody has seen
+ * what a cart sale of that product does to a balance.
+ *
+ * T256, prod, 2026-11-18: rehearse-then-charge is clean (two Test calls
+ * answered AmountPaid 1 and 1, then Test plus real made sale 428953 with
+ * ONE "account adjustment" line, service 422, balance up by $1.00). Two
+ * processes buying credit for one client within seconds booked ONE sale
+ * with both lines (428932), so the caller must never run two at once for
+ * a client (T253's hold) and must check the answer, the sale's lines
+ * (`creditSaleProblem`) and the balance afterwards.
+ *
+ * `SalesRepId`, `ConsumerPresent` and `PaymentAuthenticationCallbackUrl`
+ * are not sent: the write runs under the teacher's token (T49), as every
+ * cart checkout does, and the cart path has never sent the SCA pair
+ * either. A pending SCA challenge would come back in
+ * PaymentProcessingFailures, which the caller reads.
  */
-export async function purchaseCredit(
-  clientId: string,
-  amount: number,
-  lastFour: string,
+export async function purchaseCredit(opts: {
+  clientId: string;
+  payment: CreditTender;
+  /** True for the rehearsal: Mindbody validates and moves nothing. */
+  test: boolean;
   /** T49: the signed-in teacher, when there is one. */
-  actor?: Actor | null,
-  /** T53: SendEmailReceipt (sale.yml:4791). The credit purchase is a
-   *  sale of its own in Mindbody's books, so it gets the same receipt
-   *  decision as the cart that follows it. */
-  sendEmailReceipt = false,
-): Promise<CreditPurchaseOutcome> {
+  actor?: Actor | null;
+  /** T53: SendEmailReceipt (sale.yml:4791). Never on a rehearsal. */
+  sendEmailReceipt?: boolean;
+}): Promise<CreditPurchaseOutcome> {
+  const { clientId, payment, test } = opts;
   if (!clientId) throw new Error("purchaseCredit needs a client id.");
-  if (!Number.isFinite(amount) || amount <= 0) {
+  if (
+    payment.type !== "Cash" &&
+    payment.type !== "StoredCard" &&
+    payment.type !== "CreditCard"
+  ) {
+    throw new Error("Account credit is bought with cash or a card.");
+  }
+  if (!cardChargeable(payment.amount)) {
     throw new Error("purchaseCredit needs a positive amount.");
+  }
+  if (Math.abs(payment.amount * 100 - Math.round(payment.amount * 100)) > 1e-6) {
+    throw new Error("purchaseCredit needs an amount in whole cents.");
   }
   const res = await mindbody("/sale/purchaseaccountcredit", {
     method: "POST",
     body: {
       ClientId: clientId,
-      Test: false,
+      Test: test,
       LocationId: STUDIO_LOCATION_ID,
-      SendEmailReceipt: sendEmailReceipt,
-      PaymentInfo: checkoutPaymentPayload({
-        type: "StoredCard",
-        amount,
-        lastFour,
-      }),
+      SendEmailReceipt: test ? false : opts.sendEmailReceipt === true,
+      PaymentInfo: checkoutPaymentPayload(payment),
     },
     clientId,
-    ...(actor ? { actor } : {}),
+    ...(opts.actor ? { actor: opts.actor } : {}),
   });
   if (res?.DryRun === true) {
     return {
       suppressed: "dry-run",
       amountPaid: null,
       saleId: null,
+      clientId: null,
       emailReceipt: null,
+      failures: [],
     };
   }
   if (res?.WriteSuppressed === true) {
@@ -1852,15 +1906,25 @@ export async function purchaseCredit(
       suppressed: "write-guard",
       amountPaid: null,
       saleId: null,
+      clientId: null,
       emailReceipt: null,
+      failures: [],
     };
   }
+  const failuresRaw: unknown[] = Array.isArray(res?.PaymentProcessingFailures)
+    ? res.PaymentProcessingFailures
+    : [];
+  const failures = failuresRaw.map((f: any) =>
+    String(f?.Message ?? f?.Type ?? JSON.stringify(f ?? null)).slice(0, 300),
+  );
   return {
     suppressed: null,
     amountPaid: num(res?.AmountPaid),
     saleId: num(res?.SaleId),
+    clientId: str(res?.ClientId) ?? (num(res?.ClientId) !== null ? String(res.ClientId) : null),
     emailReceipt:
       typeof res?.EmailReceipt === "boolean" ? res.EmailReceipt : null,
+    failures,
   };
 }
 
@@ -2655,6 +2719,97 @@ export async function latestSaleId(
   startedAt: Date,
 ): Promise<number | null> {
   return (await latestSale(clientId, startedAt)).id;
+}
+
+/**
+ * T256: one sale read by its id (`GET /sale/sales?request.saleId=`,
+ * sale.yml:1051), for the sale an account credit purchase answered with.
+ * The id is marked SEEN, so a cart checkout that follows for the same
+ * client cannot have latestSale name the credit sale as its own. A read:
+ * `found: false` when the list does not hold it (yet), and a thrown
+ * error or a timeout is answered as not found, never as a verdict.
+ */
+export async function saleById(saleId: number): Promise<{
+  found: boolean;
+  purchasedItems: unknown[] | null;
+  clientId: string | null;
+}> {
+  seenSaleIds.add(saleId);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    /* T256 review: Mindbody answers NOTHING for a sale outside its default
+     * date window unless the read carries one (live, 2026-11-18: sale
+     * 428778 of 11/15 came back empty without dates and found with them).
+     * So bracket studio-local yesterday through the day after tomorrow,
+     * which holds a sale made just before or after local midnight. */
+    const now = Date.now();
+    const DAY = 24 * 60 * 60 * 1000;
+    const from = `${studioWall(new Date(now - DAY)).slice(0, 10)}T00:00:00`;
+    const to = `${studioWall(new Date(now + 2 * DAY)).slice(0, 10)}T00:00:00`;
+    const body = await Promise.race([
+      mindbody(
+        `/sale/sales?request.saleId=${encodeURIComponent(String(saleId))}` +
+          `&request.startSaleDateTime=${encodeURIComponent(from)}` +
+          `&request.endSaleDateTime=${encodeURIComponent(to)}`,
+      ),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () =>
+            reject(new Error(`no answer in ${SALE_LOOKUP_WAIT_MS / 1000}s`)),
+          SALE_LOOKUP_WAIT_MS,
+        );
+      }),
+    ]);
+    const sales: unknown[] = Array.isArray(body?.Sales) ? body.Sales : [];
+    const sale = sales.find(
+      (raw) => Number((raw as Record<string, unknown>)["Id"]) === saleId,
+    ) as Record<string, unknown> | undefined;
+    if (sale === undefined) {
+      return { found: false, purchasedItems: null, clientId: null };
+    }
+    const items = sale["PurchasedItems"];
+    return {
+      found: true,
+      purchasedItems: Array.isArray(items) ? items : null,
+      clientId: sale["ClientId"] == null ? null : String(sale["ClientId"]),
+    };
+  } catch (err) {
+    console.log(
+      `[sale-id] sale ${saleId} could not be read: ` +
+        (err instanceof Error ? err.message : String(err)),
+    );
+    return { found: false, purchasedItems: null, clientId: null };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * T256: whether a credit sale's lines are what `purchaseaccountcredit`
+ * should have booked for `amount`: EXACTLY ONE line, quantity one, worth
+ * the amount to the cent. Live Mindbody books it as service 422 "account
+ * adjustment" in category 23 (sales 428953 and 428932, 2026-11-18), but
+ * the match is on the count and the amount, never the id alone: sale
+ * 428932 held two such lines for one $2.00 payment, and only the count
+ * says so. Null when the lines agree, else the problem in words.
+ */
+export function creditSaleProblem(
+  items: readonly unknown[],
+  amount: number,
+): string | null {
+  if (items.length !== 1) {
+    return `the credit sale holds ${items.length} lines, not one`;
+  }
+  const line = items[0] as Record<string, unknown>;
+  const qty = num(line["Quantity"]) ?? 1;
+  const unit = num(line["UnitPrice"]);
+  const total = num(line["TotalAmount"]) ?? (unit === null ? null : unit * qty);
+  if (qty !== 1) return `the credit line's quantity is ${qty}, not 1`;
+  if (total === null) return "the credit line carries no amount";
+  if (Math.round(total * 100) !== Math.round(amount * 100)) {
+    return `the credit line is worth $${total.toFixed(2)}, not $${amount.toFixed(2)}`;
+  }
+  return null;
 }
 
 /**

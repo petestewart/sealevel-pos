@@ -107,6 +107,13 @@ import {
   type TypedCard,
 } from "@/lib/typedcard";
 import { saveClientCard } from "@/lib/clientcard";
+import {
+  asksAccountCredit,
+  balanceAgrees,
+  creditShapeRefusal,
+  expectedBalance,
+  parseAccountCredit,
+} from "@/lib/accountcredit";
 
 import {
   assertBasket,
@@ -119,16 +126,32 @@ import {
   parseCartLines,
   passWithoutOwner,
   priceCartWithPromotion,
+  creditSaleProblem,
+  purchaseCredit,
   rehearseCheckout,
+  saleById,
   roundToCents,
   splitDiscount,
   type BasketVerdict,
   type CartLine,
   type CheckoutOutcome,
   type CheckoutPayment,
+  type CreditTender,
 } from "@/lib/sale";
 
 export const dynamic = "force-dynamic";
+
+/**
+ * T256: the account credit branch's switch, ON. It was off while one
+ * question stood: on prod (2026-11-18) a real $1.00 credit purchase booked
+ * TWO $1.00 lines (sale 428932). The controlled run that followed (sale
+ * 428953) was clean, rehearse-then-charge booking ONE line, and the $2.00
+ * was two processes buying credit for one client within seconds, which
+ * T253's server hold now refuses. Every answer is still checked against
+ * the amount, the sale's one line and the balance. Kept as a switch so a
+ * repeat of 428932 can be stopped with one line. See docs/TICKETS.md T256.
+ */
+const ACCOUNT_CREDIT_ENABLED = true;
 
 /**
  * POST /api/checkout -- the one route that moves money. Fires only from
@@ -829,9 +852,11 @@ async function runCheckout(
     return NextResponse.json({ error: giftParsed.error }, { status: 400 });
   }
   const giftLines = giftParsed.lines;
+  /* T256: an account credit ticket has no cart either. */
+  const creditAsk = asksAccountCredit(payload);
   const rawItems: unknown = payload?.items;
   const cartLinesOmitted =
-    giftLines.length > 0 &&
+    (giftLines.length > 0 || creditAsk) &&
     (rawItems === undefined ||
       rawItems === null ||
       (Array.isArray(rawItems) && rawItems.length === 0));
@@ -954,6 +979,51 @@ async function runCheckout(
       { error: "typedCard applies only to method typedcard" },
       { status: 400 },
     );
+  }
+
+  /* T256: an account credit ticket, refused in every shape it may not
+   * take HERE, before the gift card shapes, the override, the approval,
+   * the discount and every token, so nothing it could never be sold in
+   * costs a PIN or a metered call. A client is required, and never the
+   * house client: credit on the walk-in account belongs to nobody. */
+  let creditAmount: number | null = null;
+  if (creditAsk && !ACCOUNT_CREDIT_ENABLED) {
+    return NextResponse.json(
+      {
+        error:
+          "Adding account credit is not switched on yet. Nothing was charged.",
+        stage: "method",
+      },
+      { status: 409 },
+    );
+  }
+  if (creditAsk) {
+    const shape = creditShapeRefusal(payload ?? {});
+    if (shape !== null) {
+      return NextResponse.json({ error: shape, stage: "method" }, { status: 409 });
+    }
+    const parsedCredit = parseAccountCredit(payload.accountCredit);
+    if ("error" in parsedCredit) {
+      return NextResponse.json({ error: parsedCredit.error }, { status: 400 });
+    }
+    const payer =
+      typeof payload?.clientId === "string" ? payload.clientId.trim() : "";
+    const house = houseClientId();
+    if (payer === "" || (house !== null && payer === house)) {
+      return NextResponse.json(
+        {
+          error:
+            payer === ""
+              ? "Account credit goes on a client's account. Attach the " +
+                "client first. Nothing was charged."
+              : "The walk-in account is nobody's, so it holds no credit. " +
+                "Attach the client the credit is for. Nothing was charged.",
+          stage: "method",
+        },
+        { status: 409 },
+      );
+    }
+    creditAmount = parsedCredit.amount;
   }
 
   /* ==================================================================
@@ -2334,6 +2404,540 @@ async function runCheckout(
       { status: 502 },
     );
   };
+  /* ==================================================================
+   * T256: selling account credit.
+   *
+   * Pete: "we need to add the ability to add credit to a student's
+   * account", and, of a ticket holding credit beside other items, "that's
+   * fine with me" to two Mindbody steps behind one Finalize.
+   *
+   * The API has no way to sell the studio's ADD CREDIT item at a price in
+   * a cart (T256: nineteen Test shapes all priced it at $0.00), so credit
+   * is `POST /sale/purchaseaccountcredit` (purchaseCredit), ONE payment.
+   *
+   *   Credit only: one purchase of the credit amount on the tender.
+   *
+   *   Credit plus other lines, ONE card swipe: step 1 buys credit for the
+   *   WHOLE ticket (the credit plus the cart's rehearsed GrandTotal) on
+   *   the tender; step 2 checks the cart out paid from the account
+   *   (DebitAccount) for its GrandTotal. Net: the account rises by the
+   *   credit, the tender is charged the total once, and the lines are
+   *   sold. If step 2 fails after step 1 stood, the money is safe on the
+   *   account and the answer says so, as a partial (T253 holds the
+   *   client, nothing retries).
+   *
+   * Both steps are rehearsed with `Test: true` before step 1: the cart
+   * through the ordinary rehearsal (T75's total assertion), the credit
+   * with its real payment and AmountPaid asserted to the cent. After
+   * step 1: AmountPaid, the sale read by its id holding exactly ONE line
+   * of that amount, and a fresh balance that rose by it; anything else is
+   * money-moved-wrong (ambiguous, held) and step 2 never runs. After step
+   * 2: T103/T254's basket assertion, and a final balance read that must
+   * sit at the starting balance plus the credit.
+   *
+   * The shapes it may not take were refused at the top, before any PIN,
+   * approval or Mindbody call; T203's approval was checked against a cart
+   * hash carrying the credit amount and the tender, and its PIN token has
+   * been spent above with every other one. No retry anywhere.
+   * ================================================================== */
+  if (creditAmount !== null) {
+    const amount = creditAmount;
+    const creditClient = clientId as string;
+    const hasLines = items.length > 0;
+    const usd = (n: number) => `$${n.toFixed(2)}`;
+    const log = (outcome: string, extra = "") =>
+      console.log(
+        `[credit] ${target()} ${outcome} client=${creditClient} ` +
+          `credit=${amount.toFixed(2)} lines=${items.length} ` +
+          `method=${String(method)} staff=${session.staffId}${extra}`,
+      );
+
+    /* A READ, so a failure here charged nothing. The balance is what
+     * every check after the charge is measured from, so a sale it cannot
+     * be measured against is not one to make. */
+    let before;
+    try {
+      before = await clientPaymentProfile(creditClient);
+    } catch (err) {
+      return NextResponse.json(
+        {
+          error:
+            "Could not read the client's account balance: " +
+            `${errMessage(err)} Nothing was charged.`,
+          stage: "method",
+        },
+        { status: 502 },
+      );
+    }
+    if (before.balance === null) {
+      return NextResponse.json(
+        {
+          error:
+            "Mindbody reports no account balance for this client, so the " +
+            "credit could not be checked afterwards. Nothing was charged.",
+          stage: "method",
+        },
+        { status: 409 },
+      );
+    }
+    const startBalance = before.balance;
+
+    /* Step 2's rehearsal, the ordinary one, FIRST: a cart Mindbody would
+     * refuse is caught before any money moves. */
+    let cartTotal = 0;
+    if (hasLines) {
+      let cartPriced;
+      try {
+        cartPriced = await rehearseCheckout(items, creditClient, null);
+      } catch (err) {
+        return NextResponse.json(
+          { error: `${errMessage(err)} Nothing was charged.`, stage: "rehearsal" },
+          { status: 502 },
+        );
+      }
+      if (cartPriced.suppressed) {
+        log("suppressed-rehearsal");
+        return NextResponse.json({
+          ok: false,
+          suppressed: await suppressionKind(),
+          ...(await recordApproval(null, true)),
+        });
+      }
+      if (cartPriced.disagrees || cartPriced.grandTotal === null) {
+        return NextResponse.json(
+          {
+            error:
+              "Totals disagree between our math and Mindbody's. Nothing was " +
+              "charged; this is a bug to report, not a state to charge from.",
+            stage: "rehearsal",
+          },
+          { status: 409 },
+        );
+      }
+      cartTotal = roundToCents(cartPriced.grandTotal);
+    }
+    /* What the tender is charged: the whole ticket, once. */
+    const purchase = roundToCents(amount + cartTotal);
+    if (
+      typeof cashTendered === "number" &&
+      method === "cash" &&
+      Math.round(cashTendered * 100) < Math.round(purchase * 100)
+    ) {
+      return NextResponse.json(
+        { error: "Tendered cash is less than the total." },
+        { status: 400 },
+      );
+    }
+    let payment: CreditTender;
+    if (method === "storedcard") {
+      if (!before.card) {
+        return NextResponse.json(
+          { error: "No card on file for this client.", stage: "method" },
+          { status: 409 },
+        );
+      }
+      if (before.card.expired) {
+        return NextResponse.json(
+          {
+            error: `The card on file (ending ${before.card.lastFour}) is expired.`,
+            stage: "method",
+          },
+          { status: 409 },
+        );
+      }
+      payment = {
+        type: "StoredCard",
+        amount: purchase,
+        lastFour: before.card.lastFour,
+      };
+    } else if (method === "typedcard") {
+      payment = {
+        type: "CreditCard",
+        amount: purchase,
+        card: typedCard as TypedCard,
+      };
+    } else {
+      payment = { type: "Cash", amount: purchase };
+    }
+
+    /* Step 1's rehearsal, as the service account (T112's rule for every
+     * rehearsal), with the real payment, so a card or a client Mindbody
+     * will not sell credit to stops here with nothing spent. */
+    let trial;
+    try {
+      trial = await purchaseCredit({
+        clientId: creditClient,
+        payment,
+        test: true,
+      });
+    } catch (err) {
+      log("refused-rehearsal", ` reason=${JSON.stringify(errMessage(err))}`);
+      return NextResponse.json(
+        {
+          error: `Mindbody refused the account credit: ${errMessage(err)} Nothing was charged.`,
+          stage: "rehearsal",
+        },
+        { status: 502 },
+      );
+    }
+    if (trial.suppressed) {
+      log(`suppressed-${trial.suppressed}`);
+      return NextResponse.json({
+        ok: false,
+        suppressed: trial.suppressed,
+        ...(await recordApproval(null, true)),
+      });
+    }
+    if (
+      trial.amountPaid === null ||
+      Math.round(trial.amountPaid * 100) !== Math.round(purchase * 100) ||
+      trial.failures.length > 0 ||
+      (trial.clientId !== null && trial.clientId !== creditClient)
+    ) {
+      log(
+        "refused-rehearsal-disagrees",
+        ` paid=${trial.amountPaid ?? "none"} asked=${purchase.toFixed(2)} ` +
+          `client=${trial.clientId ?? "none"} failures=${trial.failures.length}`,
+      );
+      return NextResponse.json(
+        {
+          error:
+            trial.amountPaid === null
+              ? "Mindbody did not say what the account credit would cost, so " +
+                "it cannot be sold. Nothing was charged."
+              : trial.failures.length > 0
+                ? `Mindbody would not take this payment: ${trial.failures.join(" ")} Nothing was charged.`
+                : Math.round(trial.amountPaid * 100) !== Math.round(purchase * 100)
+                  ? `Mindbody's rehearsal would charge ${usd(trial.amountPaid)}, ` +
+                    `not the ${usd(purchase)} asked, so nothing was charged. ` +
+                    "Check the client's sales in Mindbody for one still open, " +
+                    "then try again."
+                  : "Mindbody's rehearsal named a different client. Nothing " +
+                    "was charged; this is a bug to report.",
+          stage: "rehearsal",
+        },
+        { status: 409 },
+      );
+    }
+
+    /* ---------------- step 1: the credit ---------------- */
+    let fallbackNote: ActorFallback | null = null;
+    let sold;
+    try {
+      const run = await runAsActor(session, "/api/checkout", (actor) =>
+        purchaseCredit({
+          clientId: creditClient,
+          payment,
+          test: false,
+          actor,
+          sendEmailReceipt: sendEmail,
+        }),
+      );
+      if (run.actorFallback) fallbackNote = run.actorFallback;
+      sold = run.result;
+    } catch (err) {
+      const ended = staffSessionEndedResponse(err);
+      if (ended) return ended;
+      const ambiguous = isAmbiguous(err);
+      log(
+        ambiguous ? "unknown" : "refused",
+        ` reason=${JSON.stringify(errMessage(err))}`,
+      );
+      return NextResponse.json(
+        {
+          error: ambiguous
+            ? `The account credit purchase did not answer, so ${usd(purchase)} ` +
+              "MAY have been taken and the credit may or may not be on the " +
+              "account" +
+              (hasLines ? ". The items were not sent" : "") +
+              ". Check Mindbody before charging again. Nothing was retried."
+            : `Not charged: ${errMessage(err)}`,
+          stage: "checkout",
+          ambiguous,
+          ...(ambiguous ? await recordApproval(null, false) : {}),
+        },
+        { status: 502 },
+      );
+    }
+    if (sold.suppressed) {
+      /* The rehearsal went out and this did not: the guard judges by
+       * client id and nothing changed, so this should be unreachable.
+       * Reported as suppression, never as a sale. */
+      log(`suppressed-${sold.suppressed}`);
+      return NextResponse.json({
+        ok: false,
+        suppressed: sold.suppressed,
+        ...(await recordApproval(null, true)),
+        ...actorFields({ actorFallback: fallbackNote, staffSessionEnded: false }),
+      });
+    }
+    const creditSaleId = sold.saleId === null ? null : String(sold.saleId);
+    const approvalFields = await recordApproval(creditSaleId, false);
+
+    /* What Mindbody SAID it took, what the sale it booked HOLDS, and what
+     * the account reads now. Each a check on its own; any one failing is
+     * money that moved in a way nobody asked for. */
+    const problems: string[] = [];
+    if (sold.failures.length > 0) {
+      problems.push(`Mindbody reported a payment problem (${sold.failures.join(" ")})`);
+    }
+    if (sold.amountPaid === null) {
+      problems.push("Mindbody did not say what it charged");
+    } else if (Math.round(sold.amountPaid * 100) !== Math.round(purchase * 100)) {
+      problems.push(
+        `Mindbody says it charged ${usd(sold.amountPaid)}, not ${usd(purchase)}`,
+      );
+    }
+    if (sold.clientId !== null && sold.clientId !== creditClient) {
+      problems.push(`Mindbody's answer names client ${sold.clientId}`);
+    }
+    let linesChecked = false;
+    if (sold.saleId !== null) {
+      const read = await saleById(sold.saleId);
+      if (read.found && read.purchasedItems !== null) {
+        linesChecked = true;
+        const lineProblem = creditSaleProblem(read.purchasedItems, purchase);
+        if (lineProblem !== null) problems.push(lineProblem);
+      } else {
+        /* T103's posture: a refusal rests on evidence, and a list that
+         * has not caught up is not evidence. The balance check below
+         * still stands between this and a done screen. */
+        console.warn(
+          `[credit] sale ${sold.saleId} not readable yet: its lines are unverified`,
+        );
+      }
+    } else {
+      problems.push("Mindbody gave no sale id for the credit");
+    }
+    let afterCredit: number | null = null;
+    let afterCreditError: string | null = null;
+    try {
+      afterCredit = (await clientPaymentProfile(creditClient)).balance;
+    } catch (err) {
+      afterCreditError = errMessage(err);
+    }
+    const wantAfterCredit = expectedBalance(startBalance, purchase) as number;
+    if (afterCredit === null) {
+      problems.push(
+        "the balance could not be read back" +
+          (afterCreditError ? ` (${afterCreditError})` : ""),
+      );
+    } else if (!balanceAgrees(afterCredit, wantAfterCredit)) {
+      problems.push(
+        `the account reads ${usd(afterCredit)} afterwards, not the ` +
+          `${usd(wantAfterCredit)} it should (${usd(startBalance)} plus ${usd(purchase)})`,
+      );
+    }
+    const creditFields = {
+      amount,
+      purchased: purchase,
+      saleId: creditSaleId,
+      balanceBefore: startBalance,
+      linesChecked,
+    };
+    if (problems.length > 0) {
+      log(
+        "unverified",
+        ` sale=${creditSaleId ?? "none"} paid=${sold.amountPaid ?? "none"} ` +
+          `before=${startBalance} after=${afterCredit ?? "none"} ` +
+          `problems=${JSON.stringify(problems)}`,
+      );
+      return NextResponse.json(
+        {
+          error:
+            `The account credit purchase answered, but ${problems.join("; ")}. ` +
+            "The money may have moved and the credit may not be on the " +
+            `account as asked. The sale is ${creditSaleId ?? "not identified"}.` +
+            (hasLines ? " The items were not sold." : "") +
+            " Do not charge again: check the account in Mindbody. Nothing " +
+            "was retried.",
+          stage: "checkout",
+          ambiguous: true,
+          saleId: creditSaleId,
+          total: purchase,
+          accountCredit: { ...creditFields, balanceAfter: afterCredit, verified: false },
+          ...approvalFields,
+        },
+        { status: 502 },
+      );
+    }
+    const kept =
+      method === "typedcard" ? await keepTypedCard(typedCard as TypedCard) : {};
+    const lastFourField =
+      method === "storedcard"
+        ? { lastFour: (payment as { lastFour: string }).lastFour }
+        : method === "typedcard"
+          ? { lastFour: typedCardLastFour((typedCard as TypedCard).number) }
+          : {};
+
+    if (!hasLines) {
+      log("sold", ` sale=${creditSaleId} before=${startBalance} after=${afterCredit}`);
+      return NextResponse.json({
+        ok: true,
+        method: method as Method,
+        total: purchase,
+        saleId: creditSaleId,
+        accountCredit: { ...creditFields, balanceAfter: afterCredit, verified: true },
+        ...lastFourField,
+        receiptRequested: sendEmail,
+        emailReceipt: sendEmail ? sold.emailReceipt : null,
+        ...kept,
+        ...approvalFields,
+        ...actorFields({ actorFallback: fallbackNote, staffSessionEnded: false }),
+      });
+    }
+
+    /* ---------------- step 2: the lines, paid from the account -------- */
+    const onAccount = usd(purchase);
+    const owed = usd(cartTotal);
+    const safeWords =
+      `${onAccount} was added to ${typeof payload?.clientName === "string" && payload.clientName.trim() ? payload.clientName.trim().slice(0, 80) : "the client"}'s ` +
+      `account (sale ${creditSaleId}).`;
+    const startedAt = new Date();
+    let cartOutcome: CheckoutOutcome;
+    try {
+      const run = await runAsActor(session, "/api/checkout", (actor) =>
+        checkoutCart(
+          items,
+          creditClient,
+          { type: "DebitAccount", amount: cartTotal },
+          actor,
+          sendEmail,
+          null,
+        ),
+      );
+      if (run.actorFallback) fallbackNote = run.actorFallback;
+      cartOutcome = run.result;
+    } catch (err) {
+      const ambiguous = isAmbiguous(err);
+      const ended = endedStaffSession(err);
+      log(
+        ambiguous ? "partial-unknown" : "partial-refused",
+        ` credit-sale=${creditSaleId} reason=${JSON.stringify(errMessage(err))}`,
+      );
+      return NextResponse.json(
+        {
+          error: ambiguous
+            ? `${safeWords} The items' sale did not answer, so it MAY have ` +
+              `gone through on the account for ${owed}. Check Mindbody before ` +
+              "selling them again. Nothing was retried."
+            : `${safeWords} The items were not sold (${errMessage(err)}): ` +
+              `their ${owed} is on the account. Sell them again (paying by ` +
+              "account uses it). Nothing was retried.",
+          stage: "checkout",
+          partial: true,
+          ambiguous,
+          total: purchase,
+          saleId: creditSaleId,
+          accountCredit: { ...creditFields, balanceAfter: afterCredit, verified: true },
+          ...(ended ? { staffSessionEnded: true } : {}),
+          ...lastFourField,
+          ...kept,
+          ...approvalFields,
+        },
+        { status: 502 },
+      );
+    }
+    if (cartOutcome.suppressed) {
+      log(`partial-suppressed-${cartOutcome.suppressed}`, ` credit-sale=${creditSaleId}`);
+      return NextResponse.json(
+        {
+          error:
+            `${safeWords} The items were not sent to Mindbody ` +
+            `(${cartOutcome.suppressed}): their ${owed} is on the account. ` +
+            "Sell them again paying by account.",
+          stage: "checkout",
+          partial: true,
+          ambiguous: false,
+          total: purchase,
+          saleId: creditSaleId,
+          accountCredit: { ...creditFields, balanceAfter: afterCredit, verified: true },
+          ...approvalFields,
+        },
+        { status: 502 },
+      );
+    }
+    const found = await latestSale(creditClient, startedAt);
+    const cartSaleId = found.id === null ? cartOutcome.saleId : String(found.id);
+    const verdict = basketVerdict(items, cartOutcome, found.purchasedItems, cartSaleId);
+    if (verdict !== null && !verdict.ok) {
+      return await soldNothingAnswer({
+        verdict,
+        saleId: cartSaleId,
+        cartId: cartOutcome.saleId,
+        onClientId: creditClient,
+        paid: cartTotal,
+        extra: {
+          summary:
+            `${safeWords} The items' ${owed} was then taken from the account ` +
+            "and the sale holds nothing.",
+          accountCredit: { ...creditFields, balanceAfter: afterCredit, verified: true },
+          ...approvalFields,
+        },
+      });
+    }
+    /* The final word on the account: where it started plus the credit. */
+    let finalBalance: number | null = null;
+    try {
+      finalBalance = (await clientPaymentProfile(creditClient)).balance;
+    } catch (err) {
+      console.warn(`[credit] final balance read failed: ${errMessage(err)}`);
+    }
+    const wantFinal = expectedBalance(startBalance, amount) as number;
+    if (finalBalance === null || !balanceAgrees(finalBalance, wantFinal)) {
+      log(
+        "unverified-final",
+        ` credit-sale=${creditSaleId} cart-sale=${cartSaleId ?? "none"} ` +
+          `final=${finalBalance ?? "unread"} want=${wantFinal}`,
+      );
+      return NextResponse.json(
+        {
+          error:
+            `${safeWords} The items were sold from the account (sale ` +
+            `${cartSaleId ?? "not identified"}), but the account ` +
+            (finalBalance === null
+              ? "could not be read back"
+              : `reads ${usd(finalBalance)}, not the ${usd(wantFinal)} it ` +
+                `should (${usd(startBalance)} plus ${usd(amount)} of credit)`) +
+            ". The credit has not been seen on the account. Check it in " +
+            "Mindbody before charging again. Nothing was retried.",
+          stage: "checkout",
+          ambiguous: true,
+          total: purchase,
+          saleId: cartSaleId,
+          accountCredit: { ...creditFields, balanceAfter: finalBalance, verified: false },
+          ...approvalFields,
+        },
+        { status: 502 },
+      );
+    }
+    log(
+      "sold",
+      ` credit-sale=${creditSaleId} cart-sale=${cartSaleId ?? "none"} ` +
+        `charged=${purchase} cart=${cartTotal} before=${startBalance} final=${finalBalance}`,
+    );
+    return NextResponse.json({
+      ok: true,
+      method: method as Method,
+      total: purchase,
+      saleId: cartSaleId,
+      cartId: cartOutcome.saleId,
+      accountCredit: {
+        ...creditFields,
+        balanceAfter: finalBalance,
+        verified: true,
+        cartSaleId,
+        cartTotal,
+      },
+      ...lastFourField,
+      receiptRequested: sendEmail,
+      emailReceipt: sendEmail ? sold.emailReceipt : null,
+      ...kept,
+      ...approvalFields,
+      ...actorFields({ actorFallback: fallbackNote, staffSessionEnded: false }),
+    });
+  }
+
   /* ===========================================================   * T90: lines bought for another client.
   /* ==================================================================
    * T95: selling a gift card.

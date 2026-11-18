@@ -174,6 +174,23 @@ only as high as leaves the part it takes from a cent, and change on the
 screen is CASH change only. Pete's gift card "missing key account" bug
 is NOT fixed (probe B7).
 
+**T256 (2026-11-18): account credit at the counter** (Pete: "we need to
+add the ability to add credit to a student's account"). "Add credit"
+under Retail puts a keypad amount on the ticket as "Account credit",
+untaxed, alone or beside ordinary lines; never beside a gift card, a
+line for someone else, a discount or a promotion code, never on the
+walk-in client. The API cannot price the studio's ADD CREDIT item in a
+cart (nineteen Test shapes, all $0.00), so it is
+`/sale/purchaseaccountcredit` with ONE tender (cash, card on file, typed
+card; never the account or a gift card), rehearsed with `Test: true` and
+checked after on AmountPaid, the sale's ONE "account adjustment" line
+(read by `request.saleId`) and a fresh balance. A mixed ticket buys
+credit for the WHOLE total on the tender, then sells the lines from the
+account (`DebitAccount`); a step 2 that fails after step 1 is a partial
+("their $3.99 is on the account"), held by T253. **Never undo credit with
+`/sale/returnsale`**: it refunds to the account, so nothing moves.
+Verified on the fake; owed live: one real mixed sale (PLAN B9).
+
 **`docs/PLAN.md` is the execution plan**: ordered work items, what each one is
 done when, the probes still to run, and the questions blocked on Pete. Start
 there. `docs/design/front-desk-pos.md` carries the reasoning behind every item
@@ -1928,6 +1945,13 @@ while `git clone` works, so clone the repo rather than fetching files.
   left the ticket at 0 items with the notice and its three ways forward;
   Drop In added and priced $28.00. The roster's pay dialog has been seen
   against the fake only.
+- **Account credit is live-proven only as a $1.00 cash purchase on its
+  own (T256, sale 428953).** A mixed ticket (credit plus items, step 2 on
+  `DebitAccount`) and a card as the credit's payment have been run only
+  on the fake; PLAN B9 is the first real mixed sale. Two credit purchases
+  for one client within seconds once booked ONE sale with both lines
+  (428932); T253's hold refuses that from the app, and the sale's line
+  count is checked after every purchase.
 - **Offline behaviour is unhandled.** Phase 1 arrivals could queue and replay;
   a Phase 2 sale must never queue.
 - `GET /sale/alternativepaymentmethods` returns HTTP 400, cause not chased. It

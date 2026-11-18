@@ -533,6 +533,9 @@ interface ShelfSection {
   /** T95: this block is the Gift card cell, which is not a catalog item
    *  and opens the amount box instead of ringing anything up. */
   giftCard?: boolean;
+  /** T256: this block is the Add credit cell, which opens the credit
+   *  keypad. */
+  accountCredit?: boolean;
   label: string | null;
   items: ShelfItem[];
   contracts: ContractInfo[];
@@ -721,12 +724,80 @@ interface GiftCardItem {
   editable: boolean;
 }
 
+/**
+ * T256: account credit ON THE TICKET (Pete: "we need to add the ability
+ * to add credit to a student's account"). Like a gift card it is NOT a
+ * cart item: the API cannot price the studio's ADD CREDIT item in a cart
+ * (nineteen Test shapes, all $0.00), so it sells through
+ * /sale/purchaseaccountcredit and the charge sends `accountCredit: {
+ * amount }` beside the cart. It may share the ticket with ordinary lines
+ * (Pete, of two Mindbody steps behind one Finalize: "that's fine with
+ * me"): /api/checkout buys credit for the whole ticket on the tender and
+ * pays the other lines from the account. It never shares one with a gift
+ * card or a line for someone else, it is always quantity one, and it
+ * needs a real client, never the house client. `price` is the amount the teacher typed on the keypad, which
+ * is all that travels; /api/checkout rehearses it with `Test: true` and
+ * asserts what Mindbody would charge before a cent moves.
+ */
+interface CreditItem {
+  id: "credit";
+  name: string;
+  price: number;
+  /** No tax: the credit is money on the account, not a sale of goods. */
+  taxExempt: true;
+  taxRate: null;
+  type: "AccountCredit";
+  categoryId: null;
+}
+
 /** Anything a ticket line can be. */
-type CartItem = ShelfItem | GiftCardItem;
+type CartItem = ShelfItem | GiftCardItem | CreditItem;
 
 /** T95: is this line a gift card to be SOLD (rather than a cart item)? */
 function isGiftCardLine(line: CartEntry): boolean {
   return line.item.type === "GiftCard";
+}
+
+/** T256: is this line account credit? */
+function isCreditLine(line: CartEntry): boolean {
+  return line.item.type === "AccountCredit";
+}
+
+/** T256: a line that is not a Mindbody cart item: a gift card or account
+ *  credit, each sold through its own call. Everything that talks to the
+ *  cart (the pricing loop, the cart's own total) leaves these out. */
+function isOffCartLine(line: CartEntry): boolean {
+  return isGiftCardLine(line) || isCreditLine(line);
+}
+
+/** T256: the one credit line's key and title. */
+const CREDIT_LINE_KEY = "AccountCredit-credit:self";
+const ACCOUNT_CREDIT_TITLE = "Account credit";
+/** T256: the Retail child the Add credit cell lives under. */
+const ACCOUNT_CREDIT_LABEL = "Account credit";
+/** T256: keep in sync with CREDIT_MAX_USD in src/lib/sale.ts, which is
+ *  where it is enforced; this copy only says it on the keypad. */
+const CREDIT_MAX_DOLLARS = 2000;
+/** T256: the two things account credit cannot share a ticket with. A
+ *  gift card is its own Mindbody sale with its own payment, and a line
+ *  for someone else would be paid from THIS client's account. */
+const CREDIT_WITH_GIFT =
+  "Account credit and a gift card are two separate sales in Mindbody. " +
+  "Sell one, then the other.";
+const CREDIT_WITH_OTHER =
+  "Account credit cannot share a ticket with a line bought for someone " +
+  "else: the rest of the ticket is paid from this client's account.";
+
+function creditItem(amount: number): CreditItem {
+  return {
+    id: "credit",
+    name: ACCOUNT_CREDIT_TITLE,
+    price: roundToCents(amount),
+    taxExempt: true,
+    taxRate: null,
+    type: "AccountCredit",
+    categoryId: null,
+  };
 }
 
 /**
@@ -1123,7 +1194,14 @@ function displayTicketPayload(input: {
    *  or null for none (the server drops an offer that cannot apply). */
   choices?: readonly TenderOffer[] | null;
 }): TicketPayload {
-  const saleLines = input.cart.filter((line) => !isGiftCardLine(line));
+  const saleLines = input.cart.filter((line) => !isOffCartLine(line));
+  /* T256: account credit is untaxed and priced by the amount typed, so it
+     adds to the total the way a gift card's own price does. */
+  const creditCharged = roundToCents(
+    input.cart
+      .filter(isCreditLine)
+      .reduce((n, l) => n + l.item.price * l.quantity, 0),
+  );
   const priced = input.pricing ? null : input.priced;
   const usable =
     priced !== null && !priced.suppressed && !priced.disagrees;
@@ -1135,13 +1213,18 @@ function displayTicketPayload(input: {
     mode: input.mode,
     clientFirstName: displayFirstName(input.clientName),
     lines: displayTicketLines(input.cart),
-    subtotal: usable ? priced.subTotal : null,
+    subtotal:
+      usable && priced.subTotal !== null
+        ? roundToCents(priced.subTotal + creditCharged)
+        : saleLines.length === 0 && creditCharged > 0
+          ? creditCharged
+          : null,
     ...(discountTotal > 0 ? { discountTotal } : {}),
-    tax: usable ? priced.taxTotal : null,
+    tax: usable ? priced.taxTotal : saleLines.length === 0 && creditCharged > 0 ? 0 : null,
     total:
       cartTotal === null
         ? null
-        : roundToCents(cartTotal + input.giftCardsCharged),
+        : roundToCents(cartTotal + input.giftCardsCharged + creditCharged),
     ...(input.tenders !== null && input.tenders.length > 0
       ? { tenders: [...input.tenders] }
       : {}),
@@ -1574,6 +1657,9 @@ interface CardLookup {
   email: string | null;
   sendAccountEmails: boolean | null;
   sendPromotionalEmails: boolean | null;
+  /** T256: whether this client is the house walk-in client, which holds
+   *  no account credit. Unknown (absent) until the read lands. */
+  houseClient?: boolean;
 }
 
 /** T53: what the pay surface knows about emailing a receipt: the address
@@ -1747,6 +1833,19 @@ type ChargeResult =
        *  and why. `ok: false` is amber, because the sale stands and the
        *  place does not. Empty on a sale that sold no such pass. */
       enrolments: { ok: boolean; sentence: string }[];
+      /** T256: the account credit this sale bought, in the route's
+       *  figures: what went on the account (`amount`), what the tender
+       *  was charged for the credit purchase (`purchased`, the whole
+       *  ticket on a mixed one), the balance READ FROM MINDBODY after,
+       *  and both sale ids. Absent on a sale with no credit. */
+      credit?: {
+        amount: number;
+        purchased: number;
+        balanceAfter: number | null;
+        saleId: string | null;
+        cartSaleId: string | null;
+        cartTotal: number | null;
+      } | null;
     }
   /* T90: `summary` is the route's own sentence for a ticket where some
      carts went out and some were suppressed (the write guard judges each
@@ -1958,7 +2057,7 @@ function discountLines(cart: readonly CartEntry[]): DiscountLine[] {
 function ticketDiscountLines(cart: readonly CartEntry[]): DiscountLine[] {
   return [
     ...cart
-      .filter((l) => !isGiftCardLine(l))
+      .filter((l) => !isOffCartLine(l))
       .map((l) => ({ price: l.item.price, quantity: l.quantity })),
     ...cart
       .filter(isGiftCardLine)
@@ -2000,7 +2099,7 @@ function ticketDiscountParts(
       cartShare: null,
     };
   }
-  const cartLines = cart.filter((l) => !isGiftCardLine(l)).length;
+  const cartLines = cart.filter((l) => !isOffCartLine(l)).length;
   const spread = spreadDiscount(ticketDiscountLines(cart), discount);
   const cartCents = spread.slice(0, cartLines).reduce((n, c) => n + c, 0);
   const cardCents = spread.slice(cartLines);
@@ -2429,8 +2528,17 @@ function PaymentPanel(props: {
    * own price and no tax.
    */
   const giftCardLines = cart.filter(isGiftCardLine);
-  const saleLines = cart.filter((line) => !isGiftCardLine(line));
+  const saleLines = cart.filter((line) => !isOffCartLine(line));
   const hasGiftCard = giftCardLines.length > 0;
+  /* T256: account credit on the ticket. It may sit beside ordinary cart
+   * lines (the route buys credit for the whole total, then pays the lines
+   * from the account) but never beside a gift card, so the total is the
+   * credit typed plus the cart's priced total. */
+  const creditLines = cart.filter(isCreditLine);
+  const hasCredit = creditLines.length > 0;
+  const creditTotal = roundToCents(
+    creditLines.reduce((n, l) => n + l.item.price * l.quantity, 0),
+  );
   const giftCardsTotal = roundToCents(
     giftCardLines.reduce((n, l) => n + l.item.price * l.quantity, 0),
   );
@@ -2796,7 +2904,9 @@ function PaymentPanel(props: {
    * product and rehearses every purchase with `Test: true` before a cent
    * moves, so this addition never stands in for a server figure. */
   const total =
-    cartTotal === null ? null : roundToCents(cartTotal + giftCardsCharged);
+    cartTotal === null
+      ? null
+      : roundToCents(cartTotal + giftCardsCharged + creditTotal);
 
   /** A fresher balance than the attach snapshot, learned from a
    *  refusal that named the live balance (a credit line over it), so the
@@ -3257,7 +3367,11 @@ function PaymentPanel(props: {
    * another client cannot be paid from this one's account at all, so
    * there is no overdraft to authorize there either. T108's refusal is
    * LAST: it is the only one of the three a gift card puts there. */
-  const creditReason = otherClientWhy
+  const creditReason = hasCredit
+    ? /* T256: account credit cannot pay for account credit, and T239's
+         automatic line reads this, so it never arms on a credit ticket. */
+      "Account credit cannot pay for account credit"
+    : otherClientWhy
     ? otherClientWhy
     : !client
       ? "Attach a client"
@@ -3595,6 +3709,18 @@ function PaymentPanel(props: {
      * (T255; two before it). Greyed WITH that reason, never hidden. */
     if (lineCount >= MAX_TENDER_LINES) {
       return `${MAX_TENDER_LINES} parts is the maximum`;
+    }
+    /* T256: account credit is ONE /sale/purchaseaccountcredit call with
+     * ONE payment, paid in cash, on the card on file or on a typed card.
+     * The route refuses the rest; the tiles say so first. */
+    if (hasCredit) {
+      if (source === "credit") {
+        return "Account credit cannot pay for account credit";
+      }
+      if (source === "giftcard") {
+        return "Account credit is bought with cash or a card";
+      }
+      if (lineCount >= 1) return "One payment only for account credit";
     }
     /* T241: a card the student typed on the customer screen pays the
      * whole sale (/api/checkout claims it on the single shape only), so
@@ -4668,6 +4794,8 @@ function PaymentPanel(props: {
         }
       : {}),
     ...(clientId ? { clientId } : {}),
+    /* T256: the credit amount is in the hash, so an approval binds to it. */
+    ...(hasCredit ? { accountCredit: { amount: creditTotal } } : {}),
     ...(comp !== null ? { discount: comp.discount } : {}),
     /* T220: in the hash, so an approval binds to the coded ticket. */
     ...(promotionCode !== null ? { promotionCode } : {}),
@@ -4917,6 +5045,10 @@ function PaymentPanel(props: {
               }
             : {}),
           ...(clientId ? { clientId } : {}),
+          /* T256: account credit, the whole of a credit ticket. The amount
+             is the teacher's keypad figure; the route rehearses it with
+             `Test: true` and asserts what Mindbody would charge. */
+          ...(hasCredit ? { accountCredit: { amount: creditTotal } } : {}),
           /* T112: the override's authorization, whichever of its two
              things it is. The route verifies the token, spends it once,
              runs the rehearsal under this teacher's own login for an
@@ -4932,7 +5064,7 @@ function PaymentPanel(props: {
           ...(promotionCode !== null ? { promotionCode } : {}),
           /* T90: display only, for the route's per-cart sentence; every
              decision there is made on the id. */
-          ...(hasOtherClient && client ? { clientName: client.name } : {}),
+          ...((hasOtherClient || hasCredit) && client ? { clientName: client.name } : {}),
           /* T203: the customer's approval, or the PIN that stood in for
              it. The server checks the setting itself and refuses a
              charge that carries neither; with the setting off it reads
@@ -5127,8 +5259,25 @@ function PaymentPanel(props: {
         /* T79: the discount as the SERVER recorded it (its own spread
          * and Mindbody's totals), never the browser's copy. */
         const disc = body?.discount;
+        /* T256: the credit as the route recorded and verified it. */
+        const ac = body?.accountCredit;
+        const creditDone =
+          ac && typeof ac.amount === "number"
+            ? {
+                amount: ac.amount,
+                purchased:
+                  typeof ac.purchased === "number" ? ac.purchased : ac.amount,
+                balanceAfter:
+                  typeof ac.balanceAfter === "number" ? ac.balanceAfter : null,
+                saleId: typeof ac.saleId === "string" ? ac.saleId : null,
+                cartSaleId:
+                  typeof ac.cartSaleId === "string" ? ac.cartSaleId : null,
+                cartTotal: typeof ac.cartTotal === "number" ? ac.cartTotal : null,
+              }
+            : null;
         setResult({
           kind: "paid",
+          credit: creditDone,
           /* T95: what Mindbody recorded, one entry per card. */
           giftCards: soldGiftCards(body?.giftCardsSold),
           enrolments: Array.isArray(body?.enrolments)
@@ -5180,7 +5329,17 @@ function PaymentPanel(props: {
             /* T90: a ticket that became more than one Mindbody sale
                lists every one of them, with whose it was; a single-sale
                ticket reads exactly as it always did. */
-            Array.isArray(body?.sales) && body.sales.length > 1
+            /* T256: a ticket with credit is one or two Mindbody sales, and
+               the done screen names both. */
+            creditDone !== null
+              ? creditDone.cartTotal !== null
+                ? `Sale ${creditDone.saleId ?? "unknown"} put ${money(
+                    creditDone.purchased,
+                  )} on the account; sale ${
+                    creditDone.cartSaleId ?? "unknown"
+                  } paid the ${money(creditDone.cartTotal)} of items from it.`
+                : `Sale ${creditDone.saleId ?? "unknown"}.`
+              : Array.isArray(body?.sales) && body.sales.length > 1
               ? body.sales
                   .map(
                     (sale: any) =>
@@ -5281,8 +5440,22 @@ function PaymentPanel(props: {
         resetTender();
         onClientDataStale();
         setPartialLock(
-          "Part of this ticket was sold. Empty the ticket and ring up " +
-            "only what is still owed; this ticket cannot be charged again.",
+          body?.accountCredit
+            ? body?.ambiguous === true
+              ? /* T256 review: step 2 did not ANSWER, so the items MAY
+                   have been sold on the account. Never tell the teacher
+                   they were not: selling them again would take the
+                   account twice. */
+                "The credit was bought, and the items MAY have been sold " +
+                  "on the account. Check Mindbody before selling them " +
+                  "again; this ticket cannot be charged again."
+              : /* T256: step 1 bought the credit and step 2 was refused;
+                   their money is on the account. */
+                "The credit was bought and the items were not sold. Empty " +
+                  "the ticket and sell the items again; this ticket cannot " +
+                  "be charged again."
+            : "Part of this ticket was sold. Empty the ticket and ring up " +
+                "only what is still owed; this ticket cannot be charged again.",
         );
         setResult({
           kind: "partial",
@@ -6433,9 +6606,11 @@ function PaymentPanel(props: {
      be discounted regardless. Mindbody UI lets you do that." What a
      discounted card is actually worth is Mindbody's answer, asserted per
      card in the rehearsal before anything is charged. */
-  const discountBlock = discountRefusal(
-    saleLines.map((l) => ({ type: l.item.type })),
-  );
+  const discountBlock = hasCredit
+    ? /* T256: credit is money on the account; a discount would hand over
+         more than was paid. The route refuses it too. */
+      "Account credit cannot be discounted."
+    : discountRefusal(saleLines.map((l) => ({ type: l.item.type })));
   const [discountRefused, setDiscountRefused] = useState<string | null>(null);
   useEffect(() => {
     if (discountBlock === null) setDiscountRefused(null);
@@ -6643,6 +6818,23 @@ function PaymentPanel(props: {
                 ) : null}
               </p>
               {giftIdBlock(result.giftCards)}
+              {result.credit ? (
+                /* T256: the credit, and the balance Mindbody reported
+                   after it, read fresh by the route. */
+                <div className="pay-done-credit">
+                  <span className="pay-done-credit-label">
+                    {money(result.credit.amount)} added to their account
+                  </span>
+                  <span className="pay-done-credit-balance">
+                    {result.credit.balanceAfter !== null
+                      ? `Balance now ${money(result.credit.balanceAfter)}`
+                      : "Balance not read back"}
+                  </span>
+                  <span className="pay-done-credit-note">
+                    Read from Mindbody after the sale.
+                  </span>
+                </div>
+              ) : null}
               {result.compReason ? (
                 /* T43: the reason, under the charged line, so the done
                    screen says why the sale was on the studio. T79: a
@@ -10275,6 +10467,14 @@ export default function SaleScreen(props: {
      * one, and the cell it holds opens a box rather than ringing
      * something up; a child keeps both facts in one place. It renders
      * only when the site offers gift cards at all. */
+    /* T256: and Account credit, which is not a Mindbody category either:
+     * its shelf is the one Add credit cell. Always drawn, greyed with the
+     * reason when there is nobody to credit. */
+    const credit = {
+      label: ACCOUNT_CREDIT_LABEL,
+      categoryIds: [] as number[],
+      section: RETAIL_SECTION,
+    };
     return giftProducts.length > 0
       ? [
           ...real,
@@ -10283,8 +10483,9 @@ export default function SaleScreen(props: {
             categoryIds: [],
             section: RETAIL_SECTION,
           },
+          credit,
         ]
-      : real;
+      : [...real, credit];
   }, [catalog, giftProducts]);
   /** The Rentals cell renders whenever the catalog names the category,
    *  empty or not (Pete: "Rentals was supposed to be a main category as
@@ -10747,6 +10948,23 @@ export default function SaleScreen(props: {
   const giftSellRef = useRef<{ entry: string; keepNote?: string } | null>(null);
   giftSellRef.current = giftSell;
   const closeGiftSell = useCallback(() => setGiftSell(null), []);
+  /**
+   * T256: the Add credit keypad. `entry` is digits in CENTS (the T82
+   * idiom), as the gift card pad's is: an amount is never typed into a
+   * text field in this app (T35).
+   */
+  const [creditSell, setCreditSell] = useState<{ entry: string } | null>(
+    null,
+  );
+  const closeCreditSell = useCallback(() => setCreditSell(null), []);
+  useEffect(() => {
+    if (creditSell === null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closeCreditSell();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [creditSell, closeCreditSell]);
   useEffect(() => {
     if (giftSell === null) return;
     const onKey = (e: KeyboardEvent) => {
@@ -10878,6 +11096,12 @@ export default function SaleScreen(props: {
            catalog, so it is rebuilt from the fresh gift card list; a
            product the site no longer offers is dropped exactly as a
            missing catalog item is. */
+        /* T256: account credit is the teacher's figure, not the
+           catalog's: it survives a recheck as it is. */
+        if (isCreditLine(line)) {
+          rebuilt.push(line);
+          continue;
+        }
         if (isGiftCardLine(line)) {
           const product = freshGifts.find((g) => g.id === line.item.id);
           if (!product) {
@@ -11069,6 +11293,7 @@ export default function SaleScreen(props: {
               typeof body?.sendPromotionalEmails === "boolean"
                 ? body.sendPromotionalEmails
                 : null,
+            houseClient: body?.houseClient === true,
           });
         }
       })
@@ -11113,7 +11338,7 @@ export default function SaleScreen(props: {
      * ticket of gift cards alone has no Mindbody cart at all, and one
      * holding both prices only its cart lines. The ticket's total is
      * that cart's total plus the cards' own prices. */
-    const priceable = cart.filter((line) => !isGiftCardLine(line));
+    const priceable = cart.filter((line) => !isOffCartLine(line));
     if (priceable.length === 0) {
       setPriced(null);
       setPriceError(null);
@@ -11374,6 +11599,7 @@ export default function SaleScreen(props: {
         cartPrompt ||
         clearPrompt !== null ||
         giftSell !== null ||
+        creditSell !== null ||
         walkInPrompt ||
         consentPrompt ||
         /* T92: both own Escape through their own listeners, so this one
@@ -11402,6 +11628,7 @@ export default function SaleScreen(props: {
     cartPrompt,
     clearPrompt,
     giftSell,
+    creditSell,
     walkInPrompt,
     consentPrompt,
     passPrompt,
@@ -11510,6 +11737,13 @@ export default function SaleScreen(props: {
    */
   const addGiftCard = useCallback(
     (product: GiftCardProduct, amount?: number) => {
+    /* T256: a gift card is its own sale; it does not join a credit
+       ticket. */
+    if (cartRef.current.some(isCreditLine)) {
+      setGiftSell(null);
+      setCartNotice({ text: CREDIT_WITH_GIFT, offers: [] });
+      return;
+    }
     const item = giftCardItem(product, amount);
     const key = giftCardKey(item);
     /* T100 review: the refusal's sentence survives the card that answers
@@ -11621,7 +11855,9 @@ export default function SaleScreen(props: {
   const bumpQuantity = useCallback((key: string, delta: number) => {
     setCart((lines) =>
       lines.map((l) =>
-        l.key === key
+        /* T256: account credit is always one line of one; its amount is
+           changed on its own keypad. */
+        l.key === key && !isCreditLine(l)
           ? {
               ...l,
               quantity: Math.min(
@@ -11643,7 +11879,9 @@ export default function SaleScreen(props: {
   const setLineQuantity = useCallback((key: string, next: number) => {
     if (!Number.isInteger(next) || next < 1 || next > MAX_LINE_QUANTITY) return;
     setCart((lines) =>
-      lines.map((l) => (l.key === key ? { ...l, quantity: next } : l)),
+      lines.map((l) =>
+        l.key === key && !isCreditLine(l) ? { ...l, quantity: next } : l,
+      ),
     );
   }, []);
 
@@ -11779,6 +12017,12 @@ export default function SaleScreen(props: {
    */
   const setLineRecipient = useCallback(
     (key: string, next: SaleRecipient | null) => {
+      /* T256: nothing on a credit ticket may be bought for someone else:
+         its lines are paid from this client's account. */
+      if (next !== null && cartRef.current.some(isCreditLine)) {
+        setCartNotice({ text: CREDIT_WITH_OTHER, offers: [] });
+        return;
+      }
       setCart((lines) => {
         const at = lines.findIndex((l) => l.key === key);
         const line = at < 0 ? undefined : lines[at];
@@ -12178,7 +12422,12 @@ export default function SaleScreen(props: {
    * surfaces.
    */
   const giftCardLines = cart.filter(isGiftCardLine);
-  const saleLines = cart.filter((line) => !isGiftCardLine(line));
+  const saleLines = cart.filter((line) => !isOffCartLine(line));
+  /* T256: account credit, untaxed, the amount typed. */
+  const creditLines = cart.filter(isCreditLine);
+  const creditTotal = roundToCents(
+    creditLines.reduce((n, l) => n + l.item.price * l.quantity, 0),
+  );
   const giftCardsTotal = roundToCents(
     giftCardLines.reduce((n, l) => n + l.item.price * l.quantity, 0),
   );
@@ -12305,6 +12554,11 @@ export default function SaleScreen(props: {
          pass to the house client. */
       : client === null && cart.some((l) => isPassItem(l.item) && !l.forClient)
         ? "A pass on a walk-in sale needs a client"
+        : /* T256: credit goes on a real client's account. */
+          creditLines.length > 0 &&
+            (client === null ||
+              (cardLookup?.clientId === client.id && cardLookup.houseClient === true))
+          ? "Account credit needs the client it is for attached"
         : /* T95: a ticket of gift cards alone has no cart to price. Their
              price is the live product's, and /api/checkout re-reads it and
              rehearses each purchase before a cent moves, so there is no
@@ -12328,7 +12582,7 @@ export default function SaleScreen(props: {
                     : null;
   const payAmount =
     payWhy === null
-      ? roundToCents((priced?.grandTotal ?? 0) + giftCardsCharged)
+      ? roundToCents((priced?.grandTotal ?? 0) + giftCardsCharged + creditTotal)
       : null;
   /** T51: whether Pay asks first. Nobody attached and no walk-in
    *  declared is the one case; with the flag set (the header's Walk-in
@@ -12405,6 +12659,7 @@ export default function SaleScreen(props: {
                 /* T95: the Gift cards child's shelf is the one fixed
                    cell; there is no catalog item behind it. */
                 giftCard: retailChild.label === GIFT_CARDS_LABEL,
+                accountCredit: retailChild.label === ACCOUNT_CREDIT_LABEL,
                 /* T100 review: the Gift cards child carries NO catalog
                    items. It is not a Mindbody category, so it holds no
                    category ids, and `categoryShelf` reads an empty id
@@ -12412,7 +12667,8 @@ export default function SaleScreen(props: {
                    drew every uncategorised pass above its one cell, so
                    "Drop In $28.00" sat under the Gift cards heading. */
                 items:
-                  retailChild.label === GIFT_CARDS_LABEL
+                  retailChild.label === GIFT_CARDS_LABEL ||
+                  retailChild.label === ACCOUNT_CREDIT_LABEL
                     ? []
                     : teacherTabs
                       ? retailChildItems.filter(
@@ -12425,10 +12681,13 @@ export default function SaleScreen(props: {
           : retailCategories.map((c) => ({
               label: c.label,
               giftCard: c.label === GIFT_CARDS_LABEL,
+              accountCredit: c.label === ACCOUNT_CREDIT_LABEL,
               /* T100 review: see above; the Gift cards block is its cell
                  and nothing else, in the parent view too. */
               items:
-                c.label === GIFT_CARDS_LABEL ? [] : categoryShelf(catalog, c),
+                c.label === GIFT_CARDS_LABEL || c.label === ACCOUNT_CREDIT_LABEL
+                  ? []
+                  : categoryShelf(catalog, c),
               contracts: [],
             }))
         : activeCat === RENTALS_SECTION && catalog && rentalsCategory
@@ -12446,7 +12705,8 @@ export default function SaleScreen(props: {
         section.items.length === 0 &&
         section.contracts.length === 0 &&
         /* T95: a Gift cards block is never empty; its cell is fixed. */
-        section.giftCard !== true,
+        section.giftCard !== true &&
+        section.accountCredit !== true,
     ) &&
     (!onFavorites || resolvedBundles.length === 0);
 
@@ -12996,6 +13256,106 @@ export default function SaleScreen(props: {
     </div>
   );
 
+  /**
+   * T256: why account credit cannot be added right now, or null. A real
+   * client is needed and never the house client; a gift card, a line for
+   * someone else, a discount or a promotion code cannot share the ticket
+   * (the route refuses each, and says so before any Mindbody call). The
+   * cell is greyed with the reason, never hidden.
+   */
+  const creditWhy: string | null =
+    client === null
+      ? "Attach the client to add credit"
+      : cardLookup?.clientId === client.id && cardLookup.houseClient === true
+        ? "The walk-in account holds no credit"
+        : cart.some(isGiftCardLine)
+          ? "Not on a ticket holding a gift card"
+          : cart.some((l) => l.forClient)
+            ? "Not beside a line for someone else"
+            : armedDiscount !== null
+              ? "Take the discount off first"
+              : promoCode !== null
+                ? "Take the promotion code off first"
+                : charging
+                  ? "Charging..."
+                  : null;
+  const creditHeld = creditLines[0]?.item.price ?? null;
+  /** The keypad's Done: the ticket's one credit line, set to this amount
+   *  (a second Done replaces the figure rather than adding a line). */
+  const addCredit = (cents: number) => {
+    if (creditWhy !== null || cents <= 0 || cents > CREDIT_MAX_DOLLARS * 100) {
+      return;
+    }
+    setCreditSell(null);
+    setCartNotice(null);
+    const item = creditItem(cents / 100);
+    setCart((lines) =>
+      lines.some(isCreditLine)
+        ? lines.map((l) => (isCreditLine(l) ? { ...l, item, quantity: 1 } : l))
+        : [...lines, { key: CREDIT_LINE_KEY, item, quantity: 1 }],
+    );
+  };
+  const creditEntryCents =
+    creditSell === null ? 0 : Number(creditSell.entry || "0");
+  const creditOk =
+    creditEntryCents > 0 && creditEntryCents <= CREDIT_MAX_DOLLARS * 100;
+  const creditNote =
+    creditEntryCents === 0
+      ? creditHeld !== null
+        ? `On the ticket now: ${money(creditHeld)}. Type the new amount.`
+        : "Type the amount to add to their account."
+      : creditEntryCents > CREDIT_MAX_DOLLARS * 100
+        ? `The most this app adds at once is ${money(CREDIT_MAX_DOLLARS)}.`
+        : `${money(creditEntryCents / 100)} onto ${client?.name ?? "the"}${client ? "'s" : ""} account, no tax. Done puts it on the ticket.`;
+  const creditTap = (key: string) => {
+    setCreditSell((c) => {
+      if (c === null) return c;
+      if (key === "back") return { entry: c.entry.slice(0, -1) };
+      const next = (c.entry + key).replace(/^0+(?=\d)/, "");
+      return next.length > 7 ? c : { entry: next };
+    });
+  };
+  const creditCell = (
+    <div className="shelf-cell" key="account-credit">
+      <button
+        className={
+          creditWhy !== null
+            ? "shelf-item shelf-credit unavailable"
+            : creditHeld !== null
+              ? "shelf-item shelf-credit in-cart"
+              : "shelf-item shelf-credit"
+        }
+        aria-disabled={creditWhy !== null}
+        onClick={() => {
+          if (creditWhy !== null) {
+            setCartNotice({ text: `Account credit: ${creditWhy}.`, offers: [] });
+            return;
+          }
+          setCreditSell({ entry: "" });
+        }}
+        aria-label={
+          creditWhy !== null
+            ? `Add account credit, unavailable: ${creditWhy}`
+            : "Add account credit, type the amount on the number pad"
+        }
+      >
+        <span className="shelf-name">Add credit</span>
+        {creditWhy !== null ? (
+          <span className="shelf-unavailable">
+            <span className="shelf-unavailable-why">{creditWhy}</span>
+          </span>
+        ) : null}
+        <span className="shelf-foot">
+          <span className="shelf-price">
+            <span className="shelf-bundle-mark">
+              {creditHeld !== null ? money(creditHeld) : "Any amount"}
+            </span>
+          </span>
+        </span>
+      </button>
+    </div>
+  );
+
   /** What the totals area shows, in priority order: the amber suppression
    *  notice, the loud disagreement, a failed call, the spinner, or the
    *  server's numbers. Never a locally computed total dressed as one. */
@@ -13061,9 +13421,10 @@ export default function SaleScreen(props: {
     contracts: ContractInfo[];
     gifts: GiftCardProduct[];
     giftCustom: boolean;
+    credit: boolean;
     more: boolean;
   } => {
-    const none = { items: [], contracts: [], gifts: [], giftCustom: false, more: false };
+    const none = { items: [], contracts: [], gifts: [], giftCustom: false, credit: false, more: false };
     if (!searching || catalog === null) return none;
     const shelfOf = (item: ShelfItem): string => {
       if (item.type === "Package") return PACKAGES_LABEL;
@@ -13103,11 +13464,14 @@ export default function SaleScreen(props: {
     const giftCustom =
       giftEditableProduct !== null &&
       shelfMatches(shelfWords, GIFT_CARDS_LABEL, "custom amount");
+    /* T256: "credit", "account" and "add" find the Add credit cell. */
+    const credit = shelfMatches(shelfWords, ACCOUNT_CREDIT_LABEL, "add credit");
     return {
       items: items.slice(0, SHELF_SEARCH_LIMIT),
       contracts,
       gifts,
       giftCustom,
+      credit,
       more: items.length > SHELF_SEARCH_LIMIT,
     };
   })();
@@ -13115,7 +13479,8 @@ export default function SaleScreen(props: {
     searchHits.items.length === 0 &&
     searchHits.contracts.length === 0 &&
     searchHits.gifts.length === 0 &&
-    !searchHits.giftCustom;
+    !searchHits.giftCustom &&
+    !searchHits.credit;
 
 
   /**
@@ -13278,7 +13643,9 @@ export default function SaleScreen(props: {
           ? "A code applies to one person's sale. Ring up lines for someone else on their own ticket."
           : cart.some(isGiftCardLine)
             ? "A code cannot go on a ticket holding a gift card."
-            : null;
+            : cart.some(isCreditLine)
+              ? "A code cannot go on a ticket holding account credit."
+              : null;
   const applyPromo = () => {
     const code = promoDraft.trim();
     if (code === "" || promoBlocked !== null || charging) return;
@@ -13293,7 +13660,7 @@ export default function SaleScreen(props: {
    * the discount line above appears only from the rehearsal's own
    * DiscountTotal, and a refused code leaves with Mindbody's sentence.
    */
-  const promoField: ReactNode = !cart.some((l) => !isGiftCardLine(l)) ? null : (
+  const promoField: ReactNode = !cart.some((l) => !isOffCartLine(l)) ? null : (
     <div className="promo-row">
       {promoCode !== null ? (
         <div className="promo-applied">
@@ -13332,7 +13699,7 @@ export default function SaleScreen(props: {
             maxLength={50}
             disabled={charging || promoBlocked !== null}
             aria-label="Promotion code"
-            placeholder="Promotion code"
+            placeholder="Promo code"
           />
           <button
             className="promo-btn"
@@ -13730,6 +14097,7 @@ export default function SaleScreen(props: {
                         {searchHits.contracts.map(contractCard)}
                         {searchHits.gifts.map(giftProductCell)}
                         {searchHits.giftCustom ? giftCustomCell : null}
+                        {searchHits.credit ? creditCell : null}
                       </div>
                       {searchHits.more ? (
                         <p className="muted">
@@ -13802,6 +14170,7 @@ export default function SaleScreen(props: {
                           {section.items.map(shelfCard)}
                           {section.contracts.map(contractCard)}
                           {section.giftCard ? giftCardCells : null}
+                          {section.accountCredit ? creditCell : null}
                           {/* Bundles, after the starred items. One card,
                               one tap, every line into the cart. Only the
                               Favorites shelf has any, and it is always a
@@ -13841,7 +14210,8 @@ export default function SaleScreen(props: {
                         section.items.length === 0 &&
                         section.contracts.length === 0 &&
                         !bundleSlot &&
-                        section.giftCard !== true
+                        section.giftCard !== true &&
+                        section.accountCredit !== true
                       ) {
                         return null;
                       }
@@ -14342,6 +14712,29 @@ export default function SaleScreen(props: {
                               at quantity one. The glyph changes with it,
                               so nothing says "one fewer" while it means
                               "gone". */}
+                          {isCreditLine(line) ? (
+                            /* T256: credit is one line of one. Its X takes
+                               it off; its amount opens the credit keypad. */
+                            <>
+                              <button
+                                className="t-ctl-btn t-ctl-x"
+                                disabled={charging}
+                                aria-label={`Remove ${lineText(line)}`}
+                                title={`Remove ${lineText(line)}`}
+                                onClick={() => removeLine(line.key)}
+                              >
+                                <CloseIcon />
+                              </button>
+                              <button
+                                className="t-for"
+                                disabled={charging}
+                                onClick={() => setCreditSell({ entry: "" })}
+                              >
+                                Change amount
+                              </button>
+                            </>
+                          ) : (
+                          <>
                           <button
                             className={
                               line.quantity <= 1 ? "t-ctl-btn t-ctl-x" : "t-ctl-btn"
@@ -14396,6 +14789,8 @@ export default function SaleScreen(props: {
                           >
                             <PlusIcon />
                           </button>
+                          </>
+                          )}
                           {/* The recipient control: text, not a filled
                               button. With nobody yet it opens the SAME
                               live search the attach modal uses ("Who is
@@ -14416,7 +14811,7 @@ export default function SaleScreen(props: {
                               because nobody asked for it and moving a
                               line onto another account under an armed
                               tender is a different conversation. */}
-                          {isGiftCardLine(line) || inPay ? null : (
+                          {isOffCartLine(line) || inPay ? null : (
                           <button
                             className={line.forClient ? "t-for on" : "t-for"}
                             disabled={charging}
@@ -14510,7 +14905,23 @@ export default function SaleScreen(props: {
 
                 {/* The totals area. The server's numbers or an honest
                     absence; local math never renders as a total. */}
-                {saleLines.length === 0 && giftCardLines.length > 0 ? (
+                {saleLines.length === 0 && creditLines.length > 0 ? (
+                  /* T256: account credit alone. No cart, no tax: the
+                     figure is the amount typed, which /api/checkout
+                     rehearses with Test: true and asserts before a cent
+                     moves. */
+                  <>
+                    <hr className="t-rule" />
+                    <div className="t-line t-total">
+                      <span>Total</span>
+                      <span className="amt">{money(creditTotal)}</span>
+                    </div>
+                    <p className="muted-note">
+                      Account credit is not taxed. It goes on{" "}
+                      {client ? `${client.name}'s` : "the client's"} account.
+                    </p>
+                  </>
+                ) : saleLines.length === 0 && giftCardLines.length > 0 ? (
                   /* T95: gift cards alone. There is no cart to price and
                      no tax to add: a card's price is the live product's
                      price, which /api/checkout re-reads and rehearses
@@ -14685,6 +15096,14 @@ export default function SaleScreen(props: {
                         <span className="amt">{money(giftCardsTotal)}</span>
                       </div>
                     ) : null}
+                    {/* T256: the credit, untaxed and outside the cart, as
+                        the cards are. */}
+                    {creditTotal > 0 ? (
+                      <div className="t-line t-muted">
+                        <span>Account credit, no tax</span>
+                        <span className="amt">{money(creditTotal)}</span>
+                      </div>
+                    ) : null}
                     <hr className="t-rule" />
                     <div className="t-line t-total">
                       <span>Total</span>
@@ -14692,7 +15111,7 @@ export default function SaleScreen(props: {
                         {totals.grandTotal !== null
                           ? money(
                               roundToCents(
-                                totals.grandTotal + giftCardsCharged,
+                                totals.grandTotal + giftCardsCharged + creditTotal,
                               ),
                             )
                           : ""}
@@ -15204,6 +15623,68 @@ export default function SaleScreen(props: {
           T35): the keypad, opened by the Custom amount cell and by T100's
           offer, which arrives with a figure already in hand. One state,
           one fixed size. */}
+      {/* T256: the Add credit keypad. The T82 keypad idiom and the gift
+          card pad's shape: the figure, the keys, one effect line, Done and
+          Cancel. Scrim, Cancel and Escape leave the ticket as it was. */}
+      {creditSell !== null ? (
+        <div className="modal-scrim" role="presentation" onClick={closeCreditSell}>
+          <div
+            className="modal modal-amount modal-pad"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Account credit"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="pad-left">
+              <p className="modal-title pad-head">
+                <span className="pad-kicker">Account credit</span>
+                <span className="pad-entered-amt">
+                  {money(creditEntryCents / 100)}
+                </span>
+              </p>
+              <p
+                className={
+                  creditEntryCents > 0 && !creditOk
+                    ? "pad-change gift-note gift-bad"
+                    : "pad-change gift-note muted-note"
+                }
+              >
+                {creditWhy ?? creditNote}
+              </p>
+            </div>
+            <div className="pad-keys">
+              {["1", "2", "3", "4", "5", "6", "7", "8", "9", "00", "0"].map(
+                (k) => (
+                  <button key={k} className="pad-key" onClick={() => creditTap(k)}>
+                    {k}
+                  </button>
+                ),
+              )}
+              <button
+                className="pad-key del"
+                aria-label="Delete last digit"
+                title="Delete"
+                onClick={() => creditTap("back")}
+              >
+                <BackspaceIcon />
+              </button>
+            </div>
+            <div className="modal-actions">
+              <button
+                className="modal-confirm go"
+                disabled={!creditOk || creditWhy !== null}
+                onClick={() => addCredit(creditEntryCents)}
+              >
+                Done
+              </button>
+              <button className="modal-cancel" onClick={closeCreditSell}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {giftSell !== null ? (
         <div className="modal-scrim" role="presentation" onClick={closeGiftSell}>
           <div

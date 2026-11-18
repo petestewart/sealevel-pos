@@ -12212,7 +12212,7 @@ function FrontDesk({
                       maxLength={50}
                       disabled={payStage !== null}
                       aria-label="Promotion code"
-                      placeholder="Promotion code"
+                      placeholder="Promo code"
                     />
                     <button
                       className="promo-btn"

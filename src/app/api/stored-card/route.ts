@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import { requireSession } from "@/lib/auth";
 
-import { clientPaymentProfile } from "@/lib/sale";
+import { clientPaymentProfile, houseClientId } from "@/lib/sale";
 
 export const dynamic = "force-dynamic";
 
@@ -27,7 +27,14 @@ export async function GET(request: Request) {
   }
   try {
     const profile = await clientPaymentProfile(clientId);
-    return NextResponse.json(profile);
+    /* T256: whether this is the house walk-in client, as a boolean about
+     * the client asked for (the id itself never reaches the browser, T41),
+     * so the Cart screen offers no account credit on it. */
+    const house = houseClientId();
+    return NextResponse.json({
+      ...profile,
+      houseClient: house !== null && house === clientId,
+    });
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : String(err) },
