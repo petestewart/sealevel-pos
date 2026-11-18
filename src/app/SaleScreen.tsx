@@ -13690,7 +13690,7 @@ export default function SaleScreen(props: {
             maxLength={50}
             disabled={charging || promoBlocked !== null}
             aria-label="Promotion code"
-            placeholder="Promotion code"
+            placeholder="Promo code"
           />
           <button
             className="promo-btn"
