@@ -94,8 +94,8 @@ option", and "all we do is mark them Late Cancel in the Mindbody UI ...
 and no we do not take a class away, that is all we do"). The trash on a
 row that is not checked in, on a class ahead, running or over, opens a
 choice of two 64px buttons: "Cancel booking" (`/api/cancel-visit`,
-unchanged) and "Late cancel" ("Marks it in Mindbody as a late cancel. No
-fee, nothing taken off their pass."). Late cancel is `POST
+unchanged) and "Late cancel" ("Marks it in Mindbody as a late cancel.";
+Pete removed "No fee, nothing taken off their pass." on 2026-11-18). Late cancel is `POST
 /api/late-cancel`, which sends ONLY `{VisitId, Execute: "Latecancel"}` on
 `/client/updateclientvisit` under the teacher's token (`requireActor`),
 with the client id for dry run and the write guard; Undo on the row sends

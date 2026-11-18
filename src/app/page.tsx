@@ -11796,8 +11796,7 @@ function FrontDesk({
                   Late cancel
                 </button>
                 <p className="cancel-choice-line">
-                  Marks it in Mindbody as a late cancel. No fee, nothing
-                  taken off their pass.
+                  Marks it in Mindbody as a late cancel.
                 </p>
               </div>
             </div>
