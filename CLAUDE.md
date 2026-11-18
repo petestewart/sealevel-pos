@@ -111,9 +111,14 @@ search names it "late cancel". **Mindbody enforces the studio's late
 cancel window**: probed on prod (2026-11-17, dummy client 100042041,
 visit 1305809, class at 18:00 the same day, run about 6:00 AM), a
 Latecancel that far ahead was refused "Cancellation is outside allowed
-window." and nothing changed. The window's size, and whether it is open
-AFTER the class (Andie's real one was marked the morning after), are not
-yet seen live. Late cancel stays offered on rows ahead of the class all
+window." and nothing changed. **After the class it is accepted**
+(same visit, 2026-11-17 19:46, class over, never checked in):
+`Latecancel` answered `LateCancelled: true`, `AppointmentStatus`
+"NoShow" -> "Cancelled", pass 567229 still attached with Remaining
+unchanged; `Unlatecancel` put it back to "NoShow", `LateCancelled:
+false`, pass unchanged. So marking a no-show afterwards, the studio's
+practice, works through the API. The window's size before a class is
+still unseen. Late cancel stays offered on rows ahead of the class all
 the same: Mindbody decides. Probe: `scripts/probe-latecancel.ts`.
 
 **T242 (2026-11-17): the unpaid row's "Pay and check in" opens on the
@@ -1703,8 +1708,12 @@ while `git clone` works, so clone the repo rather than fetching files.
   "Cancellation is outside allowed window." with nothing changed, and an
   `Unlatecancel` on a visit that was not late-cancelled answered 200 and
   changed nothing but `LastModifiedDateTime` (prod, dummy client
-  100042041, visit 1305809, 2026-11-17). The window's size and whether it
-  is open after the class are not yet seen.
+  100042041, visit 1305809, 2026-11-17). **After the class ended the same
+  `Latecancel` was ACCEPTED** (19:46 the same day): `LateCancelled: true`,
+  `AppointmentStatus` "NoShow" -> "Cancelled", the pass still attached,
+  Remaining unchanged; `Unlatecancel` restored "NoShow". A visit nobody
+  checked in reads `AppointmentStatus: "NoShow"` once its class is over.
+  The window's size before a class is still unseen.
 - **`/class/classvisits` puts the CLASS name in the visit's `Name` field.**
   Reading it showed every roster row as "bikram yoga". Names come from
   explicit client fields, and otherwise from the client index by id.
