@@ -23750,3 +23750,27 @@ has no API equivalent that we can find, and account credit goes through
 calls; the one-card-charge shape is to buy credit for the WHOLE total with
 the card and pay the other lines from the account (the retired under-$10
 path's pattern).
+
+### T256: the controlled $1 run (main session, Pete's OK, prod, 2026-11-18 04:31Z)
+
+Nothing else was calling Mindbody for this client. Dummy client 100042041,
+balance -2.50 before, Cash `{Amount: 1.0}` throughout:
+
+- 04:31:01 `Test: true` -> AmountPaid 1, SaleId 0; balance and sales unchanged.
+- 04:31:12 `Test: true` again -> AmountPaid 1; unchanged. Test calls do NOT pile up.
+- 04:31:25 `Test: true` -> 1, then 04:31:29 REAL -> AmountPaid 1, SaleId
+  428953, ONE "account adjustment" line, $1.00 Cash; balance -2.50 -> -1.50.
+
+So the app's own pattern (rehearse, then charge) is clean, and the $2 of
+sale 428932 (04:23:14) was NOT the rehearsal doubling itself. That minute
+had two processes calling `purchaseaccountcredit` for the same client
+within seconds (the agent's probe: a Cash Test that answered 2 at about
+04:23:07 and a CreditCard Test with 4111... just after; the main session's
+Test and real call at 04:23:1x). The best reading is that Mindbody joins
+near-simultaneous credit purchases for one client into one pending sale.
+Unproven, and the rules that answer it either way: T253's server hold
+refuses a second charge for a client while one is in flight, the Test
+rehearsal's AmountPaid must equal the request, and the real answer's
+AmountPaid, the sale's one line and a fresh balance delta must all equal
+it, or the outcome is money-moved-wrong with the hold kept. Sale 428932
+($2) and 428953 ($1) are real cash on the dummy client.
