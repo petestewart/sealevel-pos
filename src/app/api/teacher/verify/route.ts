@@ -63,13 +63,14 @@ export async function POST(request: Request) {
    * "approve", which authorizes charging a sale the customer screen did
    * not approve, and is filed on the client with this teacher's name.
    * T205 adds "contract" (a membership sold with no customer signature)
-   * and T211 "waiver" (a write that goes past the waiver gate). */
+   * and T211 "waiver" (a write that goes past the waiver gate). T259
+   * adds "credit": account credit given at no charge, paid "Other". */
   if (purposeRaw !== undefined && !isCompPurpose(purposeRaw)) {
     return NextResponse.json(
       {
         error:
-          "purpose must be comp, overdraft, override, approve, contract " +
-          "or waiver",
+          "purpose must be comp, overdraft, override, approve, contract, " +
+          "waiver or credit",
       },
       { status: 400 },
     );

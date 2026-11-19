@@ -9825,3 +9825,62 @@ button.display-mark-row {
   width: 100%;
   margin-top: 10px;
 }
+
+/* T259: "Give at no charge" on the Add credit keypad. A full-width row
+ * under the pad (the pad is a three-column grid), a 64px outlined
+ * control in --accent (actionable, not destructive: it gives, and the
+ * PIN and reason are asked next), and one sentence beside it saying what
+ * the tap does or why it cannot. Tokens only. */
+.modal-pad .credit-free {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.credit-free-btn {
+  flex: none;
+  min-height: 64px;
+  padding: 0 20px;
+  font: inherit;
+  font-size: 18px;
+  font-weight: 700;
+  border: 2px solid var(--accent);
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.credit-free-btn[aria-disabled="true"] {
+  border-color: var(--line);
+  background: var(--surface-2);
+  color: var(--muted);
+  cursor: default;
+}
+
+.credit-free-why {
+  margin: 0;
+  font-size: 16px;
+}
+
+.credit-free-why.muted-note {
+  color: var(--muted);
+}
+
+.credit-free-why.gift-bad {
+  color: var(--stop);
+  font-weight: 600;
+}
+
+.pay-done-credit-note.actor-note {
+  color: var(--warn);
+  font-weight: 600;
+}
+
+/* T259: the receipt toggle is not drawn for a credit given at no charge. */
+.receipt-toggle[hidden] {
+  display: none;
+}

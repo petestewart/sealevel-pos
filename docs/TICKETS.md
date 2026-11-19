@@ -24094,3 +24094,136 @@ tender? Dummy client 100042041:
   take, as Maran's 2024 $0.20 ADD CREDIT paid "Other" did in the UI.
 `/sale/custompaymentmethods` lists none on site 471; `/site/paymenttypes`
 holds 9 "Other" and 7 "Comp/Guest" among others.
+
+## T259. Give account credit at no charge (Pete, 2026-11-19)
+
+Pete tried to give Maran Whiting the $10 she was owed (T258) from the app
+and met "Account credit cannot be discounted", which is T256 refusing a
+discount on credit by design. He asked for a way to give credit at no
+charge, and approved this design: "Give credit (no charge)" on Add credit;
+the teacher's PIN plus a required reason; sold as credit paid "Other", so
+no money is taken; the reason filed on the student; the balance checked
+after; and its own PIN purpose.
+
+### Live facts it rests on (prod, dummy client 100042041, 2026-11-19; the T258 follow-up)
+
+- `purchaseaccountcredit` with `{Type: "Comp", Metadata: {Amount}}` is
+  refused "Invalid payment method."
+- `{Type: "Custom", Metadata: {Amount, Id: 7}}` (7 "Comp/Guest") passed
+  `Test: true` and the REAL call was refused `NonZeroDollarNotAllowed`. A
+  Test rehearsal does not prove a payment type.
+- `{Type: "Custom", Metadata: {Amount: 1, Id: 9}}` (9 "Other") worked for
+  real: sale 429047, one "account adjustment" line of $1 paid "Other" $1,
+  balance 0 -> 1.
+- `/site/paymenttypes` lists 9 "Other"; `/sale/custompaymentmethods` is
+  empty.
+
+### Built
+
+- [x] **A seventh PIN purpose, `credit`** (`CompPurpose` and
+      `isCompPurpose` in `src/lib/auth.ts`; `/api/teacher/verify` names
+      it). Not a reuse: a `comp`, `waiver` or any other token is refused
+      for it, and a `credit` token for anything else.
+- [x] **The rules** (`src/lib/nochargecredit.ts`, browser and server
+      alike): `NO_CHARGE_PURPOSE`, the $0.01 to $200.00 bounds (the cap
+      is a slip-of-the-keypad guard, and `noChargeCapSentence` says so in
+      the keypad and in the refusal), the reason's 3 to 200,
+      `parseNoChargeCredit`, `noChargeShapeRefusal` (no other line, no
+      gift card, no method, split, cash, typed or gift card, display card,
+      discount, promotion code, override or overdraft) and
+      `noChargeRecordLine`: "Credit $10.00 given at no charge by <teacher>
+      at the counter: <reason>".
+- [x] **The sale** (`giveNoChargeCredit` in `src/lib/nochargecreditsale.ts`,
+      reached from the top of `/api/checkout`'s `runCheckout` when
+      `accountCredit.noCharge` is present, so T113's key and T253's hold
+      in POST apply unchanged): shape, field, a real client never the
+      house client, then the token (purpose `credit`, this session's
+      teacher, spent once) BEFORE any Mindbody call. "Other" is resolved by
+      NAME from `/site/paymenttypes` (`otherPaymentTypeId`, cached an hour
+      per target, 9 only when the read fails, logged either way; a list
+      that answers without an active "Other" refuses). Then the balance
+      read, a `Test: true` rehearsal with AmountPaid asserted, ONE real
+      `purchaseaccountcredit` under the teacher's token with no
+      studio-account fallback (a giveaway, like a comp), then AmountPaid,
+      `saleById` holding exactly one line of the amount
+      (`creditSaleProblem`) and a fresh balance that rose by the amount;
+      any miss is 502 `ambiguous`, which T253 holds. `purchaseCredit` in
+      `src/lib/sale.ts` takes the new `NoChargeCreditTender` (`type:
+      "Other"`) and sends it as `Custom` with the id.
+- [x] **Dry run and the write guard** apply to every write; a suppressed
+      rehearsal or write hands the PIN back (`unspendCompToken`), as does a
+      READ that failed before anything was sent. Every refusal before the
+      token is spent says `pinKept: true`.
+- [x] **No customer approval and nothing on the customer screen** (said in
+      comments in the route and the sale): nothing is charged to the
+      customer. The live mirror shows nothing while it is armed and no
+      summary is presented.
+- [x] **The record**: after the credit stands, the line above through
+      `fileFormulaNote` (Formula Note, else T62's signed Notes entry,
+      through `updateClientAudited`). A failed filing never turns the
+      credit into an error: the answer carries `noted: false` and why.
+- [x] **The Cart screen** (`src/app/SaleScreen.tsx`): the Add credit
+      keypad gains a 64px "Give at no charge" row, offered only once the
+      lookup has said the client is not the house client, greyed with the
+      reason with nothing typed, over $200.00 or beside another line. It
+      opens T211's pad (`WaiverOverrideDialog`, now with a `copy` prop for
+      another purpose's words: "Give credit (no charge)", "Why is this
+      credit free?"), portalled over the nav bar. A match puts the one
+      line "Account credit (no charge) $10.00" on the ticket (`noCharge`
+      on `CreditItem`, `armedNoCharge`, `creditCharged`), total $0.00. The
+      pay screen greys every tender ("The credit is given at no charge"),
+      the discount and the receipt toggle, and Finalize reads "Give $10.00
+      credit" and goes straight to the charge. A client change, another
+      line or a changed amount takes the line off with a sentence; a 401
+      on the token (spent, expired) takes it off too and says to give it
+      again.
+- [x] **The done screen**: "Credit given", "No charge, nothing taken",
+      "$10.00 credit given. Balance now $X" read from Mindbody, and
+      whether the reason was filed on their profile (amber when not).
+- [x] **The fake**: `/site/paymenttypes` lists 1 Cash, 2 Check, 7
+      Comp/Guest and 9 Other (`/__fake/fail-paymenttypes?n=1` fails the
+      read); `purchaseaccountcredit` refuses Comp "Invalid payment
+      method.", takes Custom 7 on Test and refuses it for real with the
+      live sentence, and posts credit for Custom 9; `clientpurchases`
+      reports those payments as "Other" / "Comp/Guest".
+- [x] `tsc --noEmit` and `next build` clean.
+
+### Verified against the fake (Chromium 1180x820 at deviceScaleFactor 2, app :3259, fake :4259, a local Postgres for the teacher PIN)
+
+- Jordan Kim, $10.00, reason "Owed from the 11/14 sale", Maya's PIN: the
+  ticket read "Account credit (no charge) $10.00", Total $0.00, Finalize
+  "Give $10.00 credit"; one `purchaseaccountcredit` paid Custom 9; the
+  fake's balance rose by exactly $10.00; the done screen read "$10.00
+  credit given. Balance now $X" with X the fake's balance, and "The reason
+  is filed on their profile"; the client's Notes gained "Credit $10.00
+  given at no charge by Maya Chen at the counter: Owed from the 11/14 sale
+  [by Maya Chen, ...]".
+- A wrong PIN (9999): "That is not your PIN.", the pad stays, nothing on
+  the ticket. An empty reason: Done stays off. Through the route, an empty
+  reason is 400 with nothing given and the PIN kept.
+- Beside another line: the route answers 409 "stands alone"; on the
+  screen, adding Coconut Water to an armed ticket took the credit line off
+  with that sentence, and the keypad greys the option while another line
+  is there. With a tender (`method: "cash"`): 409.
+- $250: greyed on the keypad with the cap sentence, and 400 through the
+  route in the same words.
+- A `comp`-purpose token and a `waiver`-purpose token: 401 "Enter your PIN
+  to give credit at no charge", nothing given. A forged token: 401. A
+  spent token: 401, the balance rose once.
+- Dry run on this browser: `{ok: false, suppressed: "dry-run", pinKept:
+  true}`, nothing given; the SAME token then gave $5.00 for real, so it
+  was handed back.
+- The house client (Counter Walk-in, 10199) attached: the Add credit cell
+  reads "The walk-in account holds no credit", no keypad and no "Give at
+  no charge"; through the route, 409 in words.
+
+### Not verified
+
+- Nothing live: no real Mindbody call was made for this build. The real
+  shape rests on sale 429047 (Custom 9, $1, prod).
+- The `/site/paymenttypes` read failing (the fallback to 9) was not driven:
+  the first read in the process cached the list. The fake can fail it
+  with `/__fake/fail-paymenttypes`.
+- On an 820px-tall screen the PIN pad (T211's) is taller than the screen
+  and its last key row sits under its own Cancel/Done row until scrolled;
+  the same pad on the roster has the same shape.

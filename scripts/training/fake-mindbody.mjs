@@ -402,12 +402,15 @@ for (const x of seeded) sales.push({ Id: ++saleSeq, LocationId: 1, ...x });
 function paymentRow(p) {
   if (typeof p?.Amount === "number" && !p?.Metadata) return { Type: String(p.Type ?? "Payment"), Amount: p.Amount };
   const meta = typeof p?.Metadata === "string" ? (() => { try { return JSON.parse(p.Metadata); } catch { return {}; } })() : (p?.Metadata ?? {});
-  const word = { Cash: "Cash", StoredCard: "Visa", CreditCard: "Credit Card", DebitAccount: "Account", Comp: "Comp", GiftCard: "Gift Card" }[p?.Type] ?? String(p?.Type ?? "Payment");
+  const word = p?.Type === "Custom" ? (Number(meta.Id ?? meta.id) === 9 ? "Other" : Number(meta.Id ?? meta.id) === 7 ? "Comp/Guest" : "Custom") : { Cash: "Cash", StoredCard: "Visa", CreditCard: "Credit Card", DebitAccount: "Account", Comp: "Comp", GiftCard: "Gift Card" }[p?.Type] ?? String(p?.Type ?? "Payment");
   return { Type: word, Amount: Number(meta.Amount ?? meta.amount ?? 0) };
 }
 /* T257: POST /__fake/fail-purchases?n=1 makes the next N clientpurchases
  * reads answer a 500. Not part of any Mindbody API. */
 let failPurchases = 0;
+/* T259: POST /__fake/fail-paymenttypes?n=1 makes the next N
+ * /site/paymenttypes reads answer a 500. Not part of any Mindbody API. */
+let failPaymentTypes = 0;
 function priceCart(body) {
   let sub = 0;
   let tax = 0;
@@ -613,7 +616,24 @@ function handle(method, path, q, body, res) {
     case "/site/categories":
       return send(res, 200, { ...page([]), Categories: [] });
     case "/site/paymenttypes":
-      return send(res, 200, { PaymentTypes: [{ Id: 1, PaymentTypeName: "Cash", Active: true }, { Id: 2, PaymentTypeName: "Check", Active: true }] });
+      /* T259: site 471's list holds 7 "Comp/Guest" and 9 "Other" among
+       * others (prod, 2026-11-19); the app finds "Other" by NAME. */
+      if (failPaymentTypes > 0) {
+        failPaymentTypes -= 1;
+        return send(res, 500, { Error: { Message: "Internal error (fake)", Code: "InternalError" } });
+      }
+      return send(res, 200, {
+        PaymentTypes: [
+          { Id: 1, PaymentTypeName: "Cash", Active: true, Fee: 0 },
+          { Id: 2, PaymentTypeName: "Check", Active: true, Fee: 0 },
+          { Id: 7, PaymentTypeName: "Comp/Guest", Active: true, Fee: 0 },
+          { Id: 9, PaymentTypeName: "Other", Active: true, Fee: 0 },
+        ],
+      });
+    case "/__fake/fail-paymenttypes": {
+      failPaymentTypes = Number(q.get("n") ?? 1) || 0;
+      return send(res, 200, { failPaymentTypes });
+    }
 
     case "/class/classes": {
       const ids = all(q, "ClassIds").map(Number);
@@ -966,6 +986,21 @@ function handle(method, path, q, body, res) {
       } else if (pay.Type === "CreditCard") {
         if (body.Test !== true && String(meta.CreditCardNumber ?? "") === "4000000000000002") {
           return send(res, 400, { Error: { Message: "Card declined (fake)", Code: "CardDeclined" } });
+        }
+      } else if (pay.Type === "Comp") {
+        /* T259: live prod refuses Comp on this call, either casing. */
+        return send(res, 400, { Error: { Message: "Invalid payment method.", Code: "InvalidParameter" } });
+      } else if (pay.Type === "Custom") {
+        /* T259, live prod 2026-11-19: type 7 "Comp/Guest" passes Test and
+         * is refused for real for any amount above zero; type 9 "Other"
+         * sells for real. Any other custom id is refused (invented). */
+        const typeId = Number(meta.Id ?? meta.id);
+        if (typeId === 7) {
+          if (body.Test !== true && amount > 0) {
+            return send(res, 400, { Error: { Message: "Payment method does not allow greater than 0 dollar payments", Code: "NonZeroDollarNotAllowed" } });
+          }
+        } else if (typeId !== 9) {
+          return send(res, 400, { Error: { Message: `Invalid custom payment type ${meta.Id} (fake)`, Code: "InvalidParameter" } });
         }
       } else if (pay.Type !== "Cash") {
         return send(res, 400, { Error: { Message: `Invalid payment method ${pay.Type} (fake)`, Code: "InvalidParameter" } });

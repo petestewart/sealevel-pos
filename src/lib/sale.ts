@@ -1810,6 +1810,21 @@ export type CreditTender = Extract<
   { type: "Cash" } | { type: "StoredCard" } | { type: "CreditCard" }
 >;
 
+/** T259: credit given at NO CHARGE, recorded in Mindbody as paid by the
+ *  site's "Other" payment type: `{ Type: "Custom", Metadata: { Amount,
+ *  Id } }`. The one no-money shape `purchaseaccountcredit` has been seen
+ *  to sell for real (prod, 2026-11-19, sale 429047, type 9 "Other"); Comp
+ *  is refused outright and type 7 "Comp/Guest" passes `Test: true` and
+ *  is refused for real (`NonZeroDollarNotAllowed`). Only
+ *  src/lib/nochargecreditsale.ts builds one, behind a `credit`-purpose
+ *  PIN token. */
+export interface NoChargeCreditTender {
+  type: "Other";
+  amount: number;
+  /** The `/site/paymenttypes` Id of the type named "Other". */
+  paymentTypeId: number;
+}
+
 /** T256: the smallest and largest amount of credit the counter sells. A
  *  cent is the floor (cardChargeable's rule: nothing is not a tender);
  *  the ceiling is a typo guard, not a policy, and the keypad says it. */
@@ -1856,7 +1871,8 @@ export const CREDIT_MAX_USD = 2000;
  */
 export async function purchaseCredit(opts: {
   clientId: string;
-  payment: CreditTender;
+  /** T259: or the no-charge "Other" tender, from nochargecreditsale.ts. */
+  payment: CreditTender | NoChargeCreditTender;
   /** True for the rehearsal: Mindbody validates and moves nothing. */
   test: boolean;
   /** T49: the signed-in teacher, when there is one. */
@@ -1869,9 +1885,16 @@ export async function purchaseCredit(opts: {
   if (
     payment.type !== "Cash" &&
     payment.type !== "StoredCard" &&
-    payment.type !== "CreditCard"
+    payment.type !== "CreditCard" &&
+    payment.type !== "Other"
   ) {
     throw new Error("Account credit is bought with cash or a card.");
+  }
+  if (
+    payment.type === "Other" &&
+    (!Number.isInteger(payment.paymentTypeId) || payment.paymentTypeId <= 0)
+  ) {
+    throw new Error("purchaseCredit needs the Other payment type's id.");
   }
   if (!cardChargeable(payment.amount)) {
     throw new Error("purchaseCredit needs a positive amount.");
@@ -1886,7 +1909,15 @@ export async function purchaseCredit(opts: {
       Test: test,
       LocationId: STUDIO_LOCATION_ID,
       SendEmailReceipt: test ? false : opts.sendEmailReceipt === true,
-      PaymentInfo: checkoutPaymentPayload(payment),
+      /* T259: the no-charge credit is a Custom payment naming the site's
+       * "Other" type; every other tender is the cart's own shape. */
+      PaymentInfo:
+        payment.type === "Other"
+          ? {
+              Type: "Custom",
+              Metadata: { Amount: payment.amount, Id: payment.paymentTypeId },
+            }
+          : checkoutPaymentPayload(payment),
     },
     clientId,
     ...(opts.actor ? { actor: opts.actor } : {}),
