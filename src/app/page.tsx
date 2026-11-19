@@ -41,6 +41,7 @@ import SaleScreen, {
   type SoldSale,
 } from "./SaleScreen";
 import { Hit } from "./Hit";
+import { RecentPurchases } from "./RecentPurchases";
 import {
   ClientProfileCard,
   OPT_IN_EMAIL_FLAG,
@@ -1793,6 +1794,8 @@ function FrontDesk({
   const [profileView, setProfileView] = useState<{
     clientId: string;
     name: string;
+    /** T257: the row's UniqueId, for Recent purchases' void links. */
+    uniqueId: number | null;
   } | null>(null);
   const [profileState, setProfileState] = useState<{
     profile: ClientProfile | null;
@@ -3515,7 +3518,7 @@ function FrontDesk({
     uniqueId: number | null = null,
   ) => {
     const gen = ++profileGen.current;
-    setProfileView({ clientId, name });
+    setProfileView({ clientId, name, uniqueId });
     setProfileState({ profile: null, loading: true, error: null });
     setOptInMsg(null);
     setCardMsg(null);
@@ -10761,6 +10764,15 @@ function FrontDesk({
                   setCardOpen(true);
                 }}
                 cardMsg={cardMsg}
+              />
+              {/* T257: the student's recent sales, each with a link to
+                  Mindbody's own void page (the API cannot void). Its own
+                  read, in parallel with the profile's; keyed by the
+                  person so a reopen for someone else starts clean. */}
+              <RecentPurchases
+                key={`${profileView.clientId}|${profileView.uniqueId ?? ""}`}
+                clientId={profileView.clientId}
+                uniqueId={profileView.uniqueId}
               />
             </div>
           </div>

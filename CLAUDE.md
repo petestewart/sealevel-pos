@@ -191,6 +191,49 @@ account (`DebitAccount`); a step 2 that fails after step 1 is a partial
 `/sale/returnsale`**: it refunds to the account, so nothing moves.
 Verified on the fake; owed live: one real mixed sale (PLAN B9).
 
+**T257 (2026-11-18): the client profile shows "Recent purchases", each
+with "Void in Mindbody"** (Pete: see a student's recent sales, "with a way
+to void one"). The API cannot void (T256), so the 64px control is a link
+that opens Mindbody's own void page,
+`clients.mindbodyonline.com/app/clients/<UniqueId>/account-details/void-edit?saleno=<SaleId>`,
+in Safari, where the teacher signs in themselves; coming back to the app
+reads the list again, so a voided sale drops off. `GET
+/api/client-purchases` (device session and a signed-in teacher) reads
+`/client/clientpurchases` over a studio-local window (30 days, up to 90),
+groups the lines by sale, and passes payments as type and amount only.
+READS ONLY, nothing stored. A void link is offered only when one record
+holds the client id and its UniqueId is known (T114); a shared id lists
+the sales with a sentence and no link. Driven against the fake; the link
+opening Safari from the Home Screen app is not yet seen on an iPad.
+
+**T259 (2026-11-19): account credit can be GIVEN at no charge** (Pete,
+after Maran's $10 met "Account credit cannot be discounted", T258). The
+Add credit keypad has a 64px "Give at no charge": the teacher's own PIN
+for the new `credit` purpose and a REQUIRED reason (3 to 200 characters,
+T211's pad with its own words, "Why is this credit free?") arm it for THAT
+amount and THAT client. The ticket then holds that one line alone,
+"Account credit (no charge)", total $0.00, no tender, Finalize reads "Give
+$10.00 credit"; a client change or another line takes the line off, and a
+new amount on the keypad is ordinary paid credit. `/api/checkout` takes
+`accountCredit: { amount, noCharge: { token, reason } }`
+(`src/lib/nochargecredit.ts` for the rules, `src/lib/nochargecreditsale.ts`
+for the sale): only the credit line, a real client (never the house
+client), $0.01 to $200.00 (a slip-of-the-keypad cap, said so), the token
+verified and spent before any Mindbody call. It is `purchaseaccountcredit`
+paid `{Type: "Custom", Metadata: {Amount, Id}}` with the id of the type
+NAMED "Other" on `/site/paymenttypes` (cached an hour; 9 only when that
+read fails; a list with no "Other" refuses), rehearsed with `Test: true`
+and then checked as T256 credit is: AmountPaid, ONE sale line of the
+amount, a fresh balance delta, any miss ambiguous and held (T253). Never
+Comp (refused) and never type 7 "Comp/Guest" (passes Test, refused for
+real, T258). Dry run and the write guard apply, and a suppressed write
+hands the PIN back. No customer approval and nothing on the customer
+screen: nothing is charged to them. After it stands, "Credit $10.00 given
+at no charge by <teacher> at the counter: <reason>" is filed the T45/T62
+way; a filing that fails is said on the done screen ("$10.00 credit given.
+Balance now $X") and never undoes the credit. Driven against the fake
+only; no real Mindbody call was made for it.
+
 **`docs/PLAN.md` is the execution plan**: ordered work items, what each one is
 done when, the probes still to run, and the questions blocked on Pete. Start
 there. `docs/design/front-desk-pos.md` carries the reasoning behind every item
@@ -539,23 +582,25 @@ can turn a sale into an error. Seen working live on site 471
 saved**, and a workshop pass sold without one says nothing, which is
 how the first live test signed nobody up.
 
-### A teacher's PIN now authorizes six separate things
+### A teacher's PIN now authorizes seven separate things
 
 `CompPurpose` in `src/lib/auth.ts` is `comp` (a discount, T48), `overdraft`
 (charging an account past its balance, T94; since T250 also asked by the
 roster's "Pay and check in", through the shared `ApprovalDialog` pad), `override` (selling a pass
 Mindbody's own rules refused, T112), `approve` (approving a sale the customer
 screen could not, T203), `contract` (selling a membership with no customer
-signature, T205) and, since T211, `waiver` (booking or checking a student in
-with no released waiver). The purpose is SIGNED into the one-shot token and
+signature, T205), since T211 `waiver` (booking or checking a student in
+with no released waiver) and, since T259, `credit` (giving account credit at
+no charge, paid "Other"). The purpose is SIGNED into the one-shot token and
 the reader names the one purpose it will accept, so a PIN typed to discount a
-sale cannot authorize an override and none of the six can stand in for
+sale cannot authorize an override and none of the seven can stand in for
 another. Two request fields are not a separation while one value fits both,
-which is the lesson T94's review paid for; do not add a seventh purpose by
+which is the lesson T94's review paid for; do not add an eighth purpose by
 reusing an existing one. Each token is verified before any Mindbody call and
 spent once -- at `/api/checkout` before the rehearsal, at
-`/api/purchase-contract` before the purchase, and for T211 in
-`claimWaiverOverride` before the write -- so a refusal that reached no cart
+`/api/purchase-contract` before the purchase, for T211 in
+`claimWaiverOverride` before the write, and for T259 in `giveNoChargeCredit`
+before the "Other" lookup -- so a refusal that reached no cart
 costs no PIN. **A write that dry run or the write guard SUPPRESSED hands the
 token back** (`unspendCompToken`, T211): nothing reached Mindbody, so nothing
 was authorized, which is T202's rule for a suppressed release. A refusal or
@@ -1692,6 +1737,16 @@ while `git clone` works, so clone the repo rather than fetching files.
   rehearsal). The `Test: true` rehearsal is the only thing that says a
   contract is sellable, which is one more reason the counter shows the
   rehearsal's own answer and never the list's.
+- **Void and refund exist only in Mindbody's UI, and its client URLs use
+  `UniqueId`** (T257, 2026-11-18). `/sale/returnsale` returns comp sales
+  only and refunds a credit sale to the account (T256), so the app never
+  voids: it links to `clients.mindbodyonline.com/app/clients/<UniqueId>/
+  account-details/void-edit?saleno=<SaleId>`. The number in that path is
+  the client's UniqueId, NOT the editable `Id` (`.../clients/100037835/
+  account-details` opened the student whose Id is 10814). And
+  `/client/clientpurchases` answers ONE element per purchased line, each
+  carrying its whole `Sale`, with `SaleDateTime` a "Z" on wall-clock
+  digits; a voided sale no longer appears in it.
 - **Categories live in `site.yml`, not `sale.yml`.** `GET /site/categories`
   exists; grepping only the Sale tag missed it once. `/site/liabilitywaiver`
   (the waiver's actual text) and `/site/paymenttypes` are next to it.

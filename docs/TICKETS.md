@@ -23921,3 +23921,329 @@ An independent review found nothing that blocks merge. Fixed:
 Open for probe B9: a mixed sale for a client whose balance is already
 negative, where step 2's DebitAccount goes below zero without T94's PIN
 (nothing is overdrawn in substance: the tender paid the whole ticket).
+
+## T257. A student's recent purchases, with a way to void one in Mindbody (Pete, 2026-11-18)
+
+Pete wants to see a student's recent sales in the app, with a way to void
+one. The API cannot void: `/sale/returnsale` returns comp sales only, and
+on a credit sale it refunds to the account (T256, "the API cannot void a
+credit sale"). So the void happens in Mindbody's own UI, and Pete: "the
+url for voiding a sale in the UI is
+https://clients.mindbodyonline.com/app/clients/100042110/account-details/void-edit?saleno=428778
+... we could possibly open mindbody to the correct page". The teacher
+signs in to Mindbody in Safari themselves ("that is up to the teacher").
+
+### Live facts (prod, read-only, 2026-11-18)
+
+- **The number in Mindbody's client URLs is the client's `UniqueId`, not
+  the editable `Id`** (main session): `.../app/clients/100037835/account-details`
+  opened the student whose `Id` is 10814 and `UniqueId` 100037835 (T114's
+  Stacia Sander).
+- `GET /client/clientpurchases?request.clientId=&request.startDate=&request.endDate=`
+  (client.yml:969; also `limit`, `offset`, `saleId`, `uniqueClientId`)
+  answers in about a second. A voided sale no longer appears.
+- `/sale/sales?request.saleId=` answers nothing for an older sale without
+  a date window (T256 review); the same caution is applied here: dates are
+  always sent, as studio wall-clock strings (`studioWall`).
+- **The shape** (this build's one read, dummy client 100042041, 90 days):
+  one element per PURCHASED LINE, each carrying the whole `Sale`. Sale
+  428528: `Sale {Id, SaleDate "2026-11-14T00:00:00Z", SaleTime
+  "16:44:30", SaleDateTime "2026-11-14T16:44:30Z", ClientId "100042041",
+  SalesRepId null, PurchasedItems [...], LocationId 1, Payments [{Id,
+  Amount 21, Method 1, Type "Cash", Notes null, TransactionId null}]}`,
+  then `Description "Welcome Back – 2 Weeks Unlimited ($49)"`,
+  `AccountPayment false`, `Price 49`, `AmountPaid 21`, `Discount 28`, `Tax
+  0`, `Returned false`, `Quantity 1`. `SaleDateTime` carries a "Z" on
+  digits that are SaleDate + SaleTime; it is read as studio wall-clock,
+  like every Mindbody datetime (T40), digit for digit. The answer carries
+  no UniqueId.
+
+### Built
+
+- [x] **`GET /api/client-purchases?clientId=&uniqueId=&days=`**
+      (`src/app/api/client-purchases/route.ts:27`): the device session and
+      a signed-in teacher (`requireActor`); `days` 30 by default, held to
+      1..90; 409 with the sentence for a T114 mismatch or no record, 502
+      when Mindbody does not answer. READS ONLY, on the service account,
+      nothing stored (T29).
+- [x] **`src/lib/clientpurchases.ts`**: two reads in parallel. The
+      record (`readRecord`, :151) through `pickClientRecord`, preferring
+      the UniqueId the screen holds; the purchases (`readPurchases`, :197)
+      over whole studio days, `from` the start of the day `days` back to
+      23:59:59 today, 100 a page, at most five pages (`truncated` beyond).
+      `groupSales` (:224) groups lines by `Sale.Id`, newest first, each
+      sale with its studio-local time, lines (description, quantity,
+      amount paid, price, discount, returned), payments as **type word and
+      amount only** (never `Notes` or an id; a 4+ digit run in a word is
+      struck), total paid, and returned / partly returned. `voidUrlFor`
+      (:135) builds the void page from digits only.
+- [x] **T114: no guessing.** A void link is offered only when ONE record
+      holds the id, its UniqueId is known and the sale's own
+      `Sale.ClientId` is this id. A shared id lists the sales (a purchase
+      line does not say which record it belongs to, and `uniqueClientId`
+      has never been tried live) with one sentence and no link; a sale
+      sold to another client id says so on its row; a UniqueId no record
+      carries refuses the read (409).
+- [x] **"Recent purchases" in the client profile modal**
+      (`src/app/RecentPurchases.tsx:44`, rendered under the profile card
+      at `src/app/page.tsx:10772`; `profileView` now carries the row's
+      UniqueId, :1798, :3521). It reads when the profile opens, with a
+      quiet spinner beside the heading and a `--stop` error line, and
+      "Show the last 90 days" (64px). Each sale: date and time, its lines
+      with amounts, the total paid, "Paid by Cash $9.93" (each method with
+      its amount), the sale number, "Returned" or "Partly returned", and a
+      64px outlined `--stop` **"Void in Mindbody"**, an `<a target="_blank"
+      rel="noopener noreferrer">` to
+      `https://clients.mindbodyonline.com/app/clients/<UniqueId>/account-details/void-edit?saleno=<SaleId>`,
+      checked again against that exact pattern in the browser. A link
+      rather than `window.open`: an out-of-scope URL from a Home Screen
+      web app is handed to Safari, a link is never eaten as a popup, and
+      its href is what can be checked. One line over the list: "Opens
+      Mindbody. Sign in there if asked; the void happens in Mindbody."
+      After a void link was tapped, the next `visibilitychange` to
+      visible (or `focus`, `pageshow`) reads the list again, so a voided
+      sale drops off. CSS under `/* T257` in `globals.css`, tokens only.
+- [x] **The fake** (`scripts/training/fake-mindbody.mjs`):
+      `/client/clientpurchases` from its recorded sales, in the live shape
+      (one record per line, `SaleDateTime` with a "Z", oldest first so the
+      app's sort is what puts the newest on top, date window, limit and
+      offset); six seeded sales (Alex Morgan 10101 has four in 30 days and
+      one at 50, one of two lines, one returned, one paid two ways; Sam
+      Okafor one); a checkout's payment is reported as a type word and
+      amount, never its Metadata. `POST /__fake/fail-purchases?n=1`,
+      `POST /__fake/void-sale?id=`, and `FAKE_MB_SHARED_ID=1` (a second,
+      inactive record under 10102).
+
+### Verified
+
+- `npx tsc --noEmit -p .` and `npx next build` clean.
+- Driven in Chromium against the fake (app :3257, fake :4257,
+  `FAKE_MB_SHARED_ID=1`): Alex Morgan's profile shows four sales in 30
+  days, newest first, the two-line sale as one; every void href is
+  `.../clients/<his UniqueId>/account-details/void-edit?saleno=<sale>`
+  with `target=_blank rel="noopener noreferrer"`; the control is 64px;
+  "Returned" and "Account $20.00, Cash $29.66" show; 90 days shows five;
+  tapping Void opened a new tab, and after the fake voided the sale and
+  the page saw `visibilitychange` the sale was gone. Chris Albright reads
+  "No purchases in the last 30 days." A failed read shows "Could not read
+  recent purchases: Internal error (fake)" with the profile card intact
+  and the roster still working. Sam Okafor's shared id lists his sale
+  with no void link and the sentence. The route answers 401 with no
+  device session.
+- One read-only `clientpurchases` call on prod for 100042041 (the shape
+  above). No writes anywhere.
+- **Not verified**: that the link opens Safari from the Home Screen app
+  on a real iPad, and Mindbody's void page itself (the sandbox here
+  cannot reach it). Pete's check: open a student with a sale, tap Void in
+  Mindbody, confirm Safari lands on that sale's void page, void a dummy
+  client's sale there, come back and see it gone.
+
+## T258. Incident: a student's $10 account credit never landed (Pete, 2026-11-18)
+
+Maran Whiting (100034522) emailed: she paid for account credit and it was
+not there next time. Read-only investigation on prod, 2026-11-19:
+
+- **Sale 428556** (2026-11-14 11:35 PT): ONE sale holding LMNT Electrolytes
+  $2 and "account adjustment" (item 422) $10, paid $12 on her Visa. Her
+  ledger (every credit line and every Account payment since 2022) says
+  $10.00 after the 11/15 $0.41 "Payment on Account"; Mindbody holds
+  $0.00. The $10 never posted.
+- **The expiry date is not the cause.** Every ADD CREDIT to ACCOUNT (325)
+  she has bought since 2022 shows ExpDate the day BEFORE ActiveDate
+  (e.g. active 2022-05-16, exp 2022-05-15), and all of them posted.
+- **Not the app.** The app's retired under-$10 card path (T24 to T238)
+  always produced TWO sales seconds apart: a $10 "account adjustment" paid
+  by the stored card (`purchaseaccountcredit`), then the item paid
+  `Account`. Six such pairs exist since 2026-09-15 (426421/426422,
+  427826/427827, 427975/427976, 428486/428487, 428610/428611,
+  428464/428465), and for the four not refunded the balance Mindbody holds
+  equals the ledger to the cent. 428556 is one sale with both lines and
+  the card paying both, which is a ticket rung in Mindbody's own UI with
+  item 422 picked instead of 325. Sold that way, "account adjustment"
+  does not post to the balance. (It appeared in clients' histories from
+  September because of the app's path, which may be how it came to be
+  picked.)
+- **Two refunds left students owing.** Angie Parker (100030751): $10 credit
+  refunded in full (428757) after $4 of it paid a Boxed Water (428611):
+  balance -$4.00. Jeff Hess (100034116): $10 refunded (428467) after $7.99
+  paid rentals (428465): balance -$7.99.
+- **For T256**: its credit purchases are the same `purchaseaccountcredit`
+  call, and a mixed ticket produces the same two-sale shape as the six
+  pairs above, all of which posted. Evidence for PLAN B9, not a substitute.
+- Maran's fix was made by Pete in Mindbody's UI. The app refuses a
+  discounted credit line (`creditShapeRefusal`), so a free credit cannot
+  be given from the counter today.
+
+### T258 follow-up: free credit through the API (main session, Pete's OK, prod, 2026-11-19 ~01:10Z)
+
+Pete tried to give Maran $10 from the app and met "Account credit cannot
+be discounted" (by design). Can `purchaseaccountcredit` take a no-money
+tender? Dummy client 100042041:
+
+- `{Type: "Comp", Metadata: {Amount}}` (either casing), `Test: true`:
+  refused "Invalid payment method."
+- `{Type: "Custom", Metadata: {Amount: 1, Id: 7}}` (payment type 7
+  "Comp/Guest"): `Test: true` ACCEPTED, then the REAL call was refused
+  `CartInvalidPayments / NonZeroDollarNotAllowed`: "Payment method does
+  not allow greater than 0 dollar payments". Nothing posted. **A Test
+  rehearsal does not prove a payment type**: it said yes to one the real
+  call refuses.
+- `{Type: "Custom", Metadata: {Amount: 1, Id: 9}}` (payment type 9
+  "Other"): Test 1, REAL sale 429047, one "account adjustment" line $1
+  paid "Other" $1, balance 0 -> 1. This is the shape a free credit can
+  take, as Maran's 2024 $0.20 ADD CREDIT paid "Other" did in the UI.
+`/sale/custompaymentmethods` lists none on site 471; `/site/paymenttypes`
+holds 9 "Other" and 7 "Comp/Guest" among others.
+
+## T259. Give account credit at no charge (Pete, 2026-11-19)
+
+Pete tried to give Maran Whiting the $10 she was owed (T258) from the app
+and met "Account credit cannot be discounted", which is T256 refusing a
+discount on credit by design. He asked for a way to give credit at no
+charge, and approved this design: "Give credit (no charge)" on Add credit;
+the teacher's PIN plus a required reason; sold as credit paid "Other", so
+no money is taken; the reason filed on the student; the balance checked
+after; and its own PIN purpose.
+
+### Live facts it rests on (prod, dummy client 100042041, 2026-11-19; the T258 follow-up)
+
+- `purchaseaccountcredit` with `{Type: "Comp", Metadata: {Amount}}` is
+  refused "Invalid payment method."
+- `{Type: "Custom", Metadata: {Amount, Id: 7}}` (7 "Comp/Guest") passed
+  `Test: true` and the REAL call was refused `NonZeroDollarNotAllowed`. A
+  Test rehearsal does not prove a payment type.
+- `{Type: "Custom", Metadata: {Amount: 1, Id: 9}}` (9 "Other") worked for
+  real: sale 429047, one "account adjustment" line of $1 paid "Other" $1,
+  balance 0 -> 1.
+- `/site/paymenttypes` lists 9 "Other"; `/sale/custompaymentmethods` is
+  empty.
+
+### Built
+
+- [x] **A seventh PIN purpose, `credit`** (`CompPurpose` and
+      `isCompPurpose` in `src/lib/auth.ts`; `/api/teacher/verify` names
+      it). Not a reuse: a `comp`, `waiver` or any other token is refused
+      for it, and a `credit` token for anything else.
+- [x] **The rules** (`src/lib/nochargecredit.ts`, browser and server
+      alike): `NO_CHARGE_PURPOSE`, the $0.01 to $200.00 bounds (the cap
+      is a slip-of-the-keypad guard, and `noChargeCapSentence` says so in
+      the keypad and in the refusal), the reason's 3 to 200,
+      `parseNoChargeCredit`, `noChargeShapeRefusal` (no other line, no
+      gift card, no method, split, cash, typed or gift card, display card,
+      discount, promotion code, override or overdraft) and
+      `noChargeRecordLine`: "Credit $10.00 given at no charge by <teacher>
+      at the counter: <reason>".
+- [x] **The sale** (`giveNoChargeCredit` in `src/lib/nochargecreditsale.ts`,
+      reached from the top of `/api/checkout`'s `runCheckout` when
+      `accountCredit.noCharge` is present, so T113's key and T253's hold
+      in POST apply unchanged): shape, field, a real client never the
+      house client, then the token (purpose `credit`, this session's
+      teacher, spent once) BEFORE any Mindbody call. "Other" is resolved by
+      NAME from `/site/paymenttypes` (`otherPaymentTypeId`, cached an hour
+      per target, 9 only when the read fails, logged either way; a list
+      that answers without an active "Other" refuses). Then the balance
+      read, a `Test: true` rehearsal with AmountPaid asserted, ONE real
+      `purchaseaccountcredit` under the teacher's token with no
+      studio-account fallback (a giveaway, like a comp), then AmountPaid,
+      `saleById` holding exactly one line of the amount
+      (`creditSaleProblem`) and a fresh balance that rose by the amount;
+      any miss is 502 `ambiguous`, which T253 holds. `purchaseCredit` in
+      `src/lib/sale.ts` takes the new `NoChargeCreditTender` (`type:
+      "Other"`) and sends it as `Custom` with the id.
+- [x] **Dry run and the write guard** apply to every write; a suppressed
+      rehearsal or write hands the PIN back (`unspendCompToken`), as does a
+      READ that failed before anything was sent. Every refusal before the
+      token is spent says `pinKept: true`.
+- [x] **No customer approval and nothing on the customer screen** (said in
+      comments in the route and the sale): nothing is charged to the
+      customer. The live mirror shows nothing while it is armed and no
+      summary is presented.
+- [x] **The record**: after the credit stands, the line above through
+      `fileFormulaNote` (Formula Note, else T62's signed Notes entry,
+      through `updateClientAudited`). A failed filing never turns the
+      credit into an error: the answer carries `noted: false` and why.
+- [x] **The Cart screen** (`src/app/SaleScreen.tsx`): the Add credit
+      keypad gains a 64px "Give at no charge" row, offered only once the
+      lookup has said the client is not the house client, greyed with the
+      reason with nothing typed, over $200.00 or beside another line. It
+      opens T211's pad (`WaiverOverrideDialog`, now with a `copy` prop for
+      another purpose's words: "Give credit (no charge)", "Why is this
+      credit free?"), portalled over the nav bar. A match puts the one
+      line "Account credit (no charge) $10.00" on the ticket (`noCharge`
+      on `CreditItem`, `armedNoCharge`, `creditCharged`), total $0.00. The
+      pay screen greys every tender ("The credit is given at no charge"),
+      the discount and the receipt toggle, and Finalize reads "Give $10.00
+      credit" and goes straight to the charge. A client change, another
+      line or a changed amount takes the line off with a sentence; a 401
+      on the token (spent, expired) takes it off too and says to give it
+      again.
+- [x] **The done screen**: "Credit given", "No charge, nothing taken",
+      "$10.00 credit given. Balance now $X" read from Mindbody, and
+      whether the reason was filed on their profile (amber when not).
+- [x] **The fake**: `/site/paymenttypes` lists 1 Cash, 2 Check, 7
+      Comp/Guest and 9 Other (`/__fake/fail-paymenttypes?n=1` fails the
+      read); `purchaseaccountcredit` refuses Comp "Invalid payment
+      method.", takes Custom 7 on Test and refuses it for real with the
+      live sentence, and posts credit for Custom 9; `clientpurchases`
+      reports those payments as "Other" / "Comp/Guest".
+- [x] `tsc --noEmit` and `next build` clean.
+
+### Verified against the fake (Chromium 1180x820 at deviceScaleFactor 2, app :3259, fake :4259, a local Postgres for the teacher PIN)
+
+- Jordan Kim, $10.00, reason "Owed from the 11/14 sale", Maya's PIN: the
+  ticket read "Account credit (no charge) $10.00", Total $0.00, Finalize
+  "Give $10.00 credit"; one `purchaseaccountcredit` paid Custom 9; the
+  fake's balance rose by exactly $10.00; the done screen read "$10.00
+  credit given. Balance now $X" with X the fake's balance, and "The reason
+  is filed on their profile"; the client's Notes gained "Credit $10.00
+  given at no charge by Maya Chen at the counter: Owed from the 11/14 sale
+  [by Maya Chen, ...]".
+- A wrong PIN (9999): "That is not your PIN.", the pad stays, nothing on
+  the ticket. An empty reason: Done stays off. Through the route, an empty
+  reason is 400 with nothing given and the PIN kept.
+- Beside another line: the route answers 409 "stands alone"; on the
+  screen, adding Coconut Water to an armed ticket took the credit line off
+  with that sentence, and the keypad greys the option while another line
+  is there. With a tender (`method: "cash"`): 409.
+- $250: greyed on the keypad with the cap sentence, and 400 through the
+  route in the same words.
+- A `comp`-purpose token and a `waiver`-purpose token: 401 "Enter your PIN
+  to give credit at no charge", nothing given. A forged token: 401. A
+  spent token: 401, the balance rose once.
+- Dry run on this browser: `{ok: false, suppressed: "dry-run", pinKept:
+  true}`, nothing given; the SAME token then gave $5.00 for real, so it
+  was handed back.
+- The house client (Counter Walk-in, 10199) attached: the Add credit cell
+  reads "The walk-in account holds no credit", no keypad and no "Give at
+  no charge"; through the route, 409 in words.
+
+### Not verified
+
+- Nothing live: no real Mindbody call was made for this build. The real
+  shape rests on sale 429047 (Custom 9, $1, prod).
+- The `/site/paymenttypes` read failing (the fallback to 9) was not driven:
+  the first read in the process cached the list. The fake can fail it
+  with `/__fake/fail-paymenttypes`.
+
+### The PIN-and-reason pad fits the iPad (coordinator's review, 2026-11-19)
+
+At 1180x820 the pad (T211's, which T259 shares) was taller than the
+screen: the last key row ("0" and delete) sat under its own Cancel/Done
+row, so a PIN with a 0 could not be typed without scrolling. Fixed for
+both purposes in `src/app/WaiverOverrideDialog.tsx` and `globals.css`
+(`.wo-body`, `.wo-left`, `.wo-right`): in landscape (900px wide and up)
+the reason and its notes are the left column and the dots and keys the
+right, 820px wide; in portrait it stays one column. Keys stay 64px;
+nothing was shrunk. The box keeps `.modal`'s T98 max-height, so with the
+keyboard up it scrolls inside the visible band.
+
+Driven for both purposes (no-charge credit on the Cart screen, the waiver
+override on the roster) at 1180x820 and 820x1180: the box inside the
+screen with no scrolling inside it, every key 64px or taller (64), the
+last key row ending above Cancel/Done (617 vs 627 in landscape, 911 vs 921
+in portrait), Cancel/Done 69px, "0" and delete tapped with nothing over
+them, and PIN plus reason arming the credit line / going past the waiver
+gate. Keyboard up, simulated the way `useVisualViewport` publishes it
+(`--vvh` half the height, `--vv-bot` the rest): the pad sits inside the
+band (24..386 of 410 in landscape, 24..566 of 590 in portrait) and the
+focused reason field is visible inside it. Not seen on a real iPad.
