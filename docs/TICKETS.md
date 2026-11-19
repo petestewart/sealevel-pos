@@ -24224,6 +24224,26 @@ after; and its own PIN purpose.
 - The `/site/paymenttypes` read failing (the fallback to 9) was not driven:
   the first read in the process cached the list. The fake can fail it
   with `/__fake/fail-paymenttypes`.
-- On an 820px-tall screen the PIN pad (T211's) is taller than the screen
-  and its last key row sits under its own Cancel/Done row until scrolled;
-  the same pad on the roster has the same shape.
+
+### The PIN-and-reason pad fits the iPad (coordinator's review, 2026-11-19)
+
+At 1180x820 the pad (T211's, which T259 shares) was taller than the
+screen: the last key row ("0" and delete) sat under its own Cancel/Done
+row, so a PIN with a 0 could not be typed without scrolling. Fixed for
+both purposes in `src/app/WaiverOverrideDialog.tsx` and `globals.css`
+(`.wo-body`, `.wo-left`, `.wo-right`): in landscape (900px wide and up)
+the reason and its notes are the left column and the dots and keys the
+right, 820px wide; in portrait it stays one column. Keys stay 64px;
+nothing was shrunk. The box keeps `.modal`'s T98 max-height, so with the
+keyboard up it scrolls inside the visible band.
+
+Driven for both purposes (no-charge credit on the Cart screen, the waiver
+override on the roster) at 1180x820 and 820x1180: the box inside the
+screen with no scrolling inside it, every key 64px or taller (64), the
+last key row ending above Cancel/Done (617 vs 627 in landscape, 911 vs 921
+in portrait), Cancel/Done 69px, "0" and delete tapped with nothing over
+them, and PIN plus reason arming the credit line / going past the waiver
+gate. Keyboard up, simulated the way `useVisualViewport` publishes it
+(`--vvh` half the height, `--vv-bot` the rest): the pad sits inside the
+band (24..386 of 410 in landscape, 24..566 of 590 in portrait) and the
+focused reason field is visible inside it. Not seen on a real iPad.

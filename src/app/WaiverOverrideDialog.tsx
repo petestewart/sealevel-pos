@@ -214,6 +214,12 @@ export default function WaiverOverrideDialog(props: {
       >
         <p className="modal-kicker">{copy?.kicker ?? "Teacher override"}</p>
         <p className="modal-title">{title}</p>
+        {/* T259: two columns in landscape (the reason on the left, the
+            dots and keys on the right), one in portrait, so the whole pad
+            fits an iPad either way with every key 64px and nothing under
+            the Cancel/Done row. */}
+        <div className="wo-body">
+        <div className="wo-left">
         <p className="reason-sub">
           {copy?.sub ??
             "The student has not signed the waiver. Your PIN and a reason are recorded on their profile."}
@@ -235,6 +241,8 @@ export default function WaiverOverrideDialog(props: {
             setReason(e.target.value);
           }}
         />
+        </div>
+        <div className="wo-right">
         <div
           key={`dots-${shake}`}
           className={
@@ -287,6 +295,8 @@ export default function WaiverOverrideDialog(props: {
             0
           </button>
           <span aria-hidden="true" />
+        </div>
+        </div>
         </div>
         <div className="modal-actions">
           <button className="modal-cancel" disabled={busy} onClick={onCancel}>

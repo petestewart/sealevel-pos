@@ -9230,6 +9230,38 @@ button.display-mark-row {
   width: min(460px, 100%);
 }
 
+/* T259 (and T211's own pad): the body is the reason (left) and the PIN
+ * (right). One column in portrait, where an iPad's 1180px holds the
+ * whole stack; two in landscape, where 820px did not (the last key row
+ * sat under Cancel/Done and a 0 could not be typed without scrolling).
+ * Keys stay the pad's 64px; nothing is shrunk to fit. The box keeps
+ * .modal's T98 max-height, so with the keyboard up it scrolls inside the
+ * visible band with the reason field at the top of it. */
+.wo-body,
+.wo-left,
+.wo-right {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  align-content: start;
+}
+
+@media (min-width: 900px) and (orientation: landscape) {
+  .modal-waiver-override {
+    width: min(820px, 100%);
+  }
+
+  .wo-body {
+    grid-template-columns: minmax(0, 1fr) 320px;
+    gap: 24px;
+    align-items: start;
+  }
+
+  .modal-waiver-override textarea.reason-note-field {
+    min-height: 120px;
+  }
+}
+
 .wo-label {
   margin: 6px 0 -4px;
   font-size: 16px;
