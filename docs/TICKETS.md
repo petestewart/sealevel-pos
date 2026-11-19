@@ -24073,3 +24073,24 @@ not there next time. Read-only investigation on prod, 2026-11-19:
 - Maran's fix was made by Pete in Mindbody's UI. The app refuses a
   discounted credit line (`creditShapeRefusal`), so a free credit cannot
   be given from the counter today.
+
+### T258 follow-up: free credit through the API (main session, Pete's OK, prod, 2026-11-19 ~01:10Z)
+
+Pete tried to give Maran $10 from the app and met "Account credit cannot
+be discounted" (by design). Can `purchaseaccountcredit` take a no-money
+tender? Dummy client 100042041:
+
+- `{Type: "Comp", Metadata: {Amount}}` (either casing), `Test: true`:
+  refused "Invalid payment method."
+- `{Type: "Custom", Metadata: {Amount: 1, Id: 7}}` (payment type 7
+  "Comp/Guest"): `Test: true` ACCEPTED, then the REAL call was refused
+  `CartInvalidPayments / NonZeroDollarNotAllowed`: "Payment method does
+  not allow greater than 0 dollar payments". Nothing posted. **A Test
+  rehearsal does not prove a payment type**: it said yes to one the real
+  call refuses.
+- `{Type: "Custom", Metadata: {Amount: 1, Id: 9}}` (payment type 9
+  "Other"): Test 1, REAL sale 429047, one "account adjustment" line $1
+  paid "Other" $1, balance 0 -> 1. This is the shape a free credit can
+  take, as Maran's 2024 $0.20 ADD CREDIT paid "Other" did in the UI.
+`/sale/custompaymentmethods` lists none on site 471; `/site/paymenttypes`
+holds 9 "Other" and 7 "Comp/Guest" among others.
