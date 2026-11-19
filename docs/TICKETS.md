@@ -24037,3 +24037,39 @@ signs in to Mindbody in Safari themselves ("that is up to the teacher").
   cannot reach it). Pete's check: open a student with a sale, tap Void in
   Mindbody, confirm Safari lands on that sale's void page, void a dummy
   client's sale there, come back and see it gone.
+
+## T258. Incident: a student's $10 account credit never landed (Pete, 2026-11-18)
+
+Maran Whiting (100034522) emailed: she paid for account credit and it was
+not there next time. Read-only investigation on prod, 2026-11-19:
+
+- **Sale 428556** (2026-11-14 11:35 PT): ONE sale holding LMNT Electrolytes
+  $2 and "account adjustment" (item 422) $10, paid $12 on her Visa. Her
+  ledger (every credit line and every Account payment since 2022) says
+  $10.00 after the 11/15 $0.41 "Payment on Account"; Mindbody holds
+  $0.00. The $10 never posted.
+- **The expiry date is not the cause.** Every ADD CREDIT to ACCOUNT (325)
+  she has bought since 2022 shows ExpDate the day BEFORE ActiveDate
+  (e.g. active 2022-05-16, exp 2022-05-15), and all of them posted.
+- **Not the app.** The app's retired under-$10 card path (T24 to T238)
+  always produced TWO sales seconds apart: a $10 "account adjustment" paid
+  by the stored card (`purchaseaccountcredit`), then the item paid
+  `Account`. Six such pairs exist since 2026-09-15 (426421/426422,
+  427826/427827, 427975/427976, 428486/428487, 428610/428611,
+  428464/428465), and for the four not refunded the balance Mindbody holds
+  equals the ledger to the cent. 428556 is one sale with both lines and
+  the card paying both, which is a ticket rung in Mindbody's own UI with
+  item 422 picked instead of 325. Sold that way, "account adjustment"
+  does not post to the balance. (It appeared in clients' histories from
+  September because of the app's path, which may be how it came to be
+  picked.)
+- **Two refunds left students owing.** Angie Parker (100030751): $10 credit
+  refunded in full (428757) after $4 of it paid a Boxed Water (428611):
+  balance -$4.00. Jeff Hess (100034116): $10 refunded (428467) after $7.99
+  paid rentals (428465): balance -$7.99.
+- **For T256**: its credit purchases are the same `purchaseaccountcredit`
+  call, and a mixed ticket produces the same two-sale shape as the six
+  pairs above, all of which posted. Evidence for PLAN B9, not a substitute.
+- Maran's fix was made by Pete in Mindbody's UI. The app refuses a
+  discounted credit line (`creditShapeRefusal`), so a free credit cannot
+  be given from the counter today.
