@@ -76,12 +76,14 @@ counter rushes, so they do not change the picture.
 
 ## The card-present problem (the honest answer)
 
-**Decision (Pete, 2026-11-15): option C. The studio gets its own Stripe
-reader, driven from this app.** Teachers report lost sales to students who
+**Decision (Pete, 2026-11-15): option C. The studio gets its own
+reader, driven from this app. Vendor (Pete, 2026-11-21): a Square
+Terminal.** Teachers report lost sales to students who
 can only tap, dip or pay with Apple Pay or Google Pay. The two cheaper
 answers were each rejected by name: ringing the sale up in the Mindbody app
 on the existing reader ("this is what we need to avoid"), even as a
-stopgap, and any flow on the student's own phone ("we need it to be as
+stopgap (with one exception since 2026-11-21: when THIS APP is down, that
+is exactly what the teacher does; see option C), and any flow on the student's own phone ("we need it to be as
 frictionless as possible"). What follows is the reasoning that established
 why the EXISTING reader cannot be used, which still holds; option C below
 is how the counter gets a reader it can use.
@@ -262,15 +264,16 @@ $25-$200 yoga sale with a known member, that is a fair trade. It also requires
 Payments API access on the account, which is the single thing to confirm before
 committing to this path.
 
-### C. Our own Stripe Terminal reader (chosen, 2026-11-15)
+### C. Our own card reader, a Square Terminal (chosen 2026-11-15; Square 2026-11-21)
 
-Buy a second Stripe smart reader (S700 or WisePOS E) on a Stripe account the
-studio owns, drive it from our server with Stripe Terminal's server-driven
-integration (`/v1/terminal/readers/:id/process_payment_intent`), then post the
-Mindbody sale with a `Custom` payment so the pass and check-in still land in
-Mindbody while the money lands in Stripe. Stripe recommends exactly this
-integration for a web point of sale, and a smart reader takes chip, tap, Apple
-Pay and Google Pay. No native code, and no SDK in the browser.
+Buy a networked smart reader on a payment account the studio owns, drive it
+from our server, then post the Mindbody sale with a `Custom` payment so the
+pass and check-in still land in Mindbody while the money lands with the
+reader's processor. A smart reader takes chip, tap, Apple Pay and Google
+Pay. No native code, and no SDK in the browser. The 2026-11-15 plan named a
+Stripe reader (S700 or WisePOS E) through Stripe Terminal's server-driven
+integration; on 2026-11-21 Pete chose **Square's Terminal API and a Square
+Terminal** instead.
 
 **Why it is now worth it.** This section used to end "do not build it", on the
 25 swiped sales a year above. The teachers say sales are being lost, and that
@@ -278,26 +281,80 @@ count could not see them (see "What the data says"). Pete chose it over A and
 over a phone flow because it is the only answer that is one tap for the
 student.
 
-**What it costs, which has not changed:** two deposit streams (Stripe for
-reader sales, Mindbody Payments for everything else), a daily Stripe-to-Mindbody
-reconciliation, a second reader on the counter, a Mindbody custom payment type
-the bookkeeping has to learn to read, and refunds that happen in Stripe, since
-a return in Mindbody cannot refund a card it never charged.
+**Why Square, and why the Terminal rather than the Square Stand** (researched
+2026-11-21 from search snippets and Square's "Build on Mobile Web" page,
+which Pete supplied; Square's own sites were not reachable to confirm):
+
+- **The Square Stand cannot be driven from a web app.** Its reader is
+  reached only by Square's native Mobile Payments SDK (with an MFi approval
+  and App Store review) or by Square's Point of Sale API, which from mobile
+  web OPENS Square's own POS app through a `square-commerce-v1://` link and
+  returns to a callback URL. That hand-off works, but it switches apps on
+  every sale, iOS may land the callback in Safari rather than the Home
+  Screen app, the doc itself warns sellers can leave mid-sale, and it takes
+  the money at the tap, with no hold before Mindbody has sold. The Terminal
+  API is server-driven, holds first, and never leaves this app.
+- **Square Terminal over Stripe's S700**: it can be bought today at Best Buy
+  or Staples, where the S700 is ordered from Stripe's dashboard and
+  shipped; it prints receipts; it runs on battery, so it can be handed to a
+  student, and stays plugged in on the counter otherwise. Stripe's
+  developer tools are better and its simulated reader would have made the
+  build smoother, which is the price of the choice. Fees are a wash: 2.6% +
+  15c against 2.7% + 5c, even at a $100 sale. Stripe's WisePOS E is also
+  leaving sale in February 2027, which would have pushed the plan to the
+  S700 anyway.
+- **No product holds an iPad and either reader in one fixture**, so the
+  counter is two pieces either way: an iPad stand (or a two-iPad stand for
+  the customer display) and the Terminal on its mount beside it.
+
+**What it costs, which has not changed:** two deposit streams (Square for
+reader sales, Mindbody Payments for everything else), a daily
+Square-to-Mindbody reconciliation, a second reader on the counter, a
+Mindbody custom payment type the bookkeeping has to learn to read, and
+refunds that happen in Square, since a return in Mindbody cannot refund a
+card it never charged.
 
 **The money is ordered so that Mindbody's refusal moves nothing.** Price and
-`Test: true`-rehearse the cart as every other tender does; have the reader
-collect a PaymentIntent with `capture_method: manual`, so the student's tap
-places a hold and takes nothing; run the real `checkoutshoppingcart` with the
-custom payment; capture only if that sale stands (T75's total and T103's
-basket assertions included); cancel the hold if it does not; and if Mindbody
-does not answer at all, keep the hold, read the sale back, and let a human
-decide if the read cannot, since a hold is the one tender that can still go
-either way safely. The execution plan, with every failure window between
-those steps, is in `docs/PLAN.md` Phase 4.
+`Test: true`-rehearse the cart as every other tender does; have the Terminal
+collect a payment with `autocomplete: false`, so the student's tap places a
+hold and takes nothing; run the real `checkoutshoppingcart` with the custom
+payment; complete the payment only if that sale stands (T75's total and
+T103's basket assertions included); cancel it if it does not; and if
+Mindbody does not answer at all, keep the hold, read the sale back, and let
+a human decide if the read cannot, since a hold is the one tender that can
+still go either way safely. The execution plan, with every failure window
+between those steps, is in `docs/PLAN.md` Phase 4.
+
+**When Mindbody is down, the counter still sells** (Pete, 2026-11-21: "the
+app can still make a finalized sale like normal ... this is a scenario
+where we will queue. that's more reliable than hand-typed records"). The
+shelf is the catalog the server last read, held in memory; tax is the
+location's rate applied by us; the Terminal completes the payment at the
+tap; and the Mindbody sale goes into a durable queue that posts itself, in
+order and once each, when Mindbody answers again, checked against
+Mindbody's own total, with anything Mindbody refuses stopping for a
+teacher and nothing ever charged twice. Two long-standing rules bend for
+this and only this: prices from the live API, and "a sale must never
+queue". The rule they protected, that the screen must not tell a teacher
+something Mindbody will not agree with, is kept by the posting check.
+
+**When this app is down, the Mindbody app and the existing reader** (Pete,
+2026-11-21). That records the sale in Mindbody directly, so nothing needs
+reconciling, and it is why the Terminal is never switched to Square's own
+POS app as a fallback.
+
+**Every transaction is logged** (Pete, 2026-11-21: "for a queue, we will
+need a DB ... anyway. so we should just log every transaction to the DB").
+One row per money tap on every route, written before Mindbody is asked,
+holding what we asked and what Mindbody answered, and read back against
+Mindbody each day. It is our record of our own actions, the T116
+`client_writes` precedent, and is what makes "is Mindbody recording what we
+meant it to" a daily check rather than something a teacher notices (T254
+was exactly that). See PLAN T274.
 
 **U.S. Bank's own POS (Elavon) was looked at and set aside (Pete,
 2026-11-15: "not worth the effort").** Its in-person rate (2.60% + 12c) is
-within cents of Stripe's either way, but its readers are driven by its own
+within cents of Square's and Stripe's either way, but its readers are driven by its own
 app (a Bluetooth Moby5500 with the Elavon Mobile App) or by a native SDK
 from a solution engineer, not by a server-side web API a web app can call.
 Elavon's cloud "Fusebox" might be, but it has no public docs or self-serve
@@ -1018,8 +1075,10 @@ reachable. Both are unproven, and Phase 3 cannot be scoped honestly until they
 are.
 
 **Phase 4 — the studio's own card reader (option C), now planned
-(2026-11-15).** Stripe Terminal behind the existing payment interface, plus the
-daily Stripe-to-Mindbody reconciliation. Once ruled out by the data; brought
+(2026-11-15; Square since 2026-11-21).** A Square Terminal through Square's
+Terminal API behind the existing payment interface, the daily
+Square-to-Mindbody reconciliation, every transaction logged, and an outage
+mode that queues sales while Mindbody is down. Once ruled out by the data; brought
 forward because teachers report lost sales to students who can only tap, dip
 or use a phone wallet. It does not wait on Phase 3, and the Apple Pay half of
 Phase 3 is dropped for counter payments: the reader takes Apple Pay as a tap.

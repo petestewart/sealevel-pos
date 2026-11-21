@@ -60,12 +60,20 @@ only. **A service charge on card transactions under $10 is planned, not
 built** (Pete, 2026-11-15; PLAN P15): until it is, a card is charged
 exactly the sale.
 
-**Next (planned 2026-11-15, not started): Phase 4, the studio's own Stripe
-card reader**, so a student can pay by chip, tap, Apple Pay or Google Pay
-at the counter (teachers report lost sales without it). Work items T222 to
-T237 in `docs/PLAN.md`; T222 to T227 reach a working flow on Stripe's
-simulated reader before hardware arrives. Blocked on Pete for the Stripe
-account (P6) and the Mindbody custom payment method (P7).
+**Next (planned 2026-11-15, vendor changed 2026-11-21, not started):
+Phase 4, the studio's own card reader, a Square Terminal** driven through
+Square's Terminal API (Pete: "let's go with square"), so a student can pay
+by chip, tap, Apple Pay or Google Pay at the counter (teachers report lost
+sales without it). Work items in `docs/PLAN.md` Phase 4, in this order:
+T274 first, a `sale_log` row for every money tap on every route, checked
+against Mindbody daily (Pete: "just log every transaction to the DB");
+then T222 to T229, a working flow on Square's sandbox before hardware;
+then T275 to T278, **outage mode**: while Mindbody is down the counter
+sells as normal from the last catalog in memory on the Terminal or in
+cash, and each sale is queued and posts itself when Mindbody is back.
+When THIS app is down, the teacher uses the Mindbody app and the existing
+reader. Blocked on Pete for the Square account (P6) and the Mindbody
+custom payment method (P7).
 
 **T241 (2026-11-15): the student chooses how to pay on the customer
 iPad**, and can type their own card there (Pete: "a student shouldnt have
@@ -694,9 +702,11 @@ so a tap in those first seconds gets T100's added-then-removed behaviour.
   the 0.4% figure (25 swiped sales a year) counted sales that happened, and
   teachers report students walking away who could only tap, dip or use a
   phone wallet. The answer is the design doc's option C, the studio's own
-  Stripe smart reader driven server-side from this app (Phase 4 in
-  `docs/PLAN.md`), not a hand-off to the Mindbody app and not a flow on the
-  student's phone, both of which Pete rejected.
+  Square Terminal driven server-side from this app (Phase 4 in
+  `docs/PLAN.md`; Square over Stripe since 2026-11-21), not a hand-off to
+  the Mindbody app and not a flow on the student's phone, both of which
+  Pete rejected. The one hand-off he allows is the disaster case: this app
+  down, the Mindbody app and the existing reader.
 - **Its own repo, its own Railway service.** Separate from ai-manager, which
   is a back-office worker with a different uptime story and different users.
   The two share an API, not a codebase: `src/lib/mindbody.ts` is adapted from
@@ -2011,6 +2021,10 @@ while `git clone` works, so clone the repo rather than fetching files.
   (428932); T253's hold refuses that from the app, and the sale's line
   count is checked after every purchase.
 - **Offline behaviour is unhandled.** Phase 1 arrivals could queue and replay;
-  a Phase 2 sale must never queue.
+  a Phase 2 sale must never queue, EXCEPT in Phase 4's planned outage mode
+  (Pete, 2026-11-21: "this is a scenario where we will queue"), where a
+  sale paid on the Square Terminal or in cash while Mindbody is down is
+  queued in the database and posted once Mindbody answers (PLAN T275 to
+  T278). Not built.
 - `GET /sale/alternativepaymentmethods` returns HTTP 400, cause not chased. It
   only matters for a payment option the design ruled out.

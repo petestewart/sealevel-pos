@@ -21,16 +21,16 @@ path for the phase that carries them.
 | P3 | How long does the $21 two-week upgrade last: that visit, that day, or longer? | Phase 2 offers | Decides whether the offer belongs to a roster row or to the client |
 | P4 | ~~Is the $10 minimum measured before or after tax?~~ **Moot (T238, 2026-11-15): there is no card minimum any more.** | Phase 2 payments | A $2.72 item is $3.00 charged, on the card, as $3.00 |
 | P5 | Where does the studio banner text live once an env var is not enough? | Phase 3 | Env var is fine until someone other than Pete edits it |
-| P6 | Who owns the Stripe account: legal entity, bank account, who holds the login? | T237 | Phase 4 |
-| P7 | The custom payment method's name in Mindbody, created on 471, and one on the sandbox | T222 | e.g. "Card (Stripe reader)" |
+| P6 | The Square account: legal entity, bank account for payouts, who holds the login; and a Square developer application for the sandbox and production access tokens | T223, T237 | Phase 4, on Square since 2026-11-21 |
+| P7 | The custom payment method's name in Mindbody, created on 471, and one on the sandbox | T222 | e.g. "Card (Square reader)" |
 | P8 | Does the card tapped on the reader count as the customer's approval (T203)? | T230 | Recommended yes: approve-then-tap is the friction the brief rules out |
 | P9 | Tipping on the reader? | T225 | Recommended none; a tip changes the held amount |
 | P10 | ~~Does the $10 card minimum apply to the reader?~~ **Answered (Pete, 2026-11-15, T238): any amount, on the reader too.** The floor is retired everywhere | T226 | A $3 water by tap is the kind of sale being lost |
-| P11 | Receipts: Mindbody's email only, or Stripe's as well? | T226 | |
+| P11 | Receipts: Mindbody's email only, or Square's printed or emailed receipt as well? The Terminal has a printer | T226 | |
 | P12 | The statement descriptor | T237 | Ideally matching what Mindbody Payments shows |
 | P13 | Who reconciles, who refunds, and where do they hear about a mismatch off the counter? | T231, T235 | |
-| P14 | S700 or a second WisePOS E? | T237 | Recommended S700, so the two readers cannot be confused |
-| P15 | The service charge on card transactions under $10 (Pete, 2026-11-15, T239: "we are eventually going to implement adding a service charge for CC transactions under $10"). **Planned, not built; until it is, a card is charged exactly the sale.** Undecided: the amount; whether it is a Mindbody product line on the cart or a fee outside it; whether it applies to the reader, a typed card and the card on file alike; and how it is shown to the student before the tap | Nothing yet | Not the retired $10 floor: nothing is bought as credit. Stripe's own $0.50 minimum still meets the reader (T226) |
+| P14 | ~~S700 or a second WisePOS E?~~ **Moot (2026-11-21): Square Terminal.** | T237 | |
+| P15 | The service charge on card transactions under $10 (Pete, 2026-11-15, T239: "we are eventually going to implement adding a service charge for CC transactions under $10"). **Planned, not built; until it is, a card is charged exactly the sale.** Undecided: the amount; whether it is a Mindbody product line on the cart or a fee outside it; whether it applies to the reader, a typed card and the card on file alike; and how it is shown to the student before the tap | Nothing yet | Not the retired $10 floor: nothing is bought as credit. Square's own card minimum (believed $1.00, U) still meets the reader (T226) |
 | P16 | Where do incident alerts and diagnoses reach you? Recommended: one private Slack channel, GitHub issues as the record | T263, T264 | Phase 5 |
 | P17 | Which Claude account runs the investigator's sessions, and the monthly ceiling | T264 | Estimated $30 to $80 in a normal month |
 | P18 | Who may tap a one-tap repair: you alone, or anyone in `POS_ADMIN_STAFF_IDS`? | T269 | |
@@ -39,6 +39,8 @@ path for the phase that carries them.
 | P21 | May the app take back its own false note and hold with no tap, on two keys, once T265's rehearsal has passed in front of you? | T265's last box | Ships as `propose` until you say so |
 | P22 | Should the agent be able to search Railway's logs? Needs a log drain, never the Railway token (it reads every secret) | Nothing yet | Recommended: not until an incident proves the trail was not enough |
 | P23 | Should a retraction leave anything on the student's Notes? | T265 | Recommended: nothing; the incident and the audit row are the record |
+| P24 | In an outage, keep the shelf only in memory (a server restarted during an outage has no shelf), or allow a last-known catalog in the database for outage use only, which is a copy of Mindbody's prices the charter forbids today? | T275 | Recommended memory only first; revisit if a restart mid-outage ever happens |
+| P25 | A queued outage sale whose teacher has signed out: post it as the service account, naming the teacher on the client? | T277 | Recommended yes; the alternative is a queue that waits for that teacher to sign in again |
 
 ## Probes to run
 
@@ -57,10 +59,10 @@ Cheap, and each one removes a guess. All are read-only or `Test: true`.
 | B8 | Dummy client 100042041, the write guard narrowed to it, `POS_DRY_RUN=false`, prod: ONE real `checkoutshoppingcart` (not `Test: true`) with two card payments, a good card (the stored card or a typed one, $1.00) beside a typed card number built to decline, for a small item. Then read `/sale/sales` for the client and look at the good card's own activity (the processor's dashboard or statement) for an authorization or a charge, and again a day later | Whether Mindbody voids card A's authorization when card B in the same checkout declines (T255 review). Until it is answered, `/api/checkout` answers a 4xx on a split with two or more card legs as AMBIGUOUS, holds the client (T253) and offers no retry | Not run |
 | R1 | `GET /sale/custompaymentmethods` on 471 and on -99 | What exists, and the response key: the spec says `PaymentMethods` (sale.yml:2798) while `scripts/probe-giftcard-free.ts` reads `CustomPaymentMethods`, so that script may have printed "none configured" wrongly. Read both | Not run (T222) |
 | R2 | `checkoutshoppingcart`, `Test: true`, a Custom payment with the new id | Whether Mindbody accepts it, and in which key casing | Not run (T222) |
-| R3 | R2 with a `Notes` key carrying a PaymentIntent id | Whether `SalePayment.Notes` (sale.yml:4557) can carry the link, which would make the match exact inside Mindbody | Not run (T222) |
+| R3 | R2 with a `Notes` key carrying a Square payment id | Whether `SalePayment.Notes` (sale.yml:4557) can carry the link, which would make the match exact inside Mindbody | Not run (T222) |
 | R4 | One real Custom sale for dummy client 100042041, then `/sale/sales` with `request.paymentMethodId` | How the sale reads back, whether the filter takes a custom id, how it shows in Pete's reports, and how a return of it reads | Not run (T231) |
 | R5 | Three `Test: true` calls: (a) `purchasegiftcard` paid Custom; (b) `purchaseaccountcredit` paid Custom; (c) `purchasegiftcard` paid `DebitAccount` | Which gift card route the reader can use: directly (a), or Pete's credit-then-spend workaround (b then c). c asks against the client's existing balance, so "insufficient" there is about the balance, not the payment type | Not run (T222; `scripts/probe-custom-payment.ts`) |
-| R6 | Stripe's simulated reader, test mode | Every (U) in Phase 4: `process_config` names, reader action statuses and failure codes, offline and busy errors, whether the reader times out by itself, how long a `card_present` hold lasts (believed about two days), metadata on capture, `amount_to_capture`, the simulated registration codes and test helper, test-mode decline behaviour | Not run (before T225 is done) |
+| R6 | Square's sandbox, Terminal API | Every (U) in Phase 4: device codes and pairing, sandbox test device ids, checkout and payment statuses and failure codes, offline and busy answers, the checkout's own timeout, `autocomplete: false` and how long an approved payment may wait (believed 36 hours) and what `delay_action` does, completing for less than was approved, `reference_id` and `note` on the payment, the card minimum, whether the Devices API reports a Terminal online | Not run (before T225 is done) |
 | A1 | Fire the investigator's scheduled task from the Railway service with a throwaway incident id | The fire endpoint and token shape, reachability from Railway, seconds from fire to the session's first tool call, any daily cap on fired runs | Not run (before T263 is done) |
 | A2 | From the investigator's cloud environment: call this app with no token in hand, and call `api.mindbodyonline.com` | That the environment's proxy attaches the agent token so the session never sees it, and that Mindbody is unreachable from there | Not run (T262, T264) |
 | A3 | An unattended fired session posts to the alert channel, opens an issue and pushes a branch | That the connectors and the repo grant work with nobody watching | Not run (T264) |
@@ -348,130 +350,230 @@ prices, visits: never, including for speed.
 
 ---
 
-## Phase 4 — the studio's own card reader (option C)
+## Phase 4 — the studio's own card reader (option C, on Square)
 
 Decided by Pete, 2026-11-15: teachers report lost sales to students who can
-only tap, dip or pay with Apple Pay or Google Pay. The studio gets a Stripe
-smart reader on a Stripe account it owns, driven server-side from this app,
-and the Mindbody sale is recorded under a Mindbody custom payment method.
-Rejected by name: a hand-off to the Mindbody app (even as a stopgap) and any
-flow on the student's own phone. Reasoning: design doc, "The card-present
+only tap, dip or pay with Apple Pay or Google Pay. **Vendor decided
+2026-11-21: Square, not Stripe** ("let's go with square"). The studio gets a
+**Square Terminal** on a Square account it owns, driven server-side from
+this app through Square's Terminal API, and the Mindbody sale is recorded
+under a Mindbody custom payment method. Reasoning, and why Square over
+Stripe and the Terminal over the Square Stand: design doc, "The card-present
 problem" and option C. Do not re-argue it here.
 
-**Stripe is unverified from here.** `docs.stripe.com` and `api.stripe.com`
-were unreachable from the planning session, so every Stripe endpoint,
-parameter and behaviour below is from memory and marked (U). Probe R6
-settles them before T225 is called done, and both hosts must be allowed in
-the cloud environment before live Stripe work. T224's fake lets the build
-start without them.
+Rejected by name: any flow on the student's own phone, and a hand-off to
+the Mindbody app as the ordinary path. **The one sanctioned hand-off** (Pete,
+2026-11-21): when THIS APP is down, the teacher uses the Mindbody app and the
+studio's existing reader, which records the sale in Mindbody directly and
+needs nothing reconciled afterwards. The Square Terminal is only ever
+driven from this app; it is never switched to Square's own POS app.
+
+**Square is unverified from here.** `squareup.com` and
+`developer.squareup.com` could not be fetched from the planning session;
+what is below comes from search snippets and memory and is marked (U).
+Probe R6 settles it before T225 is called done, and `connect.squareup.com`
+and `connect.squareupsandbox.com` must be allowed in the cloud environment
+before live Square work. T224's fake lets the build start without them.
 
 **When the reader works, remove the student-typed card (T241).** Pete,
 2026-11-17, on students typing their own card on the customer iPad: "i
 think we can keep that for now and remove it once we actually have
-stripe." It sits behind the `display_typed_card` setting (default on,
-`POS_DISPLAY_TYPED_CARD` without a database) so he can turn it off
-sooner. Once the reader is live, delete the feature with its setting:
-`src/app/display/CardForm.tsx`, `/api/display/card`,
+stripe" (the reader, now Square's). It sits behind the `display_typed_card`
+setting (default on, `POS_DISPLAY_TYPED_CARD` without a database) so he can
+turn it off sooner. Once the reader is live, delete the feature with its
+setting: `src/app/display/CardForm.tsx`, `/api/display/card`,
 `src/lib/displaycard.ts`, the `typedcard` choice and checkout's
-`displayCard` path. "A different card" then becomes the reader's "tap
-your card".
+`displayCard` path. "A different card" then becomes the reader's "tap your
+card".
+
+### The order of work
+
+1. **T274, the transaction log, first.** Every money tap on every route
+   gets a durable row (below). The reader's attempt, the outage queue and
+   the daily check all hang off it, and it is worth having before any of
+   them: it is how we see what Mindbody actually recorded.
+2. T222 to T229, the reader on the ordinary path, to a working flow on
+   Square's sandbox before hardware.
+3. T233, T234, the first version's splits and T90 tickets.
+4. T275 to T278, outage mode and its queue.
+5. T237, hardware day, then T231, T232, T235.
+
+### The transaction log (T274)
+
+Pete, 2026-11-21: "for a queue, we will need a DB to store records of what
+needs to be processed in MB anyway. so we should just log every transaction
+to the DB. that gives us observability and insight to verify MB is
+recording what we want it to, and identify and fix bugs more easily."
+
+- **One `sale_log` row per money tap**, keyed by T113's idempotency key
+  (a server-minted id when a tap has none), on every route that moves money
+  or sells: `/api/checkout` in all its shapes (cart, split, T90 tickets,
+  gift card, account credit, no-charge credit), `/api/purchase-contract`,
+  `/api/guest`'s $0 comp, the reader's attempts and the outage queue.
+- **Written AHEAD of the Mindbody call and updated as the tap moves**, the
+  `charge_holds` way (`upsert` by id, one write after another per row):
+  `started`, then the outcome. A row stuck at `started` is itself evidence.
+- **Holds**: what we ASKED (client ids and UniqueIds, each line's type, id,
+  quantity, unit price and T90 recipient, discount and its reason, promotion
+  code, each tender as method and amount, the cart sha), what Mindbody
+  ANSWERED (sale ids, SubTotal, tax, GrandTotal, AmountPaid, the basket
+  audit's verdict, the refusal sentence), the outcome in the route's own
+  words (`stood`, `refused`, `ambiguous`, `sold-nothing`, `partial`,
+  `suppressed`, `queued`), the Square payment id and last four when the
+  reader paid, the staff id, target, site, dry run and write guard state,
+  and the time of each step.
+- **Never holds**: a card number, CVV, expiry, gift card number, PIN or
+  token, or any long digit run in free text (struck, as `charge_holds` does).
+- **The check.** Once a day (the first sign-in of the day, as T231 planned;
+  the app has no worker) and on demand, every `stood` row of the studio day
+  is read back from Mindbody by sale id and compared line for line and
+  payment for payment with what we asked. A difference is a row on the
+  admin sheet. This is T103's and T254's lesson made routine: what the
+  route believed and what Mindbody kept are compared every day, not only
+  when a teacher notices.
+- **Where it shows**: the admin "Sales" sheet behind the account modal
+  (`POS_ADMIN_STAFF_IDS`, since the dev drawer is off on the deployed
+  counter): the day's taps, each outcome, the check's differences, and a
+  gold count in the header when one is open. Phase 5's incidents read the
+  same rows.
+- **Charter**: this is our record of our own actions, the `client_writes`
+  and `charge_holds` precedent, never a copy of Mindbody consulted instead
+  of Mindbody. Nothing reads a price, a client or a pass from it to answer
+  a question Mindbody should answer.
+- **A database that does not answer never blocks a sale.** The row logs
+  `NOT STORED` every time, as `client_writes` does, and the sale runs. Two
+  exceptions, because each needs the row to work at all: the reader needs
+  a row to START a sale (never to finish one), and the outage queue IS rows.
 
 ### The money order
 
-Rehearse, hold, sell, take.
+Hold, sell, take.
 
 1. Price and `Test: true`-rehearse the cart exactly as today. The rehearsed
-   GrandTotal is the only amount ever sent to Stripe.
-2. Create a PaymentIntent (`capture_method: manual`, `card_present`) for
-   that total and hand it to the reader. The tap places a hold and takes
-   nothing.
+   GrandTotal is the only amount ever sent to Square.
+2. Create a Terminal checkout (`POST /v2/terminals/checkouts`) for that
+   total on the studio's device, with `payment_options.autocomplete: false`
+   (U), so the tap places a hold (the payment reads `APPROVED`) and takes
+   nothing. Tipping off, the receipt screen per P11, `reference_id` the
+   attempt id.
 3. Run the real `checkoutshoppingcart` with a `Custom` payment.
-4. The sale stands (T75 and T103 included): capture. Mindbody refuses:
-   cancel the hold.
-5. **Mindbody does not answer: keep the hold.** Neither capture nor cancel
+4. The sale stands (T75 and T103 included): `CompletePayment`. Mindbody
+   refuses: `CancelPayment`.
+5. **Mindbody does not answer: keep the hold.** Neither complete nor cancel
    is safe blind, so the server reads `/sale/sales` for the sale, and a
    human decides if the read cannot. This is the one tender that can still
    go either way safely after an ambiguous answer.
 
-The other two orders are worse. Capture first turns a Mindbody refusal into
-a refund (fees, a visible charge, days to return). Mindbody first leaves a
-declined card with a non-comp sale the API cannot return (`returnsale` is
-comp-only).
+A delayed payment must be completed or cancelled within Square's limit,
+believed 36 hours (U), and Square applies `delay_action` (believed CANCEL by
+default) when it lapses. The sweep (below) acts long before; the lapse is
+the backstop for a server that died holding one.
+
+The other two orders are worse. Taking the money first turns a Mindbody
+refusal into a refund (fees, a visible charge, days to return). Mindbody
+first leaves a declined card with a non-comp sale the API cannot return
+(`returnsale` is comp-only).
+
+**Outage mode is the exception**: there is no Mindbody to sell against, so
+the payment is completed at the tap and the Mindbody sale is queued (see
+below).
 
 ### Architecture
 
-- **`src/lib/stripe.ts`**, beside `mindbody.ts`: plain `fetch`,
-  form-encoded, no `stripe` npm package, nothing imported from ai-manager.
-  The call log must show exactly what was sent, and the proxy can inject the
-  key.
-- **Only `src/lib/readerpayment.ts` (the state machine and its rows) and
-  `src/lib/readerrecon.ts` may import it.** `sale.ts` never does. Same shape
-  as the display's "imports no `mindbody()`" rule.
-- **Call log.** Each Stripe call goes through `record()` in `calllog.ts`
-  with a new `service: "stripe"` field and a tag on the drawer row.
-  Suppressed and refused-by-mode calls are recorded like dry-run ones.
-  `client_secret` is struck. No PAN reaches a server-driven response (U).
+- **`src/lib/square.ts`**, beside `mindbody.ts`: plain `fetch`, JSON, no
+  Square SDK, nothing imported from ai-manager. The call log must show
+  exactly what was sent, and the proxy can inject the token. Every create
+  carries Square's own `idempotency_key`, derived from the attempt id.
+- **Only `src/lib/readerpayment.ts` (the state machine), `src/lib/outage.ts`
+  (the queue) and `src/lib/readerrecon.ts` may import it.** `sale.ts` never
+  does. Same shape as the display's "imports no `mindbody()`" rule.
+- **Call log.** Each Square call goes through `record()` in `calllog.ts`
+  with a new `service: "square"` field and a tag on the drawer row.
+  Suppressed and refused-by-mode calls are recorded like dry-run ones. No
+  card number reaches a Terminal API response (U).
 - **The seam is the `CheckoutPayment` union** and `checkoutPaymentPayload`
-  in `sale.ts` (the design doc's `payment/index.ts` was never built). It
-  gains one variant, `{ type: "Custom"; amount; id }`, sent as
-  `{ Type: "Custom", Metadata: { Amount, Id } }` (sale.yml:3934),
-  PascalCase like every proven shape, never auto-retried in another.
-- **One exit for the Stripe side.** `/api/checkout` has about a hundred
-  return points, so the capture-or-release decision sits in `POST()` at the
+  in `sale.ts`. It gains one variant, `{ type: "Custom"; amount; id }`,
+  sent as `{ Type: "Custom", Metadata: { Amount, Id } }` (sale.yml:3934),
+  the shape T259's "Other" payment already proved live for
+  `purchaseaccountcredit`.
+- **One exit for the Square side.** `/api/checkout` has about a hundred
+  return points, so the complete-or-cancel decision sits in `POST()` at the
   single exit, beside `enrolAfterCheckout` and inside T113's record. No
   branch can forget to release a hold. An outside tender has three verbs:
   hold, take, release.
 - **No webhook in v1.** The browser polls our server each second (the
-  `useSaleApproval` precedent) and the server reads the reader and the
-  PaymentIntent. No public endpoint, no signing secret, works on localhost.
-  A webhook is T236.
+  `useSaleApproval` precedent) and the server reads the checkout and the
+  payment. No public endpoint, no signing secret, works on localhost. A
+  webhook (`terminal.checkout.updated`, U) is T236.
 
 ### Modes and safety
 
-| Mindbody state | Stripe |
+| Mindbody state | Square |
 |---|---|
-| Dry run (server or this iPad), or the write guard suppressing this client | The rehearsal is suppressed, so Stripe is never called. Amber answer as today, plus "The card reader was not used." |
-| Target sandbox | Test mode always. The live key is never read. |
-| Target prod, `POS_READER_LIVE` unset | Test mode. Reader sales refused unless the write guard narrows to a dummy client: a simulated tap must never hand a real student a pass. |
-| Target prod, `POS_READER_LIVE=true` | Live. A deliberate deploy, like `POS_DRY_RUN=false`. |
+| Dry run (server or this iPad), or the write guard suppressing this client | The rehearsal is suppressed, so Square is never called. Amber answer as today, plus "The card reader was not used." |
+| Target sandbox | Square's sandbox (`connect.squareupsandbox.com`) always. The production token is never read. |
+| Target prod, `POS_READER_LIVE` unset | Square's sandbox. Reader sales refused unless the write guard narrows to a dummy client: a simulated tap must never hand a real student a pass. |
+| Target prod, `POS_READER_LIVE=true` | Production Square. A deliberate deploy, like `POS_DRY_RUN=false`. |
 
-- **`livemode` is asserted** on every Stripe response against the expected
-  mode. A mismatch on PaymentIntent create cancels it and refuses the sale.
-  This is the check that still works when the proxy injects the key.
-- **Key prefix check where the key is real**: a `*_live_` key in a test
-  variable is refused at startup. A dummy passes.
-- **`modeNotice` gains one LOUD state**: target prod with the reader in test
-  mode ("Card reader is in TEST mode. Reader sales take no money."). The
-  tile wears a TEST tag and the done block says so. `/api/config` reports
-  `reader: { configured, mode, simulated, label }`.
-- **Target switch (T89)**: each attempt records target, site and livemode.
-  A switch releases open holds, and `/api/checkout` refuses an attempt from
-  the other studio.
+- **The environment is asserted**, since Square answers carry no
+  `livemode`: the base URL and the token come from one named set, and at
+  startup and on every checkout create the location id Square answers with
+  must equal the configured location for that set. A mismatch refuses the
+  sale with nothing created.
+- **`modeNotice` gains one LOUD state**: target prod with the reader on
+  Square's sandbox ("Card reader is in TEST mode. Reader sales take no
+  money."). The tile wears a TEST tag and the done block says so. Outage
+  mode adds a second (below). `/api/config` reports `reader: { configured,
+  mode, paired, online, label }`.
+- **Target switch (T89)**: each attempt records target and site. A switch
+  releases open holds, and `/api/checkout` refuses an attempt from the
+  other studio.
 - **Environment** (never committed; a dummy is enough where the proxy
-  injects): `STRIPE_TEST_SECRET_KEY`, `STRIPE_LIVE_SECRET_KEY` (restricted
-  keys: Terminal, PaymentIntents, Refunds read), `STRIPE_TEST_READER_ID`,
-  `STRIPE_LIVE_READER_ID`, `POS_READER_LIVE`,
-  `MINDBODY_SANDBOX_READER_PAYMENT_ID`, `MINDBODY_PROD_READER_PAYMENT_ID`,
-  and `STRIPE_API_BASE_URL` for the fake only, like `MINDBODY_API_BASE_URL`.
-- Nothing about the reader's mode is settable from the drawer.
+  injects): `SQUARE_SANDBOX_ACCESS_TOKEN`, `SQUARE_PROD_ACCESS_TOKEN`,
+  `SQUARE_SANDBOX_LOCATION_ID`, `SQUARE_PROD_LOCATION_ID`,
+  `POS_READER_LIVE`, `MINDBODY_SANDBOX_READER_PAYMENT_ID`,
+  `MINDBODY_PROD_READER_PAYMENT_ID`, and `SQUARE_API_BASE_URL` for the fake
+  only, like `MINDBODY_API_BASE_URL`. The paired device id lives in
+  `app_settings` (it changes when the Terminal is re-paired), with
+  `SQUARE_DEVICE_ID` as the no-database fallback.
+- Nothing about the reader's MODE is settable from the drawer. Pairing is
+  (below): it decides which Terminal, never whether money moves.
+
+### Pairing and reconnecting the Terminal
+
+Pete, 2026-11-21: make reconnecting easy for a teacher.
+
+- **"Connect card reader"**, in the display mark's Options menu and the
+  account modal, any signed-in teacher: the server asks Square for a device
+  code (`POST /v2/devices/codes`, `product_type: TERMINAL_API`, the studio
+  location, U), and the screen shows it in large digits with a five minute
+  countdown and "New code" (Square expires an unused code after five
+  minutes). The teacher taps Device Code on the Terminal's sign-in screen
+  (not "Sign in", which is Square's own POS app, U) and types it. The
+  server polls the code until it reads `PAIRED`, stores the device id, and
+  the screen says "Card reader connected". Logged with the staff id.
+- **The reader tile says when it is not paired or offline**, so nobody
+  charges into nothing. Whether Square reports a Terminal's online state
+  through the Devices API is part of R6 (U); if it does not, the first
+  checkout's refusal is the signal.
 
 ### The state machine
 
-One `reader_payments` row per attempt (migration 19). Mindbody has no home
-for a PaymentIntent-to-sale link, so the T29 charter allows it.
+One `reader_payments` row per attempt, linked to its `sale_log` row.
+Mindbody has no home for a Square-payment-to-sale link, so the T29 charter
+allows it.
 
-- **Holds**: attempt id, tap key digest, state, target, site, livemode,
-  staff id, reader id, client id, cart sha (`cartsha.ts`), amount in cents,
-  PaymentIntent id, Mindbody sale id and cart GUID, brand and last four,
-  failure text, timestamps.
-- **Never holds**: a PAN, expiry, fingerprint, cardholder name, or any
-  Mindbody price or line.
+- **Holds**: attempt id, tap key digest, state, target, site, staff id,
+  device id, client id, cart sha (`cartsha.ts`), amount in cents, Terminal
+  checkout id, Square payment id, Mindbody sale id and cart GUID, brand and
+  last four, failure text, timestamps.
+- **Never holds**: a card number, expiry, fingerprint, cardholder name, or
+  any Mindbody price or line (those are on the log row, as what we asked).
 - **The database is required to START a reader sale and never to FINISH
   one.** No database: the tile is disabled with a reason and every other
   tender works. A row write failing mid-flow logs `NOT STORED` and the sale
-  carries on. The PaymentIntent's metadata is the fallback journal: attempt
-  id, site, staff id at create; sale id at capture (U: capture accepts
-  metadata).
+  carries on. The checkout's `reference_id` and the payment's `note` carry
+  the attempt id as the fallback journal (U).
 
 States: `created → collecting → authorized → selling → sold → captured`,
 with `cancelled`, `unresolved` and `uncollected` as the other ends. Every
@@ -481,31 +583,31 @@ Routes, all behind the device session and `requireActor`:
 
 | Route | Does |
 |---|---|
-| `POST /api/reader/collect` | Takes the checkout body and the tap's `Idempotency-Key`. Refuses unsupported shapes (below), verifies PIN tokens WITHOUT spending them, checks the reader is online and free, rehearses, creates the PaymentIntent, calls `process_payment_intent` with tipping skipped and customer cancellation on (U). |
-| `GET /api/reader/attempt/:id` | The 1 second poll and the heartbeat. Reads Stripe, moves the row. |
-| `POST /api/reader/attempt/:id/cancel` | `cancel_action`, then cancel the PaymentIntent, then confirm it reads `canceled`. |
+| `POST /api/reader/collect` | Takes the checkout body and the tap's `Idempotency-Key`. Refuses unsupported shapes (below), verifies PIN tokens WITHOUT spending them, checks the reader is paired and free, rehearses, creates the Terminal checkout with `autocomplete: false`. |
+| `GET /api/reader/attempt/:id` | The 1 second poll and the heartbeat. Reads the checkout and its payment, moves the row. |
+| `POST /api/reader/attempt/:id/cancel` | Cancels the Terminal checkout, then the payment if one was approved, then confirms both read cancelled. |
 | `POST /api/checkout` with `method: "reader"`, `reader: { attemptId }` | Same tap key. Every existing rail runs unchanged (tokens spent, T203, rehearsal, T75). Then it claims the row `authorized → selling` and sells with the Custom payment under the teacher's token. |
 | `POST /api/reader/attempt/:id/resolve` | The human decision on an `unresolved` hold. |
 
 Before the claim, `/api/checkout` checks the row against the request: same
 teacher, target, client and cart sha; the amount equals the fresh rehearsal
-to the cent; Stripe says `requires_capture` for that amount.
+to the cent; Square says the payment is `APPROVED` for that amount.
 
 Failure windows:
 
 | Window | What happens |
 |---|---|
 | Rehearsal refuses, or totals disagree | Nothing created. |
-| Reader offline or busy | Refused in words. A second iPad reads "The reader is busy with another sale." One open collection per reader, by partial unique index. |
-| Customer cancels, card declines, 90 seconds with no card | PaymentIntent cancelled. "Nothing was charged." No PIN was spent, so Try again is a fresh tap. |
-| Authorized, browser never returns | A hold with no Mindbody attempt older than 3 minutes is released by an in-process sweep (Stripe calls only, never a Mindbody write). |
+| Reader offline, unpaired or busy | Refused in words. A second iPad reads "The reader is busy with another sale." One open collection per device, by partial unique index. |
+| Customer cancels, card declines, 90 seconds with no card | Checkout cancelled. "Nothing was charged." No PIN was spent, so Try again is a fresh tap. |
+| Authorized, browser never returns | A hold with no Mindbody attempt older than 3 minutes is released by an in-process sweep (Square calls only, never a Mindbody write). |
 | Reload mid-flow | The cart is browser state and is gone. On load, an open `collecting` or `authorized` attempt for this teacher is released with one sentence. `selling` or `unresolved` reopens the resolution panel. |
 | Any refusal after the tap (token, approval, drift, Mindbody 4xx, staff session gone) | The exit releases the hold and the answer adds "The card was not charged." |
-| T103: the sale answered with an empty basket | NOT captured. Hold released, flagged at once as a Mindbody sale to void. T103's sentence says the payment was taken, so this path needs its own words. |
-| Mindbody times out or 5xx | Hold kept. The server reads `/sale/sales` (client, reader payment method, amount, time floor, not already linked) for about 25 seconds. Found: capture. Not found: `unresolved`, with two controls after 2 minutes: "Sale is in Mindbody, charge the card" (only when the server's own read finds it, or an admin names the sale id) and "No sale, release the hold". |
-| Capture does not answer | Retried three times in the request, then each minute by the sweep. Not a second charge: a PaymentIntent captures once (U), and the tap, the card and the sale already decided it. The teacher sees the sale as done with an amber line. |
-| Capture definitively refused | `uncollected`: "Sold in Mindbody, but the card was NOT charged." in `--stop`, and a reconciliation row. |
-| Server restart | Rows decide. `created`, `collecting`, `authorized`: release. `selling`: the ambiguous case, and a replayed checkout finds the row already claimed and can never sell twice, which T113's in-memory store alone could not promise. `sold`: capture retried. |
+| T103: the sale answered with an empty basket | NOT completed. Hold released, flagged at once as a Mindbody sale to void. T103's sentence says the payment was taken, so this path needs its own words. |
+| Mindbody times out or 5xx | Hold kept. The server reads `/sale/sales` (client, reader payment method, amount, time floor, not already linked) for about 25 seconds. Found: complete. Not found: `unresolved`, with two controls after 2 minutes: "Sale is in Mindbody, charge the card" (only when the server's own read finds it, or an admin names the sale id) and "No sale, release the hold". |
+| Complete does not answer | Retried three times in the request, then each minute by the sweep. Not a second charge: a payment completes once (U), and the tap, the card and the sale already decided it. The teacher sees the sale as done with an amber line. |
+| Complete definitively refused | `uncollected`: "Sold in Mindbody, but the card was NOT charged." in `--stop`, and a row on the Sales sheet. |
+| Server restart | Rows decide. `created`, `collecting`, `authorized`: release. `selling`: the ambiguous case, and a replayed checkout finds the row already claimed and can never sell twice, which T113's in-memory store alone could not promise. `sold`: complete retried. |
 
 ### First version: supported and refused
 
@@ -518,12 +620,13 @@ Cart screen and the roster's "Pay and check in", and:
   existing keypad, beside cash, account credit or a gift card. Mindbody
   records every payment on a cart in ONE checkout, so it is still one hold,
   one checkout carrying the Custom payment beside the others, then one
-  capture.
+  complete.
 - **T90 tickets with lines for other people** (T234): one hold for the whole
   ticket, one Mindbody checkout per recipient as today, and a capture of
-  exactly what stood. A second cart refused after the first stood captures
-  only the first (`amount_to_capture`, U) and the rest of the hold is
-  released.
+  exactly what stood. Whether Square can complete a delayed payment for
+  LESS than it approved is part of R6 (U); if it cannot, the hold is
+  cancelled and the carts that stood are charged as one fresh tap, said so
+  on the screen, or T234 ships refusing a second recipient on the reader.
 
 **Gift cards** (T232), by whichever route probe R5 opens, in this order:
 
@@ -532,40 +635,33 @@ Cart screen and the roster's "Pay and check in", and:
    question.
 2. Otherwise **Pete's own workaround, which the studio already does by
    hand**: sell the purchaser account credit on the reader
-   (`purchaseaccountcredit` paid with Custom, R5b), then pay for the gift
-   card from that credit (`purchasegiftcard` paid `DebitAccount`, R5c). It
-   is the pattern the counter's under-$10 card path used until T238 retired
-   it (credit first, then spend; `purchaseCredit` in `src/lib/sale.ts` is
-   kept, unreached, for this), so nothing about it is new to Mindbody or to
-   this app. Its limits: it
-   needs a NAMED purchaser, never the house client, whose credit belongs to
-   nobody; it records a credit purchase and a credit redemption rather than
-   a card sale, which is the reporting cost the design doc's "$10 card
-   minimum" section warns about, accepted here because the studio already
-   books gift cards this way by hand; and its two calls cannot be atomic, so
-   a gift card refused AFTER the credit stood captures the hold for the
-   credit, leaves it on the purchaser's account, and says so in words
-   ("$50.00 is on Sam's account as credit; the gift card was not issued"),
-   with Try again spending that credit and charging nothing new.
+   (`purchaseaccountcredit` paid with Custom, R5b; T259 proved a Custom
+   payment live there with "Other"), then pay for the gift card from that
+   credit (`purchasegiftcard` paid `DebitAccount`, R5c). It needs a NAMED
+   purchaser, never the house client; it records a credit purchase and a
+   credit redemption rather than a card sale; and its two calls cannot be
+   atomic, so a gift card refused AFTER the credit stood completes the
+   payment for the credit, leaves it on the purchaser's account, and says
+   so ("$50.00 is on Sam's account as credit; the gift card was not
+   issued"), with Try again spending that credit and charging nothing new.
 
 Refused in words before any call:
 
 - **Memberships** (`purchasecontract`): refused for good. The request takes
   only `CreditCardInfo`, `StoredCardInfo`, direct debit or account credit
   (sale.yml:6261 on), has no slot for an outside payment, and every autopay
-  after the first bills the card on file. The path stays what it is today:
-  type the card once with "keep on file" and sell against it. "A membership
-  bills a card on file. Add a card first."
-
-Not refused: a small sale. Since T238 (P10, answered) the reader charges any
-amount above zero, as every other card does.
+  after the first bills the card on file. "A membership bills a card on
+  file. Add a card first."
+- **A total under Square's card minimum**, believed $1.00 (U): "Card
+  payments start at $1.00. Use cash or the account." Since T238 nothing of
+  ours sets a floor; this one is Square's.
 
 ### The teacher's screen
 
 - A **Card reader** tile beside the tenders, greyed with its reason
-  ("Reader offline", "Not set up", "Needs the database"). It adds one line
-  for the whole amount; Charge reads "Charge $28.00 on reader". Two taps
-  for the teacher, like every tender; one tap for the student.
+  ("Reader not connected", "Not set up", "Needs the database"). It adds one
+  line for the whole amount; Charge reads "Charge $28.00 on reader". Two
+  taps for the teacher, like every tender; one tap for the student.
 - One hook and one panel, `src/app/useReaderPayment.ts` and
   `src/app/ReaderWait.tsx`, used by BOTH charge screens from the day they
   are written (T209's lesson).
@@ -581,114 +677,230 @@ amount above zero, as every other card does.
   write path.
 - **T203**: recommended that a card presented on a reader showing the
   amount, bound to the cart sha on the row, COUNTS as the customer's
-  approval, checked at the same place in `/api/checkout`. Approve on the
-  iPad and then tap the card is the friction the brief rules out. It
-  relaxes a recorded rail, so it waits for Pete's word (P8). Until then the
-  reader tender runs through `useSaleApproval` first.
+  approval, checked at the same place in `/api/checkout`. It relaxes a
+  recorded rail, so it waits for Pete's word (P8). Until then the reader
+  tender runs through `useSaleApproval` first.
+
+### Outage mode: Mindbody down, the counter still sells (T275 to T278)
+
+Pete, 2026-11-21: "if mindbody is down, our app could still make the sale
+tho right? ... the app can still make a finalized sale like normal, why
+would anything need to be typed?? ... we would change that note, this is a
+scenario where we will queue. that's more reliable than hand-typed
+records."
+
+**What it is.** When Mindbody stops answering, the Cart screen keeps
+working from what the server already holds, the teacher sells as normal on
+the Square Terminal or in cash, and each sale goes into a durable queue
+that posts to Mindbody by itself when Mindbody answers again.
+
+- **Entering it**: the server counts Mindbody's answers. Transport
+  failures, timeouts or 5xx on consecutive reads over about 30 seconds put
+  it in outage; one good answer takes it out. Never a 4xx: that is
+  Mindbody answering. `/api/config` reports `outage: { since }`.
+- **`modeNotice` gains a LOUD state**: "Mindbody is not answering. Card
+  and cash sales are saved and will be sent to Mindbody when it is back.
+  Check-ins are saved too." The rule asks for exactly this: it changes
+  what a tap does.
+- **The shelf**: the catalog the server last read stays in MEMORY while
+  Mindbody is down, past its 10 minute life, so tiles, names and prices are
+  the ones the teacher saw a moment ago. It is never written to the
+  database (P24). A server that restarts during an outage has no shelf and
+  says so.
+- **The student**: the roster for the classes around now is already in the
+  browser's memory, so those students are picked as usual. Search needs
+  Mindbody, so a student not on a roster is entered by name as a walk-in,
+  and the queue asks a teacher to match them to a Mindbody client when it
+  posts (a retail-only ticket may go to the house client instead).
+- **Tenders**: the Square Terminal and cash only. The account, a gift card,
+  the card on file and a typed card all need Mindbody and are greyed with
+  the reason. A discount still takes the teacher's PIN (the PIN check is
+  ours, `teacher_pins`). A promotion code is refused: only Mindbody can
+  judge it.
+- **Tax**: Mindbody normally prices the cart. In outage the server applies
+  the studio's location tax, read from the location while Mindbody was up
+  (10.35% at location 1), to the lines the catalog marks taxable, rounded
+  per Mindbody's own rounding as best we know it. When the sale posts,
+  Mindbody's own total is compared to what the student paid.
+- **The money**: on the Terminal the payment is completed at the tap
+  (`autocomplete: true`): there is no Mindbody sale to wait for, and a
+  hold left open across an outage of unknown length is worse than a
+  rare refund. Cash is cash.
+- **Check-in**: a check-in tap during an outage is queued too, behind any
+  queued sale for that student, so a student who just paid for their pass
+  is checked in once the pass exists. The roster row reads "Queued".
+- **Sign-in**: a teacher already signed in stays signed in; a new sign-in
+  needs Mindbody and cannot happen. The gate says so.
+
+**The queue (`outage_queue` rows, linked to `sale_log`).**
+
+- Each row holds what the log row holds (the ticket as asked, the Square
+  payment id or "cash", the amount actually taken, the staff id) plus its
+  state: `queued → posting → posted`, with `needs-a-teacher` and
+  `refunded` as the other ends. No card data.
+- **No database, no outage mode**: the queue IS rows. The tile and the
+  banner say "Mindbody is down and sales cannot be saved; use the Mindbody
+  app." A row write that fails refuses the sale BEFORE the card is
+  charged.
+- **Posting**: when Mindbody answers again, the server posts the queue in
+  the order the sales were made, one at a time, through the same
+  `checkoutshoppingcart` path every sale takes, paid with the reader's
+  Custom payment method (or Cash), rehearsed first. Each post is a
+  compare-and-set claim, so two iPads, a restart or a retry can never post
+  one row twice. **The card is never charged again by any of it.**
+- **Under whose token**: the teacher who made the sale, if their session
+  is still alive; otherwise the service account, with the selling
+  teacher's name filed on the client the T45/T62 way ("Sold during a
+  Mindbody outage by <teacher> at 5:33 PM, posted by the studio account").
+  This relaxes T50's "every write runs under a signed-in teacher", for this
+  queue only (P25).
+- **What stops a row for a teacher** (`needs-a-teacher`, on the Sales
+  sheet and as a gold count in the header): a walk-in not yet matched to a
+  client; Mindbody refusing the sale (an intro pass the student already
+  used, a pass no longer sold); Mindbody's total differing from what was
+  taken by more than a cent; a basket T103 refuses. The row shows what was
+  taken and what Mindbody says, and offers: post it anyway at Mindbody's
+  price, sell a different item, or refund on Square (T235) and drop it.
+  Nothing moves money by itself.
+- **Dry run and the write guard apply to posting** exactly as to a sale,
+  and a suppressed post stays `queued`, said so on the sheet.
+
+**What outage mode does not cover**: THIS APP being down. Then the teacher
+uses the Mindbody app and the studio's existing reader (Pete, 2026-11-21),
+which needs nothing afterwards.
 
 ### Reconciliation, refunds and returns
 
-- **A daily match** for the studio day, in `readerrecon.ts`: our rows,
-  Stripe's PaymentIntents, and Mindbody's `/sale/sales` filtered by
+- **A daily match** for the studio day, in `readerrecon.ts`, on top of
+  T274's check: our rows, Square's payments for the location
+  (`GET /v2/payments`, U), and Mindbody's `/sale/sales` filtered by
   `request.paymentMethodId` (sale.yml:1043, probe R4).
-- **Mismatch kinds**: a sale with no capture, a capture with no sale,
-  amounts that differ, a hold older than an hour, a Mindbody return with no
-  Stripe refund, a Stripe refund with no return, and a Mindbody sale on the
-  reader's payment method that this app did not make.
-- **Where it shows**: an admin "Card reader" sheet behind the account modal
-  (`POS_ADMIN_STAFF_IDS`), NOT the dev drawer, which is off on the deployed
-  counter. A gold count in the header when anything is open. Yesterday is
-  run on the first sign-in of the day; the app has no worker and gains
-  none. Immediate mismatches are on the teacher's done block as above.
+- **Mismatch kinds**: a sale with no completed payment, a payment with no
+  sale, amounts that differ, a hold older than an hour, a queued row not
+  posted within a day, a Mindbody return with no Square refund, a Square
+  refund with no return, and a Mindbody sale on the reader's payment method
+  that this app did not make.
+- **Where it shows**: the same admin Sales sheet as T274, with its header
+  count. Immediate mismatches are on the teacher's done block as above.
 - **Returns**: a return in Mindbody records the return and moves no money.
-  The refund is made in Stripe (the sheet shows each sale's PaymentIntent
+  The refund is made in Square (the sheet shows each sale's Square payment
   id), and the daily match catches a forgotten one. A PIN-gated refund
-  button is T235, with its own seventh `CompPurpose`.
+  button is T235, with its own eighth `CompPurpose` (`credit` took the
+  seventh).
 
 ### Reader setup
 
-- Pete creates the Stripe account, one Terminal Location at the studio
-  address, and registers the reader from its pairing code in the Dashboard
-  (U). `scripts/reader-status.ts` lists readers and their state.
-- One reader, one location. The reader id is environment configuration; a
-  drawer chooser is not built until a second reader exists.
-- The reader talks to Stripe over its own wifi or ethernet, not to our
+- Pete creates the Square account (P6) with the studio as its one location,
+  and buys a **Square Terminal** (Best Buy and Staples carry it, about $254
+  to $299 in 2026-11 listings, U; call ahead for stock). It charges over
+  USB-C and can stay plugged in on the counter; Square's countertop mount
+  ($19) holds it there, and its battery lets a teacher hand it to a
+  student. Square's Terminal Hub adds ethernet and USB (U).
+- Pete creates a Square application in Square's developer dashboard, for
+  the sandbox and production access tokens and the location ids (P6).
+- The Terminal talks to Square over its own wifi or ethernet, not to our
   server, so Railway hosting needs nothing on the studio LAN.
-- Recommended: the S700 over a second WisePOS E. Two identical readers on
-  one counter, one of which this app cannot drive, is a mistake waiting for
-  a queue.
-- Test mode: a simulated reader (`registration_code: simulated-wpe`) and the
-  `present_payment_method` test helper (U), behind devtools-gated "Simulate
-  tap" and "Simulate decline" buttons that refuse in live mode.
-- **Costs, from third-party sources only (2026-11-15; stripe.com was not
-  reachable to confirm):** about 2.7% + 5c per in-person transaction, +1.5%
-  for international cards, $15 per dispute; an S700 at $299 or $349
-  (sources disagree), an optional $49 dock; a WisePOS E around $249 and
-  possibly no longer sold in the US; no monthly or per-reader fee found.
-  Confirm on stripe.com/terminal and stripe.com/pricing before ordering.
+- **Sandbox**: Square's sandbox is believed to offer test device ids that
+  answer a Terminal checkout as approved, declined or cancelled (U; one
+  old forum post says the sandbox does not support the Devices API, which
+  R6 settles first). Devtools-gated "Simulate tap" and "Simulate decline"
+  buttons drive them and refuse in production.
+- **Costs** (2026-11-21, search snippets, U): 2.6% + 15c per in-person
+  payment, no monthly fee found, standard payout the next business day.
+  Against Stripe's 2.7% + 5c it breaks even at $100 a sale. Confirm on
+  squareup.com before relying on it.
 
 ### Work items
 
+- [ ] **T274 The transaction log.** `sale_log` (the next migration),
+  `src/lib/salelog.ts`, written ahead and updated on every money route
+  above, the daily check against Mindbody, the admin Sales sheet and its
+  header count. Done when a cart sale, a split, a T90 ticket, a gift card,
+  account credit, a membership and a guest comp each leave one row with
+  what was asked and what Mindbody answered; a planted difference between
+  a row and a sale read back from the fake shows on the sheet; and a dead
+  database logs `NOT STORED` while the sale stands.
 - [ ] **T222 Probes R1, R2, R3 and R5**, `scripts/probe-custom-payment.ts`
   (written 2026-11-15, not yet run; needs P7's method to exist). Done when
   it has been run on both sites and the answers are recorded in the probe
   table.
-- [ ] **T223 The Stripe client and the mode.** `stripe.ts`, the call log's
-  `service` field, the environment table, the `livemode` assertion,
-  `/api/config`, the `modeNotice` state. Done when a reader read shows in
-  the drawer tagged stripe, and a response with the wrong `livemode` is
-  refused with nothing created.
-- [ ] **T224 The fake and the row.** `scripts/training/fake-stripe.mjs`,
-  migration 19, `readerpayment.ts` with compare-and-set transitions. Done
-  when the transitions are driven end to end against the fake with no
-  network.
-- [ ] **T225 Collect, poll, cancel.** The three routes and the 90 second
-  timeout. Done when a simulated tap moves a row to `authorized`, and
-  cancel, decline and timeout each end `cancelled` with the PaymentIntent
-  reading `canceled`.
+- [ ] **T223 The Square client and the mode.** `square.ts`, the call log's
+  `service` field, the environment table, the location assertion,
+  `/api/config`, the `modeNotice` state. Done when a Square read shows in
+  the drawer tagged square, and a location that does not match is refused
+  with nothing created.
+- [ ] **T224 The fake and the row.** `scripts/training/fake-square.mjs`,
+  the migration for `reader_payments`, `readerpayment.ts` with
+  compare-and-set transitions. Done when the transitions are driven end to
+  end against the fake with no network.
+- [ ] **T225 Pair, collect, poll, cancel.** "Connect card reader", the
+  three routes and the 90 second timeout. Done when the fake pairs a
+  device from a code, a simulated tap moves a row to `authorized`, and
+  cancel, decline and timeout each end `cancelled` with the payment reading
+  cancelled.
 - [ ] **T226 `method: "reader"` in `/api/checkout`.** The Custom variant,
-  the claim, the single-exit capture or release, the refused shapes. Done
-  when a sandbox sale stands with a captured test PaymentIntent linked to
-  it, and a forced Mindbody refusal leaves the PaymentIntent cancelled.
+  the claim, the single-exit complete or cancel, the refused shapes. Done
+  when a sandbox sale stands with a completed Square sandbox payment linked
+  to it, and a forced Mindbody refusal leaves the payment cancelled.
 - [ ] **T227 The Cart screen.** Tile, hook, panel, done block. **Done when a
-  teacher sells a drop-in in the sandbox on Stripe's simulated reader, end
+  teacher sells a drop-in in the sandbox on Square's sandbox Terminal, end
   to end, with no hardware.**
 - [ ] **T228 The failure windows.** Ambiguous resolution, the sweep,
   restart recovery, reload, second iPad. Done when each row of the failure
   table is forced against the fake and ends as written, including a kill
-  between `selling` and capture.
+  between `selling` and complete.
 - [ ] **T229 Pay and check in.** The roster dialog through the same hook.
-  Done when an unpaid row is paid on the simulated reader and checked in,
+  Done when an unpaid row is paid on the sandbox Terminal and checked in,
   and closing the dialog mid-wait releases the hold.
 - [ ] **T230 Customer display and the approval rule.** The reader line on
   the mirror; P8's answer built. Done when the student's iPad shows the
   prompt, and the approval setting behaves as Pete chose on both screens.
-- [ ] **T231 Reconciliation.** The match, the admin sheet, the header
-  count. Done when a day with one planted mismatch of each kind lists all
-  of them and a clean day lists none.
-- [ ] **T232 Gift card sales on the reader**, by the route R5 opens (direct,
-  or credit then `DebitAccount`). Done when a card is sold in the sandbox
-  with `Value` and `AmountPaid` asserted, exactly the right amount captured,
-  and, on the credit route, a forced gift card refusal leaves the credit on
-  the account with the sentence above.
+- [ ] **T231 Reconciliation.** The match on top of T274's check. Done when a
+  day with one planted mismatch of each kind lists all of them and a clean
+  day lists none.
+- [ ] **T232 Gift card sales on the reader**, by the route R5 opens. Done
+  when a card is sold in the sandbox with `Value` and `AmountPaid`
+  asserted, exactly the right amount taken, and, on the credit route, a
+  forced gift card refusal leaves the credit on the account with the
+  sentence above.
 - [ ] **T233 Split with a reader leg (first version).** Done when reader plus
   cash stands as one sale, and a refusal releases the hold and takes no
   cash.
 - [ ] **T234 T90 tickets (first version).** Done when two recipients' carts
-  stand on one hold, and a refused second cart captures only the first.
-- [ ] **T235 Refund on card.** Admin, PIN, its own purpose. Done when a test
-  capture is refunded from the sheet and the match clears.
+  stand on one tap, and a refused second cart leaves the student charged
+  only for the first, by whichever route R6 allows.
+- [ ] **T235 Refund on Square.** Admin, PIN, its own purpose. Done when a
+  sandbox payment is refunded from the sheet and the match clears.
 - [ ] **T236 Webhook hardening**, only if polling proves thin.
-- [ ] **T237 Hardware day.** Register the reader, live key,
-  `POS_READER_LIVE=true`, write guard on the dummy client. Done when Pete's
-  own card buys the cheapest item, the sale reads back from Mindbody with
-  the reader's payment method, the PaymentIntent is captured, both are
-  refunded and voided, and the next day's match is clean. Then the training
-  guide and `DEPLOY.md`.
-
-T222 to T227 are the path to a working flow before hardware arrives. T233
-and T234 belong to the first version and come straight after T229, before
-the reader goes live (T237); T232 follows as soon as R5 has answered.
+- [ ] **T275 Outage detection and the banner.** The answer counter, the
+  `modeNotice` state, `/api/config`'s `outage`, the catalog held in memory
+  past its life, the greyed tenders, the gate's sign-in sentence. Done
+  when the fake going dark puts the counter in outage within 30 seconds
+  with the shelf still priced, and its first good answer takes it out.
+- [ ] **T276 Selling in an outage.** Local tax, the Terminal completed at
+  the tap, cash, walk-ins by name, queued check-ins, the `outage_queue`
+  migration, the sale refused before the card when the row cannot be
+  written. Done when, with the fake dark, a roster student buys a drop-in
+  on the sandbox Terminal and is checked in as "Queued", a walk-in buys
+  water in cash, and both rows are `queued` with what was taken.
+- [ ] **T277 Posting the queue.** In order, one at a time, compare-and-set,
+  rehearsed, the token rule and its Notes line, dry run and the write
+  guard. Done when the fake comes back and both sales post, the check-in
+  lands after the pass, a forced restart mid-post posts nothing twice, and
+  a suppressed post stays `queued`.
+- [ ] **T278 The rows that need a teacher.** Matching a walk-in, the three
+  ways forward, the header count. Done when a refused pass, a total that
+  moved, and an unmatched walk-in each stop for a teacher, and each way
+  forward ends the row with nothing charged twice.
+- [ ] **T237 Hardware day.** Buy and pair the Terminal, the production
+  token, `POS_READER_LIVE=true`, write guard on the dummy client. Done when
+  Pete's own card buys the cheapest item, the sale reads back from
+  Mindbody with the reader's payment method, the payment is completed in
+  Square, both are refunded and voided, and the next day's match is clean.
+  Then a dummy-client outage drill on prod (the fake cannot stand in for
+  Mindbody going dark there: a server flag that treats Mindbody as down
+  for that client only, devtools-gated), then the training guide and
+  `DEPLOY.md`.
 
 ### Rails this phase moves
 
@@ -696,25 +908,43 @@ Each of these is written down in CLAUDE.md or the design doc today and is
 changed by the item that builds it, in that item's own commit:
 
 1. **"Nothing auto-charges"** and the display's "nothing runs on the
-   server's own initiative": the sweep retries a capture and releases holds
-   with no tap. Neither is a new charge and neither touches Mindbody, but it
-   needs a recorded exception (T228).
+   server's own initiative": the sweep completes payments and releases
+   holds with no tap, and the queue posts Mindbody sales with no tap.
+   None is a new CHARGE; the queue is a new unattended Mindbody WRITE,
+   which needs its own recorded exception (T228, T277).
 2. **T203**: a charge carries a `displayApprovalId` or a PIN token. P8
-   would add a third (T230).
+   would add a third (T230). An outage sale is not approved on the
+   customer screen if the approval setting is on and the display cannot
+   reach the hub; T276 decides with Pete.
 3. **T113**: the idempotency store is deliberately not in Postgres. The
-   reader needs a durable row to START, never to finish (T224, T226).
+   reader needs a durable row to START, never to finish (T224, T226), and
+   the log keys on T113's key (T274).
 4. **The charter's "runs fully without `DATABASE_URL`"**: the reader tender
-   does not; everything else still does (T224).
+   and outage mode do not; everything else still does (T224, T276).
 5. **T103**: "it cannot un-take the payment." On the reader it can, so the
    sold-nothing sentence and its client note need their own words for this
    path (T226).
-6. **`modeNotice`'s "exactly four states"**: a fifth, loud, as the rule
-   itself asks (T223).
+6. **`modeNotice`'s "exactly four states"**: a fifth (reader in test mode)
+   and a sixth (outage), both loud, as the rule itself asks (T223, T275).
 7. **Option C's two outcomes** gain a third, hold kept while Mindbody's
    answer is unknown (design doc updated with this plan).
-8. ~~**T93's $10 floor** "does not care whose card it is": at odds with the
-   lost-sale brief until P10 is answered (T226).~~ Moved already: T238
-   retired the floor on every card path, so T226 has none to apply.
+8. **"Pricing comes from the live Mindbody API, never from a cache that
+   could go stale"**: in an outage the shelf is the last catalog read,
+   in memory only, and Mindbody's total is checked when the sale posts
+   (T275, T277).
+9. **"A Phase 2 sale must never queue"** (Known gaps, Offline): it queues
+   in an outage, and only then (T276).
+10. **T50, every write under a signed-in teacher's token**: a queued sale
+    whose teacher's session has ended posts as the service account, named
+    on the client (T277, P25).
+11. **The sanctioned hand-off to the Mindbody app**, which option A
+    rejected even as a stopgap: when this app is down, and only then
+    (design doc).
+12. **T29's charter** gains `sale_log` as our record of our own actions
+    (T274).
+13. ~~**T93's $10 floor** "does not care whose card it is": at odds with the
+    lost-sale brief until P10 is answered (T226).~~ Moved already: T238
+    retired the floor on every card path, so T226 has none to apply.
 
 ---
 
