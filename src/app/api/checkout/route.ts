@@ -114,6 +114,8 @@ import {
   expectedBalance,
   parseAccountCredit,
 } from "@/lib/accountcredit";
+import { asksNoChargeCredit } from "@/lib/nochargecredit";
+import { giveNoChargeCredit } from "@/lib/nochargecreditsale";
 
 import {
   assertBasket,
@@ -839,6 +841,18 @@ async function runCheckout(
   payload: any,
   promo: { applied: PromotionOutcome | null },
 ) {
+  /* T259: account credit given at NO CHARGE, paid "Other", behind the
+   * teacher's `credit`-purpose PIN and a reason. It stands alone on the
+   * ticket and takes no tender, so it leaves here before the method,
+   * cart, discount and approval checks below, none of which apply.
+   * T203's customer approval in particular does NOT: nothing is charged
+   * to the customer, so like "Check in free (comp)" it presents nothing
+   * on the customer screen and asks for no approval. T113's key and
+   * T253's hold were taken in POST above and apply unchanged; dry run and
+   * the write guard apply inside. See src/lib/nochargecreditsale.ts. */
+  if (ACCOUNT_CREDIT_ENABLED && asksNoChargeCredit(payload)) {
+    return giveNoChargeCredit(session, payload ?? {});
+  }
 
   /* T95: the gift card lines, read before the cart lines because they
    * change what an EMPTY cart means. A ticket holding only gift cards

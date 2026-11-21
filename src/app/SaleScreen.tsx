@@ -36,6 +36,15 @@ import type {
 } from "@/lib/displayticket";
 import { IDEMPOTENCY_HEADER, newIdempotencyKey } from "@/lib/idemkey";
 import {
+  NO_CHARGE_MAX_USD,
+  NO_CHARGE_PURPOSE,
+  NO_CHARGE_TITLE,
+  noChargeCapSentence,
+} from "@/lib/nochargecredit";
+import WaiverOverrideDialog, {
+  type WaiverOverrideArmed,
+} from "./WaiverOverrideDialog";
+import {
   acknowledgeServerHold,
   CART_HELD_KEY,
   fetchServerHolds,
@@ -748,6 +757,51 @@ interface CreditItem {
   taxRate: null;
   type: "AccountCredit";
   categoryId: null;
+  /**
+   * T259: set while the credit is armed to be GIVEN at no charge: the
+   * client and the amount the teacher's `credit`-purpose PIN was typed
+   * for, the one-shot token and the reason. The line then charges
+   * nothing (the ticket's total is $0.00) and stands alone. Anything that
+   * changes the amount builds a new item without it, and SaleScreen drops
+   * the line when the client changes or another line joins it.
+   */
+  noCharge?: NoChargeArm;
+}
+
+/** T259: a no-charge credit's authorization, for one amount and one
+ *  client. Never stored anywhere but this line. */
+interface NoChargeArm {
+  clientId: string;
+  cents: number;
+  token: string;
+  reason: string;
+  teacherName: string;
+}
+
+/** T259: the line's armed no-charge credit, when the cart is exactly that
+ *  one line, for this amount and this client; else null. */
+function armedNoCharge(
+  cart: readonly CartEntry[],
+  clientId: string | null,
+): NoChargeArm | null {
+  if (cart.length !== 1) return null;
+  const line = cart[0];
+  if (line === undefined || !isCreditLine(line)) return null;
+  const nc = (line.item as CreditItem).noCharge;
+  if (nc === undefined || clientId === null || nc.clientId !== clientId) return null;
+  if (Math.round(line.item.price * 100) !== nc.cents || line.quantity !== 1) return null;
+  return nc;
+}
+
+/** T259: what the ticket's credit lines CHARGE: a no-charge credit adds
+ *  nothing to the total, ordinary credit its amount. */
+function creditCharged(cart: readonly CartEntry[]): number {
+  return roundToCents(
+    cart
+      .filter(isCreditLine)
+      .filter((l) => (l.item as CreditItem).noCharge === undefined)
+      .reduce((n, l) => n + l.item.price * l.quantity, 0),
+  );
 }
 
 /** Anything a ticket line can be. */
@@ -788,15 +842,16 @@ const CREDIT_WITH_OTHER =
   "Account credit cannot share a ticket with a line bought for someone " +
   "else: the rest of the ticket is paid from this client's account.";
 
-function creditItem(amount: number): CreditItem {
+function creditItem(amount: number, noCharge?: NoChargeArm): CreditItem {
   return {
     id: "credit",
-    name: ACCOUNT_CREDIT_TITLE,
+    name: noCharge ? NO_CHARGE_TITLE : ACCOUNT_CREDIT_TITLE,
     price: roundToCents(amount),
     taxExempt: true,
     taxRate: null,
     type: "AccountCredit",
     categoryId: null,
+    ...(noCharge ? { noCharge } : {}),
   };
 }
 
@@ -1197,11 +1252,8 @@ function displayTicketPayload(input: {
   const saleLines = input.cart.filter((line) => !isOffCartLine(line));
   /* T256: account credit is untaxed and priced by the amount typed, so it
      adds to the total the way a gift card's own price does. */
-  const creditCharged = roundToCents(
-    input.cart
-      .filter(isCreditLine)
-      .reduce((n, l) => n + l.item.price * l.quantity, 0),
-  );
+  /* T259: a no-charge credit adds nothing. */
+  const creditDue = creditCharged(input.cart);
   const priced = input.pricing ? null : input.priced;
   const usable =
     priced !== null && !priced.suppressed && !priced.disagrees;
@@ -1215,16 +1267,16 @@ function displayTicketPayload(input: {
     lines: displayTicketLines(input.cart),
     subtotal:
       usable && priced.subTotal !== null
-        ? roundToCents(priced.subTotal + creditCharged)
-        : saleLines.length === 0 && creditCharged > 0
-          ? creditCharged
+        ? roundToCents(priced.subTotal + creditDue)
+        : saleLines.length === 0 && creditDue > 0
+          ? creditDue
           : null,
     ...(discountTotal > 0 ? { discountTotal } : {}),
-    tax: usable ? priced.taxTotal : saleLines.length === 0 && creditCharged > 0 ? 0 : null,
+    tax: usable ? priced.taxTotal : saleLines.length === 0 && creditDue > 0 ? 0 : null,
     total:
       cartTotal === null
         ? null
-        : roundToCents(cartTotal + input.giftCardsCharged + creditCharged),
+        : roundToCents(cartTotal + input.giftCardsCharged + creditDue),
     ...(input.tenders !== null && input.tenders.length > 0
       ? { tenders: [...input.tenders] }
       : {}),
@@ -1845,6 +1897,13 @@ type ChargeResult =
         saleId: string | null;
         cartSaleId: string | null;
         cartTotal: number | null;
+        /** T259: given at no charge: who gave it, and whether the
+         *  record of it landed on the client (and why not). */
+        noCharge?: {
+          teacher: string;
+          noted: boolean;
+          noteProblem: string | null;
+        } | null;
       } | null;
     }
   /* T90: `summary` is the route's own sentence for a ticket where some
@@ -2253,6 +2312,9 @@ function PaymentPanel(props: {
    *  is no longer valid and the staff session has ended; the header
    *  control goes back to "Sign in". */
   onStaffSessionEnded: () => void;
+  /** T259: the armed no-charge credit's PIN token is no good any more, so
+   *  SaleScreen takes the line off and says this sentence. */
+  onNoChargeDropped: (sentence: string) => void;
   /**
    * T101: why the ticket's rows must not be edited, or null when they
    * may be. Pay mode's rows became editable with this ticket, and two
@@ -2539,6 +2601,13 @@ function PaymentPanel(props: {
   const creditTotal = roundToCents(
     creditLines.reduce((n, l) => n + l.item.price * l.quantity, 0),
   );
+  /* T259: a credit armed to be GIVEN at no charge: the ticket is that
+   * one line, for the amount and the client the teacher's PIN was typed
+   * for. It takes no tender, its total is $0.00, and it skips T203's
+   * approval (nothing is charged to the customer). */
+  const freeCredit = armedNoCharge(cart, client?.id ?? null);
+  /** What the credit lines add to the total: nothing for a free one. */
+  const creditDue = creditCharged(cart);
   const giftCardsTotal = roundToCents(
     giftCardLines.reduce((n, l) => n + l.item.price * l.quantity, 0),
   );
@@ -2906,7 +2975,7 @@ function PaymentPanel(props: {
   const total =
     cartTotal === null
       ? null
-      : roundToCents(cartTotal + giftCardsCharged + creditTotal);
+      : roundToCents(cartTotal + giftCardsCharged + creditDue);
 
   /** A fresher balance than the attach snapshot, learned from a
    *  refusal that named the live balance (a credit line over it), so the
@@ -3694,6 +3763,8 @@ function PaymentPanel(props: {
      * tap would take it off (`replacesAuto`). T241: `fresh` judges it as
      * though NOTHING were on the tender, which is what a student's pick
      * does to it: the pick replaces the tender, it does not join it. */
+    /* T259: a credit given at no charge takes no payment at all. */
+    if (freeCredit !== null) return "The credit is given at no charge";
     const replacing = fresh || replacesAuto(source);
     const used: ReadonlySet<TenderSource> = replacing
       ? new Set<TenderSource>()
@@ -3969,8 +4040,9 @@ function PaymentPanel(props: {
       (comp.teacher.id > 0 &&
         comp.token.length > 0 &&
         compValid({ kind: comp.reason.kind, detail: comp.reason.detail }))) &&
-    (comped
-      ? /* T79: a 100% discount takes no tender; the total is $0. */
+    (comped || freeCredit !== null
+      ? /* T79: a 100% discount takes no tender; the total is $0. T259:
+           nor does a credit given at no charge. */
         lines.length === 0
       : /* Due EXACTLY zero: the lines cover the server's total to the
            cent, no more and no less (cash surplus is change, not
@@ -4422,7 +4494,9 @@ function PaymentPanel(props: {
    *  since Mindbody's discounted total is $0.00 and says nothing. */
   const compAmount = ticketSubtotalCents / 100;
 
-  const chargeLabel = comped
+  const chargeLabel = freeCredit !== null
+    ? `Give ${money(freeCredit.cents / 100)} credit`
+    : comped
     ? total === null
       ? "Charge"
       : `Comp ${money(compAmount)}`
@@ -4485,7 +4559,7 @@ function PaymentPanel(props: {
    * go alone rather than beside a $0.00 nobody chose. A full comp is
    * "No charge". Null with no tender on the ticket.
    */
-  const displayTenders: TicketTender[] | null = comped
+  const displayTenders: TicketTender[] | null = comped || freeCredit !== null
     ? [{ word: "No charge" }]
     : lines.length === 0
       ? null
@@ -4556,6 +4630,8 @@ function PaymentPanel(props: {
       result.kind !== "error" &&
       result.kind !== "suppressed") ||
     comped ||
+    /* T259: nothing to pay, so nothing to choose. */
+    freeCredit !== null ||
     /* A split shows no Change; one method or none yet (T241 review: a
      * card let go of leaves none, and the student may choose again). */
     lines.length > 1 ||
@@ -4849,7 +4925,10 @@ function PaymentPanel(props: {
     /* T255: the card held for THE sole line, never another line's. */
     const soleTyped =
       soleLine === undefined ? undefined : typedCards.get(soleLine.id);
-    const tender = comped
+    const tender = freeCredit !== null
+      ? /* T259: a credit given at no charge sends no tender at all. */
+        {}
+      : comped
       ? /* T79: a 100% discount pays nothing: method comp, no tender. */
         { method: "comp" as const }
       : legs.length >= 2
@@ -5048,7 +5127,18 @@ function PaymentPanel(props: {
           /* T256: account credit, the whole of a credit ticket. The amount
              is the teacher's keypad figure; the route rehearses it with
              `Test: true` and asserts what Mindbody would charge. */
-          ...(hasCredit ? { accountCredit: { amount: creditTotal } } : {}),
+          ...(freeCredit !== null
+            ? /* T259: given at no charge, on the teacher's `credit`
+                 PIN token and their reason. */
+              {
+                accountCredit: {
+                  amount: freeCredit.cents / 100,
+                  noCharge: { token: freeCredit.token, reason: freeCredit.reason },
+                },
+              }
+            : hasCredit
+              ? { accountCredit: { amount: creditTotal } }
+              : {}),
           /* T112: the override's authorization, whichever of its two
              things it is. The route verifies the token, spends it once,
              runs the rehearsal under this teacher's own login for an
@@ -5273,6 +5363,19 @@ function PaymentPanel(props: {
                 cartSaleId:
                   typeof ac.cartSaleId === "string" ? ac.cartSaleId : null,
                 cartTotal: typeof ac.cartTotal === "number" ? ac.cartTotal : null,
+                noCharge:
+                  ac.noCharge && typeof ac.noCharge === "object"
+                    ? {
+                        teacher: String(ac.noCharge.teacher ?? ""),
+                        noted: ac.noCharge.noted === true,
+                        noteProblem:
+                          typeof ac.noCharge.noteError === "string"
+                            ? ac.noCharge.noteError
+                            : typeof ac.noCharge.noteSuppressed === "string"
+                              ? `suppressed (${ac.noCharge.noteSuppressed})`
+                              : null,
+                      }
+                    : null,
               }
             : null;
         setResult({
@@ -5322,9 +5425,15 @@ function PaymentPanel(props: {
                 ? `Receipt emailed to ${receiptEmailAtTap}.`
                 : `Receipt requested for ${receiptEmailAtTap}.`
               : null,
-          summary: `Paid ${money(body?.total ?? total)} by ${methodName}${
-            client ? ` for ${client.name}` : ""
-          }.`,
+          summary:
+            freeCredit !== null && creditDone !== null
+              ? /* T259: nothing was paid, so the line says what was done. */
+                `${money(creditDone.amount)} of credit given at no charge${
+                  client ? ` to ${client.name}` : ""
+                }, recorded in Mindbody as paid "Other".`
+              : `Paid ${money(body?.total ?? total)} by ${methodName}${
+                  client ? ` for ${client.name}` : ""
+                }.`,
           detail: [
             /* T90: a ticket that became more than one Mindbody sale
                lists every one of them, with whose it was; a single-sale
@@ -5380,7 +5489,8 @@ function PaymentPanel(props: {
            bought, what was charged and how. The hub takes it down by
            itself after a few seconds, so a teacher who walks away cannot
            leave this ticket in front of the next person in the queue. */
-        props.onDisplaySummary({
+        /* T259: a credit given at no charge presents nothing there. */
+        if (freeCredit === null) props.onDisplaySummary({
           ...displaySummaryAtTap,
           charged: typeof body?.total === "number" ? body.total : (total ?? 0),
           /* T53's rule, on the student's screen too: only a receipt
@@ -5403,7 +5513,7 @@ function PaymentPanel(props: {
            shows. Nothing moved, and the display says so in its own
            corner: the dry run and sandbox mark is on this screen exactly
            so a scene here never has to lie about the mode. */
-        props.onDisplaySummary({
+        if (freeCredit === null) props.onDisplaySummary({
           ...displaySummaryAtTap,
           charged: total ?? 0,
           emailedReceipt: null,
@@ -5480,6 +5590,28 @@ function PaymentPanel(props: {
          * was charged; the hold is shown above Finalize with its
          * Understood, which is the way on. */
         setTicketHolds(serverHoldsFrom(body?.holds));
+      } else if (
+        res.status === 401 &&
+        body?.reason === "teacher" &&
+        freeCredit !== null
+      ) {
+        /* T259: the `credit` PIN token was refused (spent by an earlier
+         * answer, ten minutes gone, or a restart rotated the key).
+         * Nothing was given and nothing is retried: the armed line comes
+         * off, and the teacher gives it again from Add credit, PIN and
+         * reason, which is the right price for trying twice (T48). */
+        props.onNoChargeDropped(
+          "The PIN for the no-charge credit was used or ran out, so the " +
+            "line came off the ticket. This tap gave nothing. If an " +
+            "earlier try said it may have gone through, check their " +
+            "account balance before giving it again from Add credit.",
+        );
+        setResult({
+          kind: "error",
+          message: String(
+            body?.error ?? "Enter your PIN to give credit at no charge. Nothing was given.",
+          ),
+        });
       } else if (
         res.status === 401 &&
         body?.reason === "teacher" &&
@@ -5560,6 +5692,15 @@ function PaymentPanel(props: {
   const onPrimaryTap = () => {
     /* T241 review: the synchronous half of the settle above. */
     if (tenderPick.settlingNow()) return;
+    /* T259: a credit given at no charge is NOT put to the customer:
+     * nothing is charged to them, so there is nothing to approve, and
+     * like "Check in free (comp)" it presents nothing on the customer
+     * screen. The teacher's PIN and reason are its authorization. */
+    if (freeCredit !== null) {
+      touchTender();
+      void doCharge();
+      return;
+    }
     /* T239: Finalize is the teacher accepting the tender on screen, so
      * nothing automatic moves it from here on, including in the moment
      * before an approval's request id comes back. */
@@ -6606,7 +6747,10 @@ function PaymentPanel(props: {
      be discounted regardless. Mindbody UI lets you do that." What a
      discounted card is actually worth is Mindbody's answer, asserted per
      card in the rehearsal before anything is charged. */
-  const discountBlock = hasCredit
+  const discountBlock = freeCredit !== null
+    ? /* T259: it is already free; the route refuses a discount too. */
+      "This credit is given at no charge already."
+    : hasCredit
     ? /* T256: credit is money on the account; a discount would hand over
          more than was paid. The route refuses it too. */
       "Account credit cannot be discounted."
@@ -6693,7 +6837,7 @@ function PaymentPanel(props: {
   /* The three figures (0.2): Due is settled once the lines cover the
    * total with at least one line present (or the sale is comped), and
    * Change is loud whenever cash was over-tendered. */
-  const dueSettled = comped
+  const dueSettled = comped || freeCredit !== null
     ? total !== null
     : dueCents === 0 && lines.length > 0;
 
@@ -6713,7 +6857,12 @@ function PaymentPanel(props: {
    * sentence (`chargeLabel`: "Charge $43.50", "Comp $107.45"), so what
    * the tap will do is never hidden, only off the face of the button.
    */
-  const primaryLabel = "Finalize Sale";
+  /* T259: the one exception: a credit given at no charge moves no
+   * money, so its button says what it does, "Give $10.00 credit". */
+  const primaryLabel =
+    freeCredit !== null
+      ? `Give ${money(freeCredit.cents / 100)} credit`
+      : "Finalize Sale";
   /* T241 review: for a moment after the student's pick moved the tender,
    * Finalize ignores taps, so the teacher sees the new method (the
    * sentence is highlighted meanwhile) before charging it. */
@@ -6755,8 +6904,12 @@ function PaymentPanel(props: {
          suppression is never success and never fills green. */
       <span className="pay-primary done" role="status">
         <CheckIcon />
-        <span>{result.comped ? "Comped" : "Charged"}</span>
-        <span className="btn-amt">{money(result.total)}</span>
+        <span>
+          {result.credit?.noCharge ? "Given" : result.comped ? "Comped" : "Charged"}
+        </span>
+        <span className="btn-amt">
+          {money(result.credit?.noCharge ? result.credit.amount : result.total)}
+        </span>
       </span>
     ) : (
       <button
@@ -6807,10 +6960,18 @@ function PaymentPanel(props: {
               <span className="pay-done-check" aria-hidden="true">
                 <CheckIcon />
               </span>
-              <p className="pay-done-title">Sale complete</p>
+              <p className="pay-done-title">
+                {result.credit?.noCharge ? "Credit given" : "Sale complete"}
+              </p>
               <p className="pay-done-charged">
-                {result.comped ? "Comped" : "Charged"} {money(result.total)}{" "}
-                {"\u00b7"} {result.count} {result.count === 1 ? "item" : "items"}
+                {result.credit?.noCharge ? (
+                  "No charge, nothing taken"
+                ) : (
+                  <>
+                    {result.comped ? "Comped" : "Charged"} {money(result.total)}{" "}
+                    {"\u00b7"} {result.count} {result.count === 1 ? "item" : "items"}
+                  </>
+                )}
                 {result.changeCents > 0 ? (
                   <span className="pay-done-change">
                     Change {money(result.changeCents / 100)} from the drawer
@@ -6823,7 +6984,9 @@ function PaymentPanel(props: {
                    after it, read fresh by the route. */
                 <div className="pay-done-credit">
                   <span className="pay-done-credit-label">
-                    {money(result.credit.amount)} added to their account
+                    {result.credit.noCharge
+                      ? `${money(result.credit.amount)} credit given.`
+                      : `${money(result.credit.amount)} added to their account`}
                   </span>
                   <span className="pay-done-credit-balance">
                     {result.credit.balanceAfter !== null
@@ -6833,6 +6996,27 @@ function PaymentPanel(props: {
                   <span className="pay-done-credit-note">
                     Read from Mindbody after the sale.
                   </span>
+                  {result.credit.noCharge ? (
+                    /* T259: whether the reason reached their profile. A
+                       filing that did not land is amber, never an error:
+                       the credit stands either way. */
+                    <span
+                      className={
+                        result.credit.noCharge.noted
+                          ? "pay-done-credit-note"
+                          : "pay-done-credit-note actor-note"
+                      }
+                      role={result.credit.noCharge.noted ? undefined : "alert"}
+                    >
+                      {result.credit.noCharge.noted
+                        ? `Given by ${result.credit.noCharge.teacher || "you"}. The reason is filed on their profile.`
+                        : `Given by ${result.credit.noCharge.teacher || "you"}. The reason was NOT filed on their profile${
+                            result.credit.noCharge.noteProblem
+                              ? ` (${result.credit.noCharge.noteProblem})`
+                              : ""
+                          }: add it in Mindbody by hand.`}
+                    </span>
+                  ) : null}
                 </div>
               ) : null}
               {result.compReason ? (
@@ -7151,7 +7335,10 @@ function PaymentPanel(props: {
               ) : null}
 
               <p className="pay-hint">
-                {lines.length > 0
+                {freeCredit !== null
+                  ? /* T259 */
+                    `Nothing to collect: ${money(freeCredit.cents / 100)} of credit is given at no charge on ${freeCredit.teacherName || "your"}${freeCredit.teacherName ? "'s" : ""} PIN. Reason: ${freeCredit.reason}`
+                  : lines.length > 0
                   ? "Tap an amount to change it."
                   : "Choose how they are paying."}
               </p>
@@ -7177,6 +7364,8 @@ function PaymentPanel(props: {
                   sendEmail ? "receipt-toggle on" : "receipt-toggle"
                 }
                 aria-pressed={sendEmail}
+                /* T259: a credit given at no charge sends no receipt. */
+                hidden={freeCredit !== null}
                 disabled={receipt.why !== null || charging}
                 title={receipt.why ?? "Email a receipt for this sale"}
                 onClick={() => setWantReceipt((v) => !v)}
@@ -10957,14 +11146,52 @@ export default function SaleScreen(props: {
     null,
   );
   const closeCreditSell = useCallback(() => setCreditSell(null), []);
+  /** T259: the PIN-and-reason pad for a credit given at no charge, open
+   *  for this many cents, or null. */
+  const [freeAsk, setFreeAsk] = useState<number | null>(null);
   useEffect(() => {
     if (creditSell === null) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") closeCreditSell();
+      /* The no-charge pad over the keypad has its own Escape. */
+      if (e.key === "Escape" && freeAsk === null) closeCreditSell();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [creditSell, closeCreditSell]);
+  }, [creditSell, closeCreditSell, freeAsk]);
+  /**
+   * T259: a no-charge credit is armed for ONE amount, ONE client and a
+   * ticket holding nothing else. A client change or another line joining
+   * takes the line off (never turns it into credit to be paid for, which
+   * nobody asked for), with the reason; a new amount on the keypad's Done
+   * builds an ordinary credit line, so it never carries the arming.
+   */
+  useEffect(() => {
+    const line = cart.find(
+      (l) => isCreditLine(l) && (l.item as CreditItem).noCharge !== undefined,
+    );
+    if (line === undefined) return;
+    const nc = (line.item as CreditItem).noCharge as NoChargeArm;
+    const why =
+      cart.length !== 1
+        ? "The no-charge credit came off the ticket: it stands alone, and another line joined it. Nothing was given. Give it again on a ticket of its own."
+        : (client?.id ?? null) !== nc.clientId
+          ? "The no-charge credit came off the ticket: it was for another client. Nothing was given."
+          : Math.round(line.item.price * 100) !== nc.cents || line.quantity !== 1
+            ? "The no-charge credit came off the ticket: its amount changed. Nothing was given."
+            : null;
+    if (why === null) return;
+    setCart((lines) => lines.filter((l) => l.key !== line.key));
+    setCartNotice({ text: why, offers: [] });
+  }, [cart, client]);
+  /** T259: the panel's word that the arming's PIN token is dead. */
+  const dropNoCharge = useCallback((sentence: string) => {
+    setCart((lines) =>
+      lines.filter(
+        (l) => !(isCreditLine(l) && (l.item as CreditItem).noCharge !== undefined),
+      ),
+    );
+    setCartNotice({ text: sentence, offers: [] });
+  }, []);
   useEffect(() => {
     if (giftSell === null) return;
     const onKey = (e: KeyboardEvent) => {
@@ -12423,11 +12650,11 @@ export default function SaleScreen(props: {
    */
   const giftCardLines = cart.filter(isGiftCardLine);
   const saleLines = cart.filter((line) => !isOffCartLine(line));
-  /* T256: account credit, untaxed, the amount typed. */
+  /* T256: account credit, untaxed, the amount typed. T259: what it
+   * CHARGES, which is nothing for a credit given at no charge. */
   const creditLines = cart.filter(isCreditLine);
-  const creditTotal = roundToCents(
-    creditLines.reduce((n, l) => n + l.item.price * l.quantity, 0),
-  );
+  const creditTotal = creditCharged(cart);
+  const freeCreditArm = armedNoCharge(cart, client?.id ?? null);
   const giftCardsTotal = roundToCents(
     giftCardLines.reduce((n, l) => n + l.item.price * l.quantity, 0),
   );
@@ -12508,7 +12735,9 @@ export default function SaleScreen(props: {
   /** T241: and the ways to pay the student may switch to. */
   const [liveChoices, setLiveChoices] = useState<TenderOffer[] | null>(null);
   const livePayload =
-    cart.length === 0
+    /* T259: a credit given at no charge presents nothing on the customer
+       screen, like "Check in free (comp)": nothing is charged to them. */
+    cart.length === 0 || freeCreditArm !== null
       ? null
       : displayTicketPayload({
           mode: "live",
@@ -13299,6 +13528,47 @@ export default function SaleScreen(props: {
     creditSell === null ? 0 : Number(creditSell.entry || "0");
   const creditOk =
     creditEntryCents > 0 && creditEntryCents <= CREDIT_MAX_DOLLARS * 100;
+  /**
+   * T259: "Give at no charge" is offered only for a client this screen
+   * KNOWS is a real one (the lookup answered and it is not the walk-in
+   * account; the house client gets no option at all), and greyed with
+   * the reason when the ticket holds anything else, nothing is typed, or
+   * the figure is over the slip-of-the-keypad cap.
+   */
+  const freeOffered =
+    client !== null &&
+    cardLookup !== null &&
+    cardLookup.clientId === client.id &&
+    !cardLookup.loading &&
+    cardLookup.houseClient === false;
+  const freeWhy: string | null =
+    creditWhy !== null
+      ? creditWhy
+      : cart.some((l) => !isCreditLine(l))
+        ? "Credit at no charge stands alone. Take the other lines off first."
+        : creditEntryCents <= 0
+          ? "Type the amount first"
+          : creditEntryCents > NO_CHARGE_MAX_USD * 100
+            ? noChargeCapSentence()
+            : null;
+  /** The pad matched the teacher's PIN with a reason: the ticket's one
+   *  line becomes the no-charge credit for THIS amount and THIS client. */
+  const armFree = (armed: WaiverOverrideArmed) => {
+    const cents = freeAsk;
+    setFreeAsk(null);
+    if (cents === null || client === null || cents <= 0) return;
+    if (cents > NO_CHARGE_MAX_USD * 100 || cart.some((l) => !isCreditLine(l))) return;
+    setCreditSell(null);
+    setCartNotice(null);
+    const item = creditItem(cents / 100, {
+      clientId: client.id,
+      cents,
+      token: armed.token,
+      reason: armed.reason,
+      teacherName: armed.teacher.name,
+    });
+    setCart([{ key: CREDIT_LINE_KEY, item, quantity: 1 }]);
+  };
   const creditNote =
     creditEntryCents === 0
       ? creditHeld !== null
@@ -14285,6 +14555,7 @@ export default function SaleScreen(props: {
             }}
             onDone={close}
             onStaffSessionEnded={() => onStaffSessionEnded?.()}
+            onNoChargeDropped={dropNoCharge}
             onBusyChange={setCharging}
             onTicketLock={setTicketLock}
             onModalChange={setPayModalOpen}
@@ -14916,10 +15187,20 @@ export default function SaleScreen(props: {
                       <span>Total</span>
                       <span className="amt">{money(creditTotal)}</span>
                     </div>
-                    <p className="muted-note">
-                      Account credit is not taxed. It goes on{" "}
-                      {client ? `${client.name}'s` : "the client's"} account.
-                    </p>
+                    {freeCreditArm !== null ? (
+                      /* T259: given at no charge. */
+                      <p className="muted-note">
+                        Given at no charge on {freeCreditArm.teacherName || "your"}
+                        {freeCreditArm.teacherName ? "'s" : ""} PIN: nothing is
+                        taken. {money(freeCreditArm.cents / 100)} goes on{" "}
+                        {client ? `${client.name}'s` : "the client's"} account.
+                      </p>
+                    ) : (
+                      <p className="muted-note">
+                        Account credit is not taxed. It goes on{" "}
+                        {client ? `${client.name}'s` : "the client's"} account.
+                      </p>
+                    )}
                   </>
                 ) : saleLines.length === 0 && giftCardLines.length > 0 ? (
                   /* T95: gift cards alone. There is no cart to price and
@@ -15681,8 +15962,55 @@ export default function SaleScreen(props: {
                 Cancel
               </button>
             </div>
+            {freeOffered ? (
+              /* T259 (Pete, 2026-11-19): credit GIVEN, not sold. The
+                 teacher's own PIN (the `credit` purpose) and a required
+                 reason, then the ticket carries it alone at $0.00. */
+              <div className="credit-free">
+                <button
+                  className="credit-free-btn"
+                  aria-disabled={freeWhy !== null}
+                  title={freeWhy ?? "Give this credit at no charge, with your PIN and a reason"}
+                  onClick={() => {
+                    if (freeWhy !== null) return;
+                    setFreeAsk(creditEntryCents);
+                  }}
+                >
+                  Give at no charge
+                </button>
+                <p
+                  className={
+                    freeWhy !== null && creditEntryCents > 0
+                      ? "credit-free-why gift-bad"
+                      : "credit-free-why muted-note"
+                  }
+                >
+                  {freeWhy ??
+                    `${money(creditEntryCents / 100)} onto their account and nothing taken. Needs your PIN and a reason.`}
+                </p>
+              </div>
+            ) : null}
           </div>
         </div>
+      ) : null}
+      {freeAsk !== null && typeof document !== "undefined" ? createPortal(
+        /* Portalled to the body, like the waiver pad it is on the roster:
+           inside the sale overlay (which ends at the nav bar) the PIN pad
+           and the reason do not fit an iPad's height. */
+        <WaiverOverrideDialog
+          flow="checkin"
+          name={`${money(freeAsk / 100)} onto ${client?.name ?? "the client"}'s account`}
+          copy={{
+            purpose: NO_CHARGE_PURPOSE,
+            kicker: "Give credit (no charge)",
+            title: `Give ${money(freeAsk / 100)} credit`,
+            sub: "No money is taken. Your PIN and the reason are recorded on their profile.",
+            placeholder: "Why is this credit free?",
+          }}
+          onCancel={() => setFreeAsk(null)}
+          onArmed={armFree}
+        />,
+        document.body,
       ) : null}
 
       {giftSell !== null ? (

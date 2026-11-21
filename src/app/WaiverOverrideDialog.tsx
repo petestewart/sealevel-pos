@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import type { CompPurpose } from "@/lib/auth";
 import { isPinShape, PIN_MAX, PIN_MIN } from "@/lib/comp";
 import {
   waiverOverrideTitle,
@@ -42,6 +43,20 @@ export interface WaiverOverrideArmed {
   reason: string;
 }
 
+/**
+ * T259: the same pad for another authorization that needs a PIN AND a
+ * reason, credit given at no charge. The PURPOSE is signed into the token
+ * (T94 review), so passing `copy` changes what the PIN authorizes, not
+ * just the words; the reason's bounds are the same 3 to 200 either way.
+ */
+export interface ReasonPinCopy {
+  purpose: CompPurpose;
+  kicker: string;
+  title: string;
+  sub: string;
+  placeholder: string;
+}
+
 export default function WaiverOverrideDialog(props: {
   /** Which gated flow this is for, so the title names the act. */
   flow: WaiverFlow;
@@ -49,8 +64,11 @@ export default function WaiverOverrideDialog(props: {
   name: string;
   onCancel: () => void;
   onArmed: (armed: WaiverOverrideArmed) => void;
+  /** T259: another purpose's words. Absent, it is T211's waiver pad. */
+  copy?: ReasonPinCopy;
 }) {
-  const { flow, name, onCancel, onArmed } = props;
+  const { flow, name, onCancel, onArmed, copy } = props;
+  const purpose: CompPurpose = copy?.purpose ?? WAIVER_PURPOSE;
   const [pin, setPin] = useState("");
   const pinRef = useRef("");
   const [reason, setReason] = useState("");
@@ -99,7 +117,7 @@ export default function WaiverOverrideDialog(props: {
         headers: { "content-type": "application/json" },
         /* The PURPOSE is signed into the token (T94 review), so a PIN
          * typed here goes past a waiver and authorizes nothing else. */
-        body: JSON.stringify({ pin: digits, purpose: WAIVER_PURPOSE }),
+        body: JSON.stringify({ pin: digits, purpose }),
       });
       const body = await res.json().catch(() => ({}));
       pinRef.current = "";
@@ -145,7 +163,7 @@ export default function WaiverOverrideDialog(props: {
       busyRef.current = false;
       setBusy(false);
     }
-  }, [onArmed]);
+  }, [onArmed, purpose]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -173,7 +191,7 @@ export default function WaiverOverrideDialog(props: {
 
   const reasonOk = waiverReasonValid(reason);
   const scrimDown = useRef(false);
-  const title = waiverOverrideTitle(flow);
+  const title = copy?.title ?? waiverOverrideTitle(flow);
   return (
     <div
       className="modal-scrim"
@@ -194,11 +212,17 @@ export default function WaiverOverrideDialog(props: {
         aria-label={title}
         onClick={(e) => e.stopPropagation()}
       >
-        <p className="modal-kicker">Teacher override</p>
+        <p className="modal-kicker">{copy?.kicker ?? "Teacher override"}</p>
         <p className="modal-title">{title}</p>
+        {/* T259: two columns in landscape (the reason on the left, the
+            dots and keys on the right), one in portrait, so the whole pad
+            fits an iPad either way with every key 64px and nothing under
+            the Cancel/Done row. */}
+        <div className="wo-body">
+        <div className="wo-left">
         <p className="reason-sub">
-          The student has not signed the waiver. Your PIN and a reason are
-          recorded on their profile.
+          {copy?.sub ??
+            "The student has not signed the waiver. Your PIN and a reason are recorded on their profile."}
         </p>
         <p className="reason-note muted-note">{name}</p>
         <label className="wo-label" htmlFor="waiver-override-reason">
@@ -210,13 +234,15 @@ export default function WaiverOverrideDialog(props: {
           rows={2}
           maxLength={WAIVER_REASON_MAX}
           disabled={busy}
-          placeholder="Why are you going ahead without it?"
+          placeholder={copy?.placeholder ?? "Why are you going ahead without it?"}
           value={reason}
           onChange={(e) => {
             reasonRef.current = e.target.value;
             setReason(e.target.value);
           }}
         />
+        </div>
+        <div className="wo-right">
         <div
           key={`dots-${shake}`}
           className={
@@ -269,6 +295,8 @@ export default function WaiverOverrideDialog(props: {
             0
           </button>
           <span aria-hidden="true" />
+        </div>
+        </div>
         </div>
         <div className="modal-actions">
           <button className="modal-cancel" disabled={busy} onClick={onCancel}>

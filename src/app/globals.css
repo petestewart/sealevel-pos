@@ -6608,6 +6608,177 @@ textarea.reason-note-field:disabled::placeholder {
   font-variant-numeric: tabular-nums;
 }
 
+/* T257: Recent purchases, under the profile card in the same modal and
+ * in the same idiom: a bordered surface, muted kicker, 16px floor. The
+ * void control is the one --stop thing here, because a void is
+ * destructive (in Mindbody, which is where it happens); outlined rather
+ * than filled, since the tap only opens a page. Tokens only. */
+.purchases {
+  margin-top: 12px;
+  padding: 0 16px 16px;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 17px;
+  line-height: 1.3;
+}
+
+.purchases-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.purchases-spin {
+  color: var(--muted);
+}
+
+.purchases-error {
+  margin: 0 0 8px;
+  padding: 10px 12px;
+  background: var(--stop-bg);
+  color: var(--stop);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.purchases-help {
+  margin-bottom: 8px;
+}
+
+.purchase-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.purchase {
+  padding: 10px 0 12px;
+  border-top: 1px solid var(--line);
+}
+
+.purchase:last-child {
+  border-bottom: 1px solid var(--line);
+}
+
+.purchase-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  font-weight: 600;
+}
+
+.purchase-total,
+.purchase-amt {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.purchase-lines {
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.purchase-line {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  font-size: 16px;
+}
+
+.purchase-desc {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.purchase-amt {
+  color: var(--muted);
+}
+
+.purchase-meta {
+  margin: 4px 0 0;
+  font-size: 16px;
+  color: var(--muted);
+}
+
+.purchase-no {
+  font-variant-numeric: tabular-nums;
+}
+
+.purchase-returned {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 0 6px;
+  background: var(--warn-bg);
+  color: var(--warn);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+/* Pete, 2026-11-18: "the void button is way too big. make it smaller and
+ * to the right." The sale's meta line and its actions share one row; the
+ * control is a compact outlined button at the row's right end. */
+.purchase-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 4px 0 0;
+}
+
+.purchase-foot .purchase-meta {
+  margin: 0;
+  flex: 1 1 auto;
+}
+
+.purchase-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
+.purchase-void {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+  min-width: 88px;
+  margin: 0;
+  padding: 0 16px;
+  border: 2px solid var(--stop);
+  border-radius: 0;
+  background: transparent;
+  color: var(--stop);
+  font-size: 17px;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.purchase-void:hover,
+.purchase-void:active {
+  background: var(--stop-bg);
+}
+
+.purchases-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 64px;
+  margin: 12px 0 0;
+  padding: 0 16px;
+  border: 2px solid var(--accent);
+  border-radius: 0;
+  background: transparent;
+  color: var(--accent);
+  font-size: 17px;
+  font-weight: 700;
+}
+
 
 /* --- Staff sign-in (T49) ---------------------------------------------
  * The header control beside Buy, the sign-in modal, the probe list and
@@ -9059,6 +9230,38 @@ button.display-mark-row {
   width: min(460px, 100%);
 }
 
+/* T259 (and T211's own pad): the body is the reason (left) and the PIN
+ * (right). One column in portrait, where an iPad's 1180px holds the
+ * whole stack; two in landscape, where 820px did not (the last key row
+ * sat under Cancel/Done and a 0 could not be typed without scrolling).
+ * Keys stay the pad's 64px; nothing is shrunk to fit. The box keeps
+ * .modal's T98 max-height, so with the keyboard up it scrolls inside the
+ * visible band with the reason field at the top of it. */
+.wo-body,
+.wo-left,
+.wo-right {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  align-content: start;
+}
+
+@media (min-width: 900px) and (orientation: landscape) {
+  .modal-waiver-override {
+    width: min(820px, 100%);
+  }
+
+  .wo-body {
+    grid-template-columns: minmax(0, 1fr) 320px;
+    gap: 24px;
+    align-items: start;
+  }
+
+  .modal-waiver-override textarea.reason-note-field {
+    min-height: 120px;
+  }
+}
+
 .wo-label {
   margin: 6px 0 -4px;
   font-size: 16px;
@@ -9653,4 +9856,63 @@ button.display-mark-row {
   display: block;
   width: 100%;
   margin-top: 10px;
+}
+
+/* T259: "Give at no charge" on the Add credit keypad. A full-width row
+ * under the pad (the pad is a three-column grid), a 64px outlined
+ * control in --accent (actionable, not destructive: it gives, and the
+ * PIN and reason are asked next), and one sentence beside it saying what
+ * the tap does or why it cannot. Tokens only. */
+.modal-pad .credit-free {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.credit-free-btn {
+  flex: none;
+  min-height: 64px;
+  padding: 0 20px;
+  font: inherit;
+  font-size: 18px;
+  font-weight: 700;
+  border: 2px solid var(--accent);
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.credit-free-btn[aria-disabled="true"] {
+  border-color: var(--line);
+  background: var(--surface-2);
+  color: var(--muted);
+  cursor: default;
+}
+
+.credit-free-why {
+  margin: 0;
+  font-size: 16px;
+}
+
+.credit-free-why.muted-note {
+  color: var(--muted);
+}
+
+.credit-free-why.gift-bad {
+  color: var(--stop);
+  font-weight: 600;
+}
+
+.pay-done-credit-note.actor-note {
+  color: var(--warn);
+  font-weight: 600;
+}
+
+/* T259: the receipt toggle is not drawn for a credit given at no charge. */
+.receipt-toggle[hidden] {
+  display: none;
 }

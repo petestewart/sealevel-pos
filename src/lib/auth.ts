@@ -329,8 +329,9 @@ const COMP_TOKEN_PREFIX = "c2";
  *  its balance (T94), overriding a pass Mindbody's own rules refused
  *  (T112), approving a sale at the counter when the customer screen
  *  could not (T203's D1 override), selling a membership with no
- *  signature (T205), or checking a student in with no waiver on file
- *  (T211). Each is its own value for T94 review's reason: a PIN typed
+ *  signature (T205), checking a student in with no waiver on file
+ *  (T211), or giving account credit at no charge (T259). Each is its own
+ *  value for T94 review's reason: a PIN typed
  *  for one of them must not pass as the authorization for another, and
  *  two request fields are not a separation while one value fits both. */
 export type CompPurpose =
@@ -341,7 +342,9 @@ export type CompPurpose =
   /* T205: selling a membership without the customer's signature. */
   | "contract"
   /* T211: booking or checking in a student with no released waiver. */
-  | "waiver";
+  | "waiver"
+  /* T259: giving a client account credit at no charge, paid "Other". */
+  | "credit";
 
 export function isCompPurpose(value: unknown): value is CompPurpose {
   return (
@@ -350,7 +353,8 @@ export function isCompPurpose(value: unknown): value is CompPurpose {
     value === "override" ||
     value === "approve" ||
     value === "contract" ||
-    value === "waiver"
+    value === "waiver" ||
+    value === "credit"
   );
 }
 
