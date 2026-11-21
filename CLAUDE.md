@@ -224,7 +224,10 @@ paid `{Type: "Custom", Metadata: {Amount, Id}}` with the id of the type
 NAMED "Other" on `/site/paymenttypes` (cached an hour; 9 only when that
 read fails; a list with no "Other" refuses), rehearsed with `Test: true`
 and then checked as T256 credit is: AmountPaid, ONE sale line of the
-amount, a fresh balance delta, any miss ambiguous and held (T253). Never
+amount, a fresh balance delta, any miss ambiguous and held (T253); a sale
+not yet readable by id leaves the line check unverified, as T256's does,
+and AmountPaid and the balance delta still decide. Off prod, a
+`/site/paymenttypes` read that fails refuses rather than guess 9. Never
 Comp (refused) and never type 7 "Comp/Guest" (passes Test, refused for
 real, T258). Dry run and the write guard apply, and a suppressed write
 hands the PIN back. No customer approval and nothing on the customer

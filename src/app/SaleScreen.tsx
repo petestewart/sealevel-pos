@@ -5602,8 +5602,9 @@ function PaymentPanel(props: {
          * reason, which is the right price for trying twice (T48). */
         props.onNoChargeDropped(
           "The PIN for the no-charge credit was used or ran out, so the " +
-            "line came off the ticket. Nothing was given. Give it again " +
-            "from Add credit.",
+            "line came off the ticket. This tap gave nothing. If an " +
+            "earlier try said it may have gone through, check their " +
+            "account balance before giving it again from Add credit.",
         );
         setResult({
           kind: "error",

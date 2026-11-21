@@ -97,10 +97,25 @@ export async function otherPaymentTypeId(): Promise<
   try {
     body = await mindbody("/site/paymenttypes");
   } catch (err) {
+    /* PR #21 review: a guessed id is only safe where it was seen. 9 is
+     * "Other" on site 471 (prod) and has never been looked at on any other
+     * target, so off prod a list that does not answer refuses rather than
+     * record the credit as paid by whatever type 9 is there. */
+    const why = err instanceof Error ? err.message : String(err);
+    if (key !== "prod") {
+      console.warn(
+        `[credit-free] ${key} /site/paymenttypes did not answer (${why}); ` +
+          "refusing: the fallback id is known only on prod",
+      );
+      return {
+        error:
+          "Could not read the studio's payment types from Mindbody, so the " +
+          "credit was not given. Try again in a moment.",
+      };
+    }
     console.warn(
-      `[credit-free] ${key} /site/paymenttypes did not answer ` +
-        `(${err instanceof Error ? err.message : String(err)}); using the ` +
-        `fallback id ${OTHER_FALLBACK_ID} for "Other"`,
+      `[credit-free] ${key} /site/paymenttypes did not answer (${why}); ` +
+        `using the fallback id ${OTHER_FALLBACK_ID} for "Other"`,
     );
     return { id: OTHER_FALLBACK_ID, source: "fallback" };
   }
