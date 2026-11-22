@@ -58,6 +58,9 @@ const CHECK_WORDS: Record<string, string> = {
   differs: "Differs from Mindbody",
   missing: "Not found in Mindbody",
   unverified: "Could not be checked",
+  /* T288: an uncertain tap, looked up in Mindbody. */
+  found: "Went through",
+  "not-sold": "Checked: no sale in Mindbody",
 };
 
 function money(n: number | null): string {
@@ -144,7 +147,7 @@ export default function SalesSheet({
   const [holdBusy, setHoldBusy] = useState<string | null>(null);
   /** T231: Square's record against ours, for the day on screen; null
    *  when Square could not be read. */
-  const [squareProblems, setSquareProblems] = useState<{ sentence: string }[] | null>([]);
+  const [squareProblems, setSquareProblems] = useState<{ kind?: string; sentence: string }[] | null>([]);
 
   const loadHolds = useCallback(async (d?: string) => {
     try {
@@ -242,15 +245,18 @@ export default function SalesSheet({
 
   if (!open) return null;
 
+  /* T288: an uncertain tap the check has looked up is settled either way
+   * ("Went through" or "no sale in Mindbody"), so it stops being one. */
+  const settled = (r: Row) => r.checkState === "found" || r.checkState === "not-sold";
   const problem = (r: Row) =>
     r.checkState === "differs" ||
     r.checkState === "missing" ||
-    r.outcome === "ambiguous" ||
+    ((r.outcome === "ambiguous" || r.outcome === "started") && !settled(r)) ||
     r.outcome === "sold-nothing" ||
-    r.outcome === "partial" ||
-    r.outcome === "started";
+    r.outcome === "partial";
   const shown = (rows ?? []).filter((r) => !onlyProblems || problem(r));
-  const sold = (rows ?? []).filter((r) => r.outcome === "stood");
+  /* T288: an uncertain tap Mindbody shows a sale for was sold too. */
+  const sold = (rows ?? []).filter((r) => r.outcome === "stood" || r.checkState === "found");
   const soldTotal = sold.reduce((a, r) => a + (r.total ?? 0), 0);
 
   return (
@@ -268,16 +274,30 @@ export default function SalesSheet({
         </div>
         {squareProblems === null ? (
           <p className="reason-note">Square could not be read, so card reader payments were not matched.</p>
-        ) : squareProblems.length > 0 ? (
-          <div className="sales-holds">
-            <p className="sales-holds-head">Card reader: Square and this counter disagree</p>
-            {squareProblems.map((m, i) => (
-              <p key={i} className="sales-problem">
-                {m.sentence}
-              </p>
-            ))}
-          </div>
-        ) : null}
+        ) : (
+          <>
+            {squareProblems.some((m) => m.kind !== "outside") ? (
+              <div className="sales-holds">
+                <p className="sales-holds-head">Card reader: Square and this counter disagree</p>
+                {squareProblems
+                  .filter((m) => m.kind !== "outside")
+                  .map((m, i) => (
+                    <p key={i} className="sales-problem">
+                      {m.sentence}
+                    </p>
+                  ))}
+              </div>
+            ) : null}
+            {/* T288: taken in Square outside this app, said quietly. */}
+            {squareProblems
+              .filter((m) => m.kind === "outside")
+              .map((m, i) => (
+                <p key={`o${i}`} className="reason-note">
+                  {m.sentence}
+                </p>
+              ))}
+          </>
+        )}
         {holds.length > 0 ? (
           <div className="sales-holds">
             <p className="sales-holds-head">Card reader holds to settle</p>
@@ -384,6 +404,8 @@ export default function SalesSheet({
                     </span>
                   ) : r.outcome === "stood" ? (
                     <span className="sales-check">Not checked yet</span>
+                  ) : r.outcome === "ambiguous" || r.outcome === "started" ? (
+                    <span className="sales-check">Not looked up yet</span>
                   ) : null}
                 </button>
                 {open ? (
@@ -403,6 +425,7 @@ export default function SalesSheet({
                       </p>
                     ) : null}
                     {r.message ? <p>The counter was told: {r.message}</p> : null}
+                    {typeof r.checkDetail?.note === "string" ? <p>{r.checkDetail.note}</p> : null}
                     {problems.map((p, i) => (
                       <p key={i} className="sales-problem">
                         {p}

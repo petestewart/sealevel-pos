@@ -10045,6 +10045,12 @@ button.display-mark-row {
   color: var(--warn);
 }
 
+/* T288: a looked-up uncertain tap that went through is money taken. */
+.sales-check.c-found {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+
 .sales-outcome.o-sold-nothing,
 .sales-check.c-differs,
 .sales-check.c-missing {

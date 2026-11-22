@@ -750,7 +750,10 @@ export interface ReaderMismatch {
     | "not-taken"
     | "amount"
     | "square-only"
-    | "old-hold";
+    | "old-hold"
+    /** T288: taken in Square OUTSIDE this app (the Dashboard, Square's
+     *  own apps): not a counter sale, so information, never a problem. */
+    | "outside";
   paymentId: string | null;
   attemptId: string | null;
   amountCents: number | null;
@@ -768,6 +771,9 @@ export interface ReaderMismatch {
  *               settled; Square cancels it at 12 hours by itself)
  * Null when Square or the database could not be read.
  */
+/** T288: the shape of an attempt id (a UUID) as Square's reference_id. */
+const OUR_REFERENCE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function readerMismatches(
   from: number,
   to: number,
@@ -804,7 +810,25 @@ export async function readerMismatches(
     const row = byPayment.get(p.id);
     const amt = p.amount_money?.amount ?? null;
     if (p.status === "COMPLETED") {
-      if (!row) {
+      /* T288 (Pete, the $1.00 he took in Square's Dashboard to unlock its
+       * fee-free offer, shown in red as "no sale on this counter knows
+       * about"). A payment this app started carries our attempt id as
+       * its reference_id and, being a Terminal API checkout, a
+       * terminal_checkout_id (both seen in Square's sandbox). One with
+       * neither was taken somewhere else in Square: said quietly, since
+       * it is not a counter sale and nothing here can be wrong about it. */
+      const ours =
+        (typeof p.reference_id === "string" && OUR_REFERENCE.test(p.reference_id)) ||
+        (typeof p.terminal_checkout_id === "string" && p.terminal_checkout_id !== "");
+      if (!row && !ours) {
+        out.push({
+          kind: "outside",
+          paymentId: p.id,
+          attemptId: null,
+          amountCents: amt,
+          sentence: `${dollars(amt)} was taken in Square outside this app (payment ${p.id}). It is not a counter sale; nothing to do unless nobody recognises it.`,
+        });
+      } else if (!row) {
         out.push({
           kind: "square-only",
           paymentId: p.id,

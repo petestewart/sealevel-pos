@@ -150,7 +150,11 @@ export interface SquarePayment {
   amount_money?: SquareMoney;
   location_id?: string;
   reference_id?: string;
-  card_details?: { card?: { card_brand?: string; last_4?: string } };
+  /** Set by Square on a payment taken through a Terminal API checkout
+   *  (seen in the sandbox, 2026-11-22). */
+  terminal_checkout_id?: string;
+  created_at?: string;
+  card_details?: { card?: { card_brand?: string; last_4?: string }; entry_method?: string };
 }
 
 export interface SquareDeviceCode {
