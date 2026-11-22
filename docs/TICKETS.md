@@ -24380,3 +24380,28 @@ pass.
   fake until the real Terminal.
 - The location assertion, the pairing screen, and selling against the
   hold (T226, T227).
+
+## T226. Selling against the card reader's hold (2026-11-22)
+
+`/api/checkout` takes `method: "reader"` with `reader: { attemptId }` and
+the same ticket `/api/reader/collect` held. Refused before anything else:
+the switch off, and the shapes the reader does not take yet (gift card,
+account credit, discount, override, typed card, overdraft, a line for
+someone else). In the method dispatch (`m === "reader"`):
+
+1. `claimHold`: the row must be `authorized`, this teacher's, for this
+   client, cart sha, target and mode, and Square must read the payment as
+   APPROVED for exactly `Math.round(total * 100)`, the fresh rehearsal.
+   Then `authorized -> selling`, a compare-and-set.
+2. The sale, under the teacher's token, paid `{Type: "Custom", Metadata:
+   {Amount, Id}}` with `MINDBODY_{SANDBOX,PROD}_READER_PAYMENT_ID` (P7).
+3. Stood: `captureHold` takes the money (retried three times in the
+   request, then by the sweep; never a second charge). Refused,
+   suppressed, or T103's empty basket: `releaseHold` voids the payment and
+   the answer says "The card was not charged." No answer: the hold is KEPT
+   (`unresolved`), the answer is ambiguous, and T253 holds the client.
+
+POST's exit also releases a hold still `authorized` for any answer that
+is not a sale (a dry run or refusal before the dispatch, an approval, a
+PIN), and adds `readerReleased: true`. A hold never approved is left for
+the reader. Driven against the fakes; see PLAN T226.

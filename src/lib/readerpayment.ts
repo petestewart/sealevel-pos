@@ -536,6 +536,7 @@ export async function sweepOnce(): Promise<void> {
       }
       await refreshAttempt(r.id).catch(() => null);
     }
+    await sweepSales(env);
     const stuck = await readerPaymentsIn(["cancelling"]);
     for (const r of stuck ?? []) {
       if (Date.now() - r.updatedAt > 20_000) await finishCancel(env, r).catch(() => null);
@@ -567,5 +568,190 @@ export async function sweepOnce(): Promise<void> {
     console.warn(`[reader] sweep failed: ${String(err)}`);
   } finally {
     sweeping = false;
+  }
+}
+
+/* --- Selling against a hold (T226) -------------------------------------- */
+
+async function completePayment(env: ReaderEnv, id: string): Promise<SquarePayment> {
+  const r = await square<{ payment: SquarePayment }>(
+    `/v2/payments/${encodeURIComponent(id)}/complete`,
+    { method: "POST", body: {} },
+    env,
+  );
+  return r.payment;
+}
+
+export type ClaimResult =
+  | { ok: true; row: ReaderPaymentRow; mindbodyPaymentId: string }
+  | { ok: false; error: string };
+
+/**
+ * T226: the checkout's claim on an approved hold, `authorized -> selling`,
+ * made only after the row and SQUARE both agree with the sale about to be
+ * made: the same teacher, client, cart and Mindbody target, and a payment
+ * Square reads as APPROVED for exactly `amountCents`, the fresh
+ * rehearsal's total. Anything else refuses before Mindbody is asked, and
+ * the hold stays where it is (the teacher can Cancel it, or the sweep
+ * releases it). Square is read here, not trusted from the row.
+ */
+export async function claimHold(input: {
+  attemptId: string;
+  staffId: string;
+  clientId: string;
+  cartSha: string;
+  amountCents: number;
+}): Promise<ClaimResult> {
+  const env = readerEnv();
+  if ("missing" in env) {
+    return { ok: false, error: `The card reader is not set up: missing ${env.missing.join(", ")}.` };
+  }
+  const found = await findReaderPayment(input.attemptId);
+  if (found === "unavailable") {
+    return {
+      ok: false,
+      error: "The database did not answer, so the card reader hold could not be checked. Nothing was charged.",
+    };
+  }
+  if (found === null || found.staffId !== input.staffId) {
+    return { ok: false, error: "No card reader hold was found for this sale. Nothing was charged." };
+  }
+  const row = found;
+  if (row.state !== "authorized") {
+    return {
+      ok: false,
+      error:
+        row.state === "collecting"
+          ? "The reader has not approved a card yet."
+          : `This card reader attempt is ${row.state}, so nothing was charged.`,
+    };
+  }
+  if (row.target !== target() || row.mode !== readerMode()) {
+    return { ok: false, error: "This hold was taken for another studio or mode. Nothing was charged." };
+  }
+  if (row.clientId !== input.clientId || row.cartSha !== input.cartSha) {
+    return {
+      ok: false,
+      error: "The ticket changed after the card was tapped. Cancel the reader and start again. Nothing was charged.",
+    };
+  }
+  if (row.amountCents !== input.amountCents) {
+    return {
+      ok: false,
+      error:
+        `Mindbody's total is now $${(input.amountCents / 100).toFixed(2)}, but the card was approved for ` +
+        `$${(row.amountCents / 100).toFixed(2)}. Cancel the reader and start again. Nothing was charged.`,
+    };
+  }
+  if (!row.paymentId) {
+    return { ok: false, error: "The hold has no payment on it. Nothing was charged." };
+  }
+  let payment: SquarePayment;
+  try {
+    payment = await getPayment(env, row.paymentId);
+  } catch (err) {
+    return {
+      ok: false,
+      error: `Square could not confirm the hold: ${err instanceof Error ? err.message : String(err)} Nothing was charged.`,
+    };
+  }
+  if (payment.status !== "APPROVED" || payment.amount_money?.amount !== input.amountCents) {
+    return { ok: false, error: `Square reads the hold as ${payment.status}, so nothing was charged. Start again.` };
+  }
+  const moved = await transitionReaderPayment(input.attemptId, ["authorized"], "selling");
+  if (moved === null || moved === "unavailable") {
+    return { ok: false, error: "This card reader hold was taken by another request. Nothing was charged." };
+  }
+  console.log(`[reader] ${moved.id} selling payment=${moved.paymentId} amount=${moved.amountCents}`);
+  return { ok: true, row: moved, mindbodyPaymentId: env.mindbodyPaymentId };
+}
+
+/**
+ * T226: the sale did not happen (Mindbody refused, a dry run or the write
+ * guard suppressed it, T103 found nothing sold): release the hold, from
+ * `selling`, through the same cancel every other release uses. Never
+ * throws; answers the row as it ends.
+ */
+export async function releaseHold(id: string, why: string): Promise<ReaderPaymentRow | null> {
+  const env = readerEnv();
+  const moved = await transitionReaderPayment(id, ["selling"], "cancelling", { failure: why });
+  if (moved === null || moved === "unavailable") return reread(id);
+  if ("missing" in env) return reread(id);
+  return finishCancel(env, moved).catch(() => reread(id));
+}
+
+/**
+ * T226: the sale stands in Mindbody: record it and TAKE the money. A
+ * complete that does not answer is retried here three times and then by
+ * the sweep each pass (a payment completes once; the tap, the card and
+ * the sale already decided it). A complete Square definitely refuses
+ * ends `uncollected`: sold in Mindbody, the card NOT charged, for a
+ * person.
+ */
+export async function captureHold(
+  id: string,
+  mbSaleId: string | null,
+): Promise<ReaderPaymentRow | null> {
+  const env = readerEnv();
+  const sold = await transitionReaderPayment(id, ["selling"], "sold", { mbSaleId });
+  const row = sold === null || sold === "unavailable" ? await reread(id) : sold;
+  if (row === null || row.state !== "sold" || "missing" in env) return row;
+  return tryComplete(env, row);
+}
+
+async function tryComplete(env: ReaderEnv, row: ReaderPaymentRow): Promise<ReaderPaymentRow | null> {
+  if (!row.paymentId) return row;
+  for (let i = 0; i < 3; i++) {
+    try {
+      const p = await completePayment(env, row.paymentId);
+      if (p.status === "COMPLETED") {
+        const done = await transitionReaderPayment(row.id, ["sold"], "captured");
+        console.log(`[reader] ${row.id} captured payment=${row.paymentId} sale=${row.mbSaleId ?? "?"}`);
+        return done === null || done === "unavailable" ? reread(row.id) : done;
+      }
+    } catch (err) {
+      if (!squareAmbiguous(err)) {
+        /* Completed already by an earlier try whose answer was lost? */
+        try {
+          const p = await getPayment(env, row.paymentId);
+          if (p.status === "COMPLETED") {
+            const done = await transitionReaderPayment(row.id, ["sold"], "captured");
+            return done === null || done === "unavailable" ? reread(row.id) : done;
+          }
+        } catch {
+          /* fall through to uncollected */
+        }
+        const out = await transitionReaderPayment(row.id, ["sold"], "uncollected", {
+          failure: `Sold in Mindbody, but the card was NOT charged: ${err instanceof Error ? err.message : String(err)}`,
+        });
+        console.error(`[reader] ${row.id} UNCOLLECTED sale=${row.mbSaleId ?? "?"}`);
+        return out === null || out === "unavailable" ? reread(row.id) : out;
+      }
+    }
+  }
+  console.warn(`[reader] ${row.id} complete did not answer; the sweep will retry`);
+  return row;
+}
+
+/** T226: Mindbody did not answer (or the route threw) after the claim:
+ *  the hold is KEPT, for a person to settle. */
+export async function markUnresolved(id: string, why: string): Promise<void> {
+  await transitionReaderPayment(id, ["selling"], "unresolved", { failure: why });
+  console.warn(`[reader] ${id} unresolved: ${why}`);
+}
+
+/** T226, for the sweep: complete what was sold and not yet taken, and
+ *  turn a `selling` row no request still owns into `unresolved`. */
+async function sweepSales(env: ReaderEnv): Promise<void> {
+  const sold = await readerPaymentsIn(["sold"]);
+  for (const r of sold ?? []) await tryComplete(env, r).catch(() => null);
+  const selling = await readerPaymentsIn(["selling"]);
+  for (const r of selling ?? []) {
+    if (Date.now() - r.updatedAt > 5 * 60_000) {
+      await markUnresolved(
+        r.id,
+        "The sale did not finish (the server may have restarted). The card is on hold and has NOT been charged. Check Mindbody for the sale before deciding.",
+      );
+    }
   }
 }

@@ -951,7 +951,24 @@ which needs nothing afterwards.
   device from a code, a simulated tap moves a row to `authorized`, and
   cancel, decline and timeout each end `cancelled` with the payment reading
   cancelled.
-- [ ] **T226 `method: "reader"` in `/api/checkout`.** The Custom variant,
+- [x] **T226 `method: "reader"` in `/api/checkout`.** Built and driven
+  against the fakes 2026-11-22: the `Custom` payment variant in
+  `sale.ts`; `claimHold` (the row AND a fresh Square read must agree with
+  the sale: teacher, client, cart sha, target and mode, and an APPROVED
+  payment for exactly the rehearsal's total, before `authorized ->
+  selling`); the sale under the custom payment method; `captureHold`
+  (retried three times, then by the sweep; a definite refusal ends
+  `uncollected`); `releaseHold` on a refusal, a suppression or T103's
+  empty basket; `markUnresolved` (hold kept) when Mindbody does not
+  answer; and a release at POST's single exit for any answer that is not
+  a sale while the hold is still `authorized`. Driven: a sale that
+  stands is captured; Mindbody refusing releases; Mindbody not answering
+  keeps the hold and T253 holds the client; a ticket changed after the
+  tap, and a dry run between tap and sale, release; charging before the
+  tap leaves the reader waiting; the same hold cannot sell twice; a
+  capture that does not answer is finished by the sweep. Not built: the
+  25 second read of `/sale/sales` before `unresolved`, and the resolve
+  controls (T228). Spec as written: The Custom variant,
   the claim, the single-exit complete or cancel, the refused shapes. Done
   when a sandbox sale stands with a completed Square sandbox payment linked
   to it, and a forced Mindbody refusal leaves the payment cancelled.

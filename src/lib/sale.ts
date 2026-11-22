@@ -1433,7 +1433,12 @@ export type CheckoutPayment =
    *  is a secret and lives in this payload only; calllog.ts strikes
    *  CreditCardNumber and CVV in both directions, and nothing here or
    *  above it ever returns more than the last four. */
-  | { type: "CreditCard"; amount: number; card: TypedCard };
+  | { type: "CreditCard"; amount: number; card: TypedCard }
+  /** T226: money taken OUTSIDE Mindbody (the Square Terminal), recorded
+   *  under the studio's custom payment method `id` (P7). Sent as
+   *  `{ Type: "Custom", Metadata: { Amount, Id } }`, the shape T259's
+   *  "Other" payment proved live on purchaseaccountcredit. */
+  | { type: "Custom"; amount: number; id: string };
 
 /**
  * T95 exported it under a name that says what it is: `purchasegiftcard`
@@ -1506,6 +1511,16 @@ export function checkoutPaymentPayload(
         ...(c.address ? { BillingAddress: c.address } : {}),
         ...(c.city ? { BillingCity: c.city } : {}),
         ...(c.state ? { BillingState: c.state } : {}),
+      },
+    };
+  }
+  if (p.type === "Custom") {
+    const numeric = Number(p.id);
+    return {
+      Type: "Custom",
+      Metadata: {
+        Amount: p.amount,
+        Id: Number.isInteger(numeric) && String(numeric) === p.id ? numeric : p.id,
       },
     };
   }

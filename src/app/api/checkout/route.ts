@@ -37,6 +37,9 @@ import {
   customerConfirmsSale,
 } from "@/lib/approval";
 import { cartSha256 } from "@/lib/cartsha";
+import { READER_OFF_SENTENCE, cardReaderEnabled } from "@/lib/cardreader";
+import { cancelAttempt, captureHold, claimHold, markUnresolved, releaseHold } from "@/lib/readerpayment";
+import { findReaderPayment } from "@/lib/db";
 import { currentShelfConfig } from "@/lib/catalog";
 import {
   beginFinalisation,
@@ -418,7 +421,10 @@ type Method =
   | "credit"
   | "cash"
   | "giftcard"
-  | "comp";
+  | "comp"
+  /** T226: the studio's Square Terminal, against a hold /api/reader/collect
+   *  made (`reader: { attemptId }`). */
+  | "reader";
 
 /* T28: the methods a split leg may use. Comp is deliberately excluded --
  * a comp is the whole sale given away, armed by its own dialog in the
@@ -739,6 +745,18 @@ export async function POST(request: Request) {
       if (displayCard !== null) settleDisplayCard(displayCard.requestId, true);
       throw err;
     }
+    /* T226: a card reader sale that did NOT stand, for any reason the
+     * reader branch never saw (a dry run or a refusal before the method
+     * dispatch, an approval, a PIN), releases its hold here, at the one
+     * exit. Only a hold still `authorized` is touched: one that was never
+     * approved stays with the reader, and one a sale claimed is the
+     * branch's to settle. */
+    if (
+      payload?.method === "reader" &&
+      typeof payload?.reader?.attemptId === "string"
+    ) {
+      ran = await releaseUnsoldHold(ran, payload.reader.attemptId);
+    }
     /* T253: the pending holds become what this answer leaves: cleared on
      * a definite answer, held on one that may have moved money, and the
      * answer names the holds it left, so the iPad that tapped can
@@ -792,6 +810,28 @@ export async function POST(request: Request) {
     }
     return gate.recordThrow(err);
   }
+}
+
+/** T226: see the call in POST. Answers the response, with
+ *  `readerReleased: true` added when it released a hold. */
+async function releaseUnsoldHold(res: Response, attemptId: string): Promise<Response> {
+  const body = await res.clone().json().catch(() => null);
+  if (res.status === 200 && body?.ok === true) return res;
+  const row = await findReaderPayment(attemptId);
+  if (row === null || row === "unavailable" || row.state !== "authorized") return res;
+  const after = await cancelAttempt(
+    attemptId,
+    "The sale did not go through, so the card was not charged.",
+  );
+  console.log(`[reader] ${attemptId} released at the exit: now ${after?.state ?? "unknown"}`);
+  if (body === null || typeof body !== "object") return res;
+  const headers = new Headers(res.headers);
+  headers.delete("content-length");
+  headers.set("content-type", "application/json");
+  return new NextResponse(JSON.stringify({ ...body, readerReleased: true }), {
+    status: res.status,
+    headers,
+  });
 }
 
 /**
@@ -978,14 +1018,70 @@ async function runCheckout(
     method !== "credit" &&
     method !== "cash" &&
     method !== "giftcard" &&
-    method !== "comp"
+    method !== "comp" &&
+    method !== "reader"
   ) {
     return NextResponse.json(
       {
         error:
-          "method must be storedcard, typedcard, credit, cash, giftcard " +
-          "or comp",
+          "method must be storedcard, typedcard, credit, cash, giftcard, " +
+          "comp or reader",
       },
+      { status: 400 },
+    );
+  }
+
+  /* T226: the card reader sells only what /api/reader/collect would hold:
+   * one cart, no discount, override, gift card, account credit, typed
+   * card, overdraft or line for someone else. Refused here, before
+   * anything else is read and before any PIN is spent, with the switch
+   * and the hold's own id checked at the charge. */
+  let readerAttemptId: string | null = null;
+  if (method === "reader") {
+    const unsupported: [unknown, string][] = [
+      [payload?.giftCards, "A gift card"],
+      [payload?.accountCredit, "Account credit"],
+      [payload?.discount, "A discount"],
+      [payload?.override, "An override"],
+      [payload?.typedCard ?? payload?.displayCard, "A typed card"],
+      [payload?.overdraftToken, "An account overdraft"],
+    ];
+    for (const [v, what] of unsupported) {
+      if (v !== undefined && v !== null) {
+        return NextResponse.json(
+          { error: `${what} is not on the card reader yet. Nothing was charged.`, reason: "unsupported" },
+          { status: 409 },
+        );
+      }
+    }
+    if (
+      Array.isArray(payload?.items) &&
+      payload.items.some(
+        (l: any) => typeof l?.forClientId === "string" && l.forClientId.trim() !== "",
+      )
+    ) {
+      return NextResponse.json(
+        { error: "A line for someone else is not on the card reader yet. Nothing was charged.", reason: "unsupported" },
+        { status: 409 },
+      );
+    }
+    const id = (payload?.reader as { attemptId?: unknown } | undefined)?.attemptId;
+    if (typeof id !== "string" || !/^[0-9a-f-]{36}$/.test(id)) {
+      return NextResponse.json(
+        { error: "reader.attemptId is required with method reader" },
+        { status: 400 },
+      );
+    }
+    if (!(await cardReaderEnabled()).on) {
+      return NextResponse.json(
+        { error: READER_OFF_SENTENCE, reason: "reader-off" },
+        { status: 403 },
+      );
+    }
+    readerAttemptId = id;
+  } else if (payload?.reader !== undefined) {
+    return NextResponse.json(
+      { error: "reader applies only to method reader" },
       { status: 400 },
     );
   }
@@ -5386,6 +5482,145 @@ async function runCheckout(
         receiptRequested: sendEmail,
         emailReceipt: null,
         ...rec,
+        ...actorFields(run),
+      });
+    }
+
+    if (m === "reader") {
+      /* T226: the Square Terminal. The card was tapped and HELD before
+       * this request (/api/reader/collect); nothing has been taken. The
+       * hold is claimed only once Square and the row agree with THIS
+       * sale to the cent (claimHold), the sale is made in Mindbody under
+       * the studio's custom payment method, and then, and only then, the
+       * money is taken (captureHold). A refusal, a suppression or a
+       * basket that holds nothing RELEASES the hold; no answer KEEPS it
+       * for a person. No path here can take the money for a sale that
+       * did not stand. */
+      if (readerAttemptId === null || saleClientId === undefined) {
+        return NextResponse.json(
+          { error: "reader.attemptId is required with method reader" },
+          { status: 400 },
+        );
+      }
+      const claim = await claimHold({
+        attemptId: readerAttemptId,
+        staffId: String(session.staffId),
+        clientId: saleClientId,
+        cartSha: cartSha256(payload),
+        amountCents: Math.round(total * 100),
+      });
+      if (!claim.ok) {
+        return NextResponse.json(
+          { error: claim.error, stage: "reader", reason: "reader" },
+          { status: 409 },
+        );
+      }
+      const attemptId = claim.row.id;
+      const cardTail = {
+        reader: {
+          attemptId,
+          cardBrand: claim.row.cardBrand,
+          lastFour: claim.row.lastFour,
+        },
+      };
+      let run;
+      try {
+        run = await runAsActor(session, "/api/checkout", (actor) =>
+          checkoutCart(
+            items,
+            saleClientId,
+            { type: "Custom", amount: total, id: claim.mindbodyPaymentId },
+            actor,
+            sendEmail,
+            discount,
+            promotionCode,
+          ),
+        );
+      } catch (err) {
+        if (isAmbiguous(err)) {
+          await markUnresolved(
+            attemptId,
+            "Mindbody did not answer. The card is on hold and has NOT been charged. Do not run the card again: check Mindbody for the sale.",
+          );
+          return NextResponse.json(
+            {
+              error:
+                "Mindbody did not answer. The card is on hold and has NOT been charged. Do not run the card again.",
+              stage: "checkout",
+              ambiguous: true,
+              ...cardTail,
+            },
+            { status: 502 },
+          );
+        }
+        await releaseHold(attemptId, "Mindbody refused the sale. The card was not charged.");
+        return NextResponse.json(
+          {
+            error: `${errMessage(err).trim().replace(/([^.!?])$/, "$1.")} The card was not charged.`,
+            stage: "checkout",
+            ambiguous: false,
+            readerReleased: true,
+            ...cardTail,
+          },
+          { status: 409 },
+        );
+      }
+      const outcome = run.result;
+      if (outcome.suppressed !== null) {
+        await releaseHold(attemptId, "The sale was not sent (dry run or the write guard). The card was not charged.");
+        return NextResponse.json({
+          ok: false,
+          suppressed: outcome.suppressed,
+          readerReleased: true,
+          ...cardTail,
+          ...actorFields(run),
+        });
+      }
+      const ids = await saleIds(outcome.saleId);
+      const verdict = basketVerdict(items, outcome, ids.purchasedItems, ids.saleId);
+      if (verdict !== null && !verdict.ok) {
+        /* T103 on the reader: the sale holds none of the ticket. Unlike
+         * every other tender the money has NOT moved, so the hold is
+         * released and the Mindbody sale is flagged to void. */
+        await releaseHold(
+          attemptId,
+          `Mindbody recorded sale ${ids.saleId ?? "?"} without the items, so the card was NOT charged. Void that sale in Mindbody.`,
+        );
+        return NextResponse.json(
+          {
+            error:
+              `Mindbody answered with a sale that holds none of this ticket (sale ${ids.saleId ?? "not identified"}). ` +
+              "The card was NOT charged. Void that sale in Mindbody, then try again.",
+            stage: "checkout",
+            readerReleased: true,
+            saleId: ids.saleId,
+            ...cardTail,
+          },
+          { status: 409 },
+        );
+      }
+      const captured = await captureHold(attemptId, ids.saleId);
+      const state = captured?.state ?? "sold";
+      return NextResponse.json({
+        ok: true,
+        method: m,
+        total,
+        saleId: ids.saleId,
+        cartId: ids.cartId,
+        receiptRequested: sendEmail,
+        emailReceipt: null,
+        reader: {
+          ...cardTail.reader,
+          state,
+          /* `sold`: the sale stands and taking the money did not answer
+           * yet; the sweep keeps trying, and it is never a second
+           * charge. `uncollected`: Square refused to take it. */
+          ...(state === "captured"
+            ? {}
+            : state === "uncollected"
+              ? { warning: "Sold in Mindbody, but the card was NOT charged. Tell the studio owner." }
+              : { warning: "Sold. Taking the card payment did not answer yet; the app keeps trying. Do not run the card again." }),
+        },
         ...actorFields(run),
       });
     }
