@@ -1085,7 +1085,14 @@ which needs nothing afterwards.
   "Manual card entry" ("Type the card number"), and the whole tile opens
   T93's card entry. T282, same day: Square's mark on the right of the
   card reader tile, and the keypad glyph back on the right of "Manual
-  card entry" (decorative: the whole tile is the button). Seen against the fakes:
+  card entry" (decorative: the whole tile is the button). T283, same day
+  (Pete: "change card on file subtext to ****7311 and lets just make
+  manual card entry its own button always so we dont have to have the
+  extra wide account button"): Card on file reads "****7311" and is
+  offered only with a client; "Manual card entry" is always its own tile
+  and the keypad square on Card on file is gone. With the reader on: six
+  tiles with a client, four on a walk-in. With it off and a client, five,
+  and the account still takes the full row. Seen against the fakes:
   walk-in, card on file with no balance, card on file with $40.
 - [ ] **T237 Hardware day.** Buy and pair the Terminal, the production
   token, `POS_READER_LIVE=true`. **Never `POS_WRITE_CLIENT_IDS` while the

@@ -6969,25 +6969,21 @@ function PaymentPanel(props: {
      is always LAST now, its balance on its badge, since nothing puts it
      on the payment by itself any more. */
   const storedCardFirst = cardDetail !== null;
-  /** T281: a walk-in sale (no client) has no card on file. */
-  const manualCardTile = !client;
   const readerTile = reader.status?.enabled
     ? [{ s: "reader" as TenderSource, label: "Card reader", icon: <CardIcon /> }]
     : [];
-  const storedTile = [
-    {
-      s: "storedcard" as TenderSource,
-      /* T281 (Pete: "For walk in sale, it should not say 'Card on file',
-         it should just say something like manual card entry"). With no
-         client there is no card on file to offer, so the tile IS T93's
-         typed card: the whole tile opens the card entry. */
-      label: manualCardTile ? "Manual card entry" : "Card on file",
-      icon: <CardIcon />,
-    },
-  ];
+  /* T283 (Pete: "lets just make manual card entry its own button always
+     so we dont have to have the extra wide account button"). Card on
+     file is its own tile, offered only with a client attached (a walk-in
+     has no card on file); T93's typed card is ALWAYS its own tile, the
+     whole of it opening the card entry. */
+  const storedTile = client
+    ? [{ s: "storedcard" as TenderSource, label: "Card on file", icon: <CardIcon /> }]
+    : [];
   const sources: { s: TenderSource; label: string; icon: ReactNode }[] = [
     /* T227: the Square Terminal, drawn only while the switch is on. */
     ...(storedCardFirst ? [...storedTile, ...readerTile] : [...readerTile, ...storedTile]),
+    { s: "typedcard", label: "Manual card entry", icon: <CardIcon /> },
     { s: "cash", label: "Cash", icon: <CashIcon /> },
     /* T83: always offered. A gift card needs no client and no card on
        file, so there is no state in which it is unusable for a reason
@@ -7310,8 +7306,8 @@ function PaymentPanel(props: {
                 aria-label="Payment sources"
               >
                 {sources.map(({ s, label, icon }) => {
-                  if (s === "storedcard" && manualCardTile) {
-                    /* T281: the walk-in's card tile is the typed card. */
+                  if (s === "typedcard") {
+                    /* T283: the typed card's own tile. */
                     const why = addReason("typedcard");
                     const manualOff = why !== null;
                     return (
@@ -7390,7 +7386,7 @@ function PaymentPanel(props: {
                         : /* T280: the card's last four on its tile, and
                              what the Terminal takes on the reader's. */
                           s === "storedcard" && card && !card.expired
-                          ? `Ending ${card.lastFour}`
+                          ? `****${card.lastFour}`
                           : s === "reader"
                             ? "Cards, Apple Pay, Google Pay"
                             : null;
@@ -7398,15 +7394,8 @@ function PaymentPanel(props: {
                      the 4px accent edge), whether or not the tile can
                      still take a tap. */
                   const inPayment = usedSources.has(s);
-                  /* T93: the Card tile carries the keypad square that
-                     opens the manual-entry modal. It is a SIBLING button
-                     in the same cell, never nested inside the tile (a
-                     button inside a button is not a control), and it is
-                     live when the tile body is not: "no card on file" and
-                     "attach a client" both still allow a card handed
-                     across the counter. */
-                  const typedReason =
-                    s === "storedcard" ? addReason("typedcard") : null;
+                  /* T283: T93's keypad square on the Card tile is gone;
+                     the typed card is its own tile ("Manual card entry"). */
                   const tile = (
                     <button
                       key={s}
@@ -7457,28 +7446,7 @@ function PaymentPanel(props: {
                       ) : null}
                     </button>
                   );
-                  if (s !== "storedcard") return tile;
-                  return (
-                    <div className="pay-tile-cell" key={s}>
-                      {tile}
-                      <button
-                        className={
-                          usedSources.has("typedcard")
-                            ? "pay-keypad on"
-                            : "pay-keypad"
-                        }
-                        disabled={typedReason !== null || charging || tenderHeld}
-                        onClick={openCardEntry}
-                        aria-label="Type a card number for this sale"
-                        title={
-                          typedReason ??
-                          "Type a card number for this sale"
-                        }
-                      >
-                        <KeypadIcon />
-                      </button>
-                    </div>
-                  );
+                  return tile;
                 })}
               </div>
 
