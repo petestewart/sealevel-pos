@@ -1061,8 +1061,26 @@ which needs nothing afterwards.
   ways forward, the header count. Done when a refused pass, a total that
   moved, and an unmatched walk-in each stop for a teacher, and each way
   forward ends the row with nothing charged twice.
+- [x] **T279 The Cart screen's payment tiles, in order.** Built 2026-11-22
+  (Pete, after the first reader sale: "Card should be 'Card on file'.
+  Account shouldn't be in the payment already (ESPECIALLY WHEN THE CLIENT
+  HAS NO CREDIT!) ... not in a good order and it's weird with an odd
+  amount of buttons"). Order: Account first ONLY with a balance, then Card
+  reader, Card on file, Cash, Gift card, and an empty account LAST ("No
+  balance. Charging past it needs a PIN.", T94's door). An odd count gives
+  the account, else the last tile, the full row: no empty cell. With the
+  reader ready, the foot no longer says "No card on file". Seen against
+  the fakes: walk-in (2x2), no balance (2x2 plus account), a balance.
 - [ ] **T237 Hardware day.** Buy and pair the Terminal, the production
-  token, `POS_READER_LIVE=true`, write guard on the dummy client. Done when
+  token, `POS_READER_LIVE=true`. **Never `POS_WRITE_CLIENT_IDS` while the
+  studio is open**: it suppresses every write for every other client,
+  check-ins included, on every iPad (2026-11-22, it stopped a teacher's
+  check-ins mid-class; sell to the dummy client by hand instead).
+  **Half done 2026-11-22**: paired by device code, and Pete's own card
+  bought one LMNT Electrolytes ($2.00) for John NewGuy, Mindbody sale
+  429494 paid $2.00 by method 18 "Square Terminal". Owed: the Square
+  side read as COMPLETED, the refund/void (Pete may keep it), the next
+  day's match. Done when
   Pete's own card buys the cheapest item, the sale reads back from
   Mindbody with the reader's payment method, the payment is completed in
   Square, both are refunded and voided, and the next day's match is clean.

@@ -5009,6 +5009,11 @@ button.sale-for:disabled {
   border-right: 0;
 }
 
+/* T279: an odd count takes a full row rather than leave an empty cell. */
+.pay-tiles.wrap .pay-tile-wide {
+  grid-column: 1 / -1;
+}
+
 .pay-tile.off {
   cursor: default;
 }

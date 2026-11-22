@@ -3492,7 +3492,9 @@ function PaymentPanel(props: {
    *  Not a refusal: the tile works, and the modal is where the overdraft
    *  is authorized. */
   const creditNote =
-    balance !== null && balance > 0 ? null : "No balance";
+    balance !== null && balance > 0
+      ? null
+      : "No balance. Charging past it needs a PIN.";
 
   /**
    * Whether Account is OFFERED at all. T33 hid it with no balance (Pete,
@@ -6906,8 +6908,14 @@ function PaymentPanel(props: {
         : dueCents !== null && dueCents > 0 && lines.length > 0
           ? `Add a source for the remaining ${money(dueCents / 100)}.`
           : lines.length === 0
-            ? cardReason !== null
-              ? `Card: ${cardReason}`
+            ? /* T279: with the card reader ready, a missing card on file
+                 is no reason to stop anyone, so the line stays quiet. */
+              reader.status?.enabled === true && reader.status.ready
+              ? ""
+              : cardReason !== null
+              ? /card on file/i.test(cardReason)
+                ? cardReason
+                : `Card on file: ${cardReason}`
               : /* Only for a credit source that is actually on screen: a
                    reason for an absent control explains nothing. */
                 creditVisible && creditReason !== null
@@ -6919,24 +6927,41 @@ function PaymentPanel(props: {
      glyph back beside each name at Pete's ask ("'Card', 'Cash' and
      'Account' should have icons next to them"). The label text is as it
      was; the icon rides in the name span and inherits its colour. */
+  /* T279 (Pete, after the first live reader sale, 2026-11-22: "Card
+     should be 'Card on file'. Account shouldn't be in the payment
+     already (ESPECIALLY WHEN THE CLIENT HAS NO CREDIT!) ... it's also
+     not in a good order and it's weird with an odd amount of buttons").
+     The order is how a student most often pays: the card reader, the
+     card on file, cash, a gift card. Account LEADS only when it holds a
+     balance; an empty account goes LAST, because T94's overdraft is still
+     reached through it, and its note says so. An odd count never leaves
+     an empty cell: the account (else the last tile) takes the full row,
+     `pay-tile-wide`. */
+  const hasBalance = balance !== null && balance > 0;
+  const accountTile = creditVisible
+    ? [{ s: "credit" as TenderSource, label: "Account", icon: <AccountIcon /> }]
+    : [];
   const sources: { s: TenderSource; label: string; icon: ReactNode }[] = [
-    /* Credit leads when there IS credit, and is absent when there is not
-       (Pete, fourth live test). */
-    ...(creditVisible
-      ? [{ s: "credit" as TenderSource, label: "Account", icon: <AccountIcon /> }]
-      : []),
-    { s: "storedcard", label: "Card", icon: <CardIcon /> },
-    { s: "cash", label: "Cash", icon: <CashIcon /> },
-    /* T83: the fourth tile, always offered. A gift card needs no client
-       and no card on file, so there is no state in which it is unusable
-       for a reason worth greying it with; what it needs is the number,
-       which its modal asks for. */
-    { s: "giftcard", label: "Gift card", icon: <GiftCardIcon /> },
+    ...(hasBalance ? accountTile : []),
     /* T227: the Square Terminal, drawn only while the switch is on. */
     ...(reader.status?.enabled
       ? [{ s: "reader" as TenderSource, label: "Card reader", icon: <CardIcon /> }]
       : []),
+    { s: "storedcard", label: "Card on file", icon: <CardIcon /> },
+    { s: "cash", label: "Cash", icon: <CashIcon /> },
+    /* T83: always offered. A gift card needs no client and no card on
+       file, so there is no state in which it is unusable for a reason
+       worth greying it with; what it needs is the number, which its
+       modal asks for. */
+    { s: "giftcard", label: "Gift card", icon: <GiftCardIcon /> },
+    ...(hasBalance ? [] : accountTile),
   ];
+  const wideSource: TenderSource | null =
+    sources.length > 3 && sources.length % 2 === 1
+      ? creditVisible
+        ? "credit"
+        : (sources[sources.length - 1]?.s ?? null)
+      : null;
 
   /* The three figures (0.2): Due is settled once the lines cover the
    * total with at least one line present (or the sale is comped), and
@@ -7298,7 +7323,9 @@ function PaymentPanel(props: {
                     <button
                       key={s}
                       className={
-                        (off ? "pay-tile off" : "pay-tile") + (inPayment ? " in" : "")
+                        (off ? "pay-tile off" : "pay-tile") +
+                        (inPayment ? " in" : "") +
+                        (s === wideSource ? " pay-tile-wide" : "")
                       }
                       disabled={off || charging || tenderHeld}
                       onClick={() =>

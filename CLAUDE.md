@@ -310,7 +310,18 @@ something they forgot to prevent.
   risking a student: create a dummy client in Mindbody, put its id here, and
   with `POS_DRY_RUN=false` every write for anyone else is still suppressed
   (`[write-guard] suppressed ...`). Empty means no restriction, which is what
-  production wants.
+  production wants. **On the deployed app it stops the WHOLE STUDIO**: one
+  Railway service serves every iPad, so with it set no teacher can check a
+  real student in or sell to one. On 2026-11-22 it was suggested for a
+  card reader test without saying so, and it stopped a teacher's check-ins
+  mid-class (Pete: "NEVER DO THAT AGAIN"). Set it on prod only when the
+  studio is closed, and remove it (unset, not empty) straight after.
+
+**Before suggesting ANY change to the live app** -- a Railway variable, a
+drawer switch, a pairing, a deploy -- say in the same message what it does
+to the iPads at the studio right now, and whether it is safe while a class
+is running. Every iPad shares one server and one database, so almost every
+setting is studio-wide.
 - **`MINDBODY_TARGET`** picks the studio: `sandbox` (default) or `prod`,
   reading `MINDBODY_SANDBOX_*` or `MINDBODY_PROD_*`; the unprefixed
   `MINDBODY_*` names remain the production fallback.
