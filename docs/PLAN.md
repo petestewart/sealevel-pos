@@ -1146,6 +1146,21 @@ which needs nothing afterwards.
   Mindbody"). Either settles the row off "Only problems". Gift cards and
   credit are not looked up ("check Mindbody"). Seen against the fakes:
   an outside $1.00, a found tap and a not-sold tap.
+- [x] **T289 The customer screen on the card reader.** Built 2026-11-22
+  (Pete, on screenshots of it: "'Paying by Card reader' seems
+  unneccessary", and of a decline line, "yeah add that"). With the
+  reader as the tender the live ticket shows only "Tap, insert or hold
+  your phone to the card reader." (every other way to pay is still
+  named, T240), and a card the reader declined replaces it with "Card
+  declined. Please try another card." until the tender changes or the
+  next attempt starts. The payload carries a KEY, `readerNote:
+  "declined"`, live only, rebuilt by `readTicketPayload`; the words are
+  the display's own. The attempt view says `declined` when the row was
+  cancelled for a declined card, not for a teacher's Cancel. Answered
+  the same day: the student's Change list is dynamic (the tiles' own
+  `addReason(source, true)`), so no card on file means no "Card on
+  file" there. Not built, offered: Card reader in that list. Seen
+  against the fakes: chosen, waiting, declined.
 - [ ] **T237 Hardware day.** Buy and pair the Terminal, the production
   token, `POS_READER_LIVE=true`. **Never `POS_WRITE_CLIENT_IDS` while the
   studio is open**: it suppresses every write for every other client,

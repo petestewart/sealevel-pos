@@ -75,7 +75,13 @@ export interface AttemptView {
   words: string;
   /** Whether this attempt can still be cancelled from the iPad. */
   cancellable: boolean;
+  /** T289: the card was declined on the reader (said on the customer
+   *  screen as "Card declined. Please try another card."). */
+  declined: boolean;
 }
+
+/** T289: the failure words a declined card leaves on its row. */
+const DECLINED_FAILURE = "Card declined. Nothing was charged.";
 
 export function viewOf(row: ReaderPaymentRow): AttemptView {
   const dollars = `$${(row.amountCents / 100).toFixed(2)}`;
@@ -102,6 +108,7 @@ export function viewOf(row: ReaderPaymentRow): AttemptView {
     lastFour: row.lastFour,
     words: words[row.state] ?? row.state,
     cancellable: ["created", "collecting", "authorized"].includes(row.state),
+    declined: row.state === "cancelled" && row.failure === DECLINED_FAILURE,
   };
 }
 
@@ -364,7 +371,7 @@ export async function refreshAttempt(id: string): Promise<ReaderPaymentRow | nul
       if (payment.status === "CANCELED" || payment.status === "FAILED") {
         const moved = await transitionReaderPayment(id, ["collecting"], "cancelled", {
           paymentId,
-          failure: "Card declined. Nothing was charged.",
+          failure: DECLINED_FAILURE,
         });
         return moved !== null && moved !== "unavailable" ? moved : row;
       }

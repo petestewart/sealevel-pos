@@ -10163,11 +10163,17 @@ button.display-mark-row {
   margin: 4px 0;
 }
 
-/* T230: on the customer screen, where the student's card goes. */
+/* T230: on the customer screen, where the student's card goes. Since
+ * T289 it stands alone (no "Paying by Card reader" above it), so it takes
+ * the tender line's own size and weight. */
 .dticket-tender.dticket-reader {
   margin-top: 6px;
-  font-size: 20px;
-  font-weight: 400;
+}
+
+/* T289: the reader declined the card. */
+.dticket-tender.dticket-declined {
+  margin-top: 6px;
+  color: var(--stop);
 }
 
 /* T282: a glyph on the right of a payment tile (the Square mark on the

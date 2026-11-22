@@ -369,15 +369,24 @@ export default function TicketScene(props: {
 
       {!summary && paying !== null ? (
         <div className="dticket-tender-row">
-          <p className="dticket-tender">
-            {noCharge ? "No charge" : `Paying by ${paying}`}
-          </p>
-          {/* T230: the reader is where the student's hands go next. */}
+          {/* T289 (Pete: "'Paying by Card reader' seems unneccessary"): on
+              the reader, the instruction says it, and a decline replaces
+              it. Every other way to pay is still named. */}
           {paying === "Card reader" ? (
-            <p className="dticket-tender dticket-reader">
-              Tap, insert or hold your phone to the card reader.
+            t.readerNote === "declined" ? (
+              <p className="dticket-tender dticket-declined" role="alert">
+                Card declined. Please try another card.
+              </p>
+            ) : (
+              <p className="dticket-tender dticket-reader">
+                Tap, insert or hold your phone to the card reader.
+              </p>
+            )
+          ) : (
+            <p className="dticket-tender">
+              {noCharge ? "No charge" : `Paying by ${paying}`}
             </p>
-          ) : null}
+          )}
           {/* T241: a single-method tender may be changed by the student,
               to a way the teacher's iPad offered for this ticket. */}
           {choices.length > 0 ? (
