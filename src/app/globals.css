@@ -9916,3 +9916,161 @@ button.display-mark-row {
 .receipt-toggle[hidden] {
   display: none;
 }
+
+/* T274: the account modal's way into the Sales log (admins only), and the
+ * sheet itself. Tokens only; --gold is the count, --warn and --stop mark
+ * what the read-back did not like. */
+.sales-open {
+  display: block;
+  width: 100%;
+  min-height: 64px;
+  margin-top: 12px;
+  padding: 0 16px;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--surface-2);
+  color: var(--ink);
+  font: inherit;
+  font-size: 18px;
+  font-weight: 600;
+  text-align: left;
+}
+
+.sales-open.bad {
+  border: 2px solid var(--gold);
+  background: var(--gold-bg);
+  color: var(--gold);
+}
+
+.modal.modal-sales {
+  width: min(900px, 100%);
+}
+
+.sales-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.sales-nav button {
+  flex: 1 1 140px;
+  min-height: 64px;
+  border: 1px solid var(--line);
+}
+
+.sales-nav .sales-on {
+  border: 2px solid var(--accent);
+  color: var(--accent);
+}
+
+.sales-list {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--line);
+}
+
+.sales-row {
+  border-bottom: 1px solid var(--line);
+}
+
+.sales-row.bad {
+  background: var(--warn-bg);
+}
+
+.sales-row-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  width: 100%;
+  min-height: 64px;
+  padding: 8px 4px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 16px;
+  text-align: left;
+}
+
+.sales-time {
+  min-width: 72px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.sales-what {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+.sales-total {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.sales-outcome,
+.sales-check {
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 16px;
+}
+
+.sales-outcome.o-ambiguous,
+.sales-outcome.o-started,
+.sales-outcome.o-partial,
+.sales-check.c-unverified {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+.sales-outcome.o-sold-nothing,
+.sales-check.c-differs,
+.sales-check.c-missing {
+  border-color: var(--stop);
+  color: var(--stop);
+}
+
+.sales-detail {
+  padding: 0 4px 12px 88px;
+  font-size: 16px;
+}
+
+.sales-detail p {
+  margin: 4px 0;
+}
+
+.sales-problem {
+  color: var(--stop);
+  font-weight: 600;
+}
+
+.sales-empty {
+  padding: 16px 4px;
+  color: var(--muted);
+}
+
+/* T274: a gold count on a nav item (the Sales log's problems, on
+ * Profile). Sits on the icon's corner; the item itself is unchanged. */
+.nav-item {
+  position: relative;
+}
+
+.nav-badge {
+  position: absolute;
+  top: 4px;
+  left: calc(50% + 10px);
+  min-width: 24px;
+  padding: 0 6px;
+  background: var(--gold-bg);
+  border: 1px solid var(--gold);
+  color: var(--gold);
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 22px;
+  font-variant-numeric: tabular-nums;
+}

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 
+import SalesSheet from "./SalesSheet";
 import PasswordInput from "./PasswordInput";
 import PinModal from "./PinModal";
 import { ReloadApp } from "./UpdateBanner";
@@ -143,6 +144,13 @@ export default function StaffModal({
    *  are unavailable here. */
   const [hasPin, setHasPin] = useState<boolean | null | undefined>(undefined);
   const [pinOpen, setPinOpen] = useState(false);
+  /** T274: how many of the last week's sales the read-back found wrong,
+   *  for an ADMIN; undefined for everyone else (the server answers 403),
+   *  which draws no Sales control at all. */
+  const [salesProblems, setSalesProblems] = useState<number | null | undefined>(
+    undefined,
+  );
+  const [salesOpen, setSalesOpen] = useState(false);
 
   const runProbe = useCallback(async () => {
     setProbeBusy(true);
@@ -172,6 +180,28 @@ export default function StaffModal({
   useEffect(() => {
     if (open) setMsg(notice ?? null);
   }, [open, notice]);
+
+  /* T274: whether this teacher may open the Sales sheet, and what it
+   * would show first. A 403 (not an admin) or a failed read offers
+   * nothing. */
+  useEffect(() => {
+    if (!open || !teacher) {
+      setSalesProblems(undefined);
+      return;
+    }
+    let cancelled = false;
+    fetch("/api/sale-log?problems=1")
+      .then(async (r) => (r.ok ? r.json() : null))
+      .then((body) => {
+        if (cancelled) return;
+        if (body === null) setSalesProblems(undefined);
+        else setSalesProblems(typeof body.problems === "number" ? body.problems : null);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [open, teacher]);
 
   /* T80: and whether they have a PIN, read the same way. A failed read
    * leaves it unknown, which offers nothing rather than offering a
@@ -344,6 +374,16 @@ export default function StaffModal({
               error={probeError}
               onRun={() => void runProbe()}
             />
+            {salesProblems !== undefined ? (
+              <button
+                className={salesProblems ? "sales-open bad" : "sales-open"}
+                onClick={() => setSalesOpen(true)}
+              >
+                {salesProblems
+                  ? `Sales log: ${salesProblems} to look at`
+                  : "Sales log"}
+              </button>
+            ) : null}
             <div className="modal-actions">
               {hasPin === true || hasPin === false ? (
                 <button
@@ -368,6 +408,11 @@ export default function StaffModal({
                 Sign out
               </button>
             </div>
+            <SalesSheet
+              open={salesOpen}
+              today={studioToday()}
+              onClose={() => setSalesOpen(false)}
+            />
           </>
         ) : (
           <>
@@ -490,4 +535,14 @@ export function ProbeView({
       </button>
     </div>
   );
+}
+
+/** T274: the studio's date, YYYY-MM-DD, for the Sales sheet. */
+function studioToday(): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Los_Angeles",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
 }

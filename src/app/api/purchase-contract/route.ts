@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 
 import { NextResponse } from "next/server";
 
+import { startSaleLog, summarizeContractRequest } from "@/lib/salelog";
+
 import {
   claimCharge,
   heldSentence,
@@ -146,6 +148,17 @@ export async function POST(request: Request) {
   if (peek === null || peek?.test === true || clientId === "") {
     return purchaseContractPost(request);
   }
+  /* T274: a LIVE purchase is a money tap and gets its sale_log row, opened
+   * before the hold check and closed with whatever this answers. The
+   * Test: true rehearsal above charges nothing and is not logged. */
+  const saleLog = await startSaleLog({
+    route: "/api/purchase-contract",
+    request,
+    staffId: staff.session.staffId,
+    staffName: staff.session.name,
+    clientIds: [clientId],
+    summary: summarizeContractRequest(peek),
+  });
   const claim = await claimCharge({
     clientIds: [clientId],
     walkin: false,
@@ -153,7 +166,7 @@ export async function POST(request: Request) {
     route: "/api/purchase-contract",
   });
   if ("refused" in claim) {
-    return NextResponse.json(
+    const held = NextResponse.json(
       {
         error: heldSentence(claim.refused),
         reason: "held",
@@ -162,9 +175,12 @@ export async function POST(request: Request) {
       },
       { status: 409 },
     );
+    void saleLog.finish(held);
+    return held;
   }
   try {
     const res = await purchaseContractPost(request);
+    void saleLog.finish(res);
     const out = await outcomeOf(res);
     await settleCharge(claim.ticket, {
       kind: out.kind,
@@ -173,6 +189,7 @@ export async function POST(request: Request) {
     });
     return res;
   } catch (err) {
+    void saleLog.finish(null);
     await settleCharge(claim.ticket, {
       kind: "ambiguous",
       message:

@@ -36,6 +36,9 @@ export interface NavItem {
   /** The reason a tap does nothing, or null. */
   why: string | null;
   onTap: () => void;
+  /** T274: a gold count on the item (the Sales log's problems on
+   *  Profile, for an admin); nothing drawn for none. */
+  badge?: number | null;
 }
 
 function Icon({
@@ -152,6 +155,11 @@ export default function NavBar({ items }: { items: NavItem[] }) {
           }}
         >
           {item.icon}
+          {item.badge ? (
+            <span className="nav-badge" aria-label={`${item.badge} to look at`}>
+              {item.badge}
+            </span>
+          ) : null}
           {/* The teacher's own name on Profile is a name, not a verb:
               regular weight, and clipped rather than wrapped. */}
           <span

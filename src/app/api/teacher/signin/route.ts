@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 
+import { dailySaleCheckOnce } from "@/lib/salecheck";
+
 import {
   claimSigninAttempt,
   recordSigninSuccess,
@@ -238,6 +240,10 @@ export async function POST(request: Request) {
   );
   recordSigninSuccess();
   console.log(`[staff] signed in staff=${teacher.id} site=${siteId}`);
+  /* T274: the day's first sign-in reads yesterday's and today's sales
+   * back from Mindbody, in the background (reads only, once per studio
+   * day per process). The app has no worker; this is its daily clock. */
+  dailySaleCheckOnce();
   return NextResponse.json(
     { ok: true, teacher, hasPin: await hasTeacherPin(teacher.id) },
     { headers: { "set-cookie": staffSetCookie(cookie) } },

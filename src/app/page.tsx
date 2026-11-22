@@ -1261,6 +1261,30 @@ function FrontDesk({
    *  takes over. The name is kept for the call sites below. */
   const setTeacher = onTeacherChange;
   const [staffOpen, setStaffOpen] = useState(false);
+  /** T274: the Sales log's problems of the last week, shown as a gold
+   *  count on Profile for an ADMIN. Read on sign-in, every five minutes
+   *  and whenever the account modal closes; a 403 (not an admin) or a
+   *  failed read shows nothing. */
+  const [salesProblems, setSalesProblems] = useState<number | null>(null);
+  useEffect(() => {
+    if (staffOpen) return;
+    let cancelled = false;
+    const read = () => {
+      fetch("/api/sale-log?problems=1")
+        .then(async (r) => (r.ok ? r.json() : null))
+        .then((body) => {
+          if (cancelled) return;
+          setSalesProblems(typeof body?.problems === "number" ? body.problems : null);
+        })
+        .catch(() => undefined);
+    };
+    read();
+    const timer = setInterval(read, 5 * 60 * 1000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [staffOpen, teacher.id]);
   /** T49: per-row amber notes, "Done as the studio account: ...", for a
    *  write on that row that fell back from the teacher's token. */
   const [actorNotes, setActorNotes] = useState<Record<string, string>>({});
@@ -8673,6 +8697,7 @@ function FrontDesk({
     label: teacher.name,
     icon: <ProfileIcon />,
     on: staffOpen,
+    badge: salesProblems,
     /* T252: Profile is where Sign out is, and a sign-out unmounts the
      * Cart screen behind the gate. So it waits on exactly what Sign-in
      * waits on (T249's `closeWhy`), with the same sentence. The tab's

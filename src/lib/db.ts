@@ -10,7 +10,8 @@ import type { ClientWriteEntry } from "./clientaudit";
  *   THE DATABASE HOLDS WHAT MINDBODY HAS NO HOME FOR, AND NEVER A COPY OF
  *   WHAT IT DOES. Waiver receipts, bundle config, banner text, promo
  *   entitlements, teacher PINs, our own audit of our writes to a client
- *   (T116, only the fields we changed): yes. Clients, classes, passes, prices, visits: never, at
+ *   (T116, only the fields we changed), our own log of every money tap
+ *   (T274: what we asked and what our route answered): yes. Clients, classes, passes, prices, visits: never, at
  *   any point, for any reason including speed. The client index was already
  *   deleted once for exactly this reason (see CLAUDE.md); a table makes
  *   rebuilding it tempting in a way in-memory caching did not. A schema
@@ -611,6 +612,45 @@ const MIGRATIONS: { version: number; sql: string }[] = [
       );
       CREATE INDEX IF NOT EXISTS charge_holds_open_idx
         ON charge_holds (site, client_id) WHERE acknowledged_at IS NULL;
+    `,
+  },
+  {
+    /* T274 (Pete, 2026-11-21: "just log every transaction to the DB"):
+     * one row per money tap on every route that sells, written BEFORE
+     * Mindbody is asked and updated with its answer, then checked
+     * against what Mindbody kept. Our record of our own actions (the
+     * client_writes and charge_holds precedent): what we ASKED and what
+     * the route ANSWERED, never a copy of Mindbody consulted instead of
+     * Mindbody. NO card data, ever: no card or gift card number, CVV,
+     * expiry, PIN or token; the request is whitelisted field by field
+     * and the answer stripped and scrubbed (src/lib/salelog.ts). */
+    version: 20,
+    sql: `
+      CREATE TABLE IF NOT EXISTS sale_log (
+        id             text PRIMARY KEY,
+        route          text NOT NULL,
+        tap_key_sha    text,
+        site           text,
+        target         text,
+        staff_id       text,
+        client_ids     text[] NOT NULL DEFAULT '{}',
+        dry_run        text,
+        write_guard    boolean NOT NULL DEFAULT false,
+        request        jsonb,
+        outcome        text NOT NULL,
+        http_status    integer,
+        message        text,
+        sale_ids       text[] NOT NULL DEFAULT '{}',
+        total          numeric(12,2),
+        answer         jsonb,
+        started_at     timestamptz NOT NULL,
+        finished_at    timestamptz,
+        check_state    text,
+        check_detail   jsonb,
+        checked_at     timestamptz
+      );
+      CREATE INDEX IF NOT EXISTS sale_log_started_idx
+        ON sale_log (started_at DESC);
     `,
   },
 ];
@@ -2226,5 +2266,193 @@ export async function acknowledgeChargeHoldRow(
   } catch (err) {
     logDbError("charge-hold-ack", err);
     return "unavailable";
+  }
+}
+
+/* --- Sale log (T274) ------------------------------------------------- */
+
+export interface SaleLogRow {
+  id: string;
+  route: string;
+  tapKeySha: string | null;
+  site: string | null;
+  target: string | null;
+  staffId: string | null;
+  clientIds: string[];
+  /** "env", "browser" or null: whose dry run, if any, was on. */
+  dryRun: string | null;
+  writeGuard: boolean;
+  request: unknown;
+  outcome: string;
+  httpStatus: number | null;
+  message: string | null;
+  saleIds: string[];
+  total: number | null;
+  answer: unknown;
+  startedAt: number;
+  finishedAt: number | null;
+  checkState: string | null;
+  checkDetail: unknown;
+  checkedAt: number | null;
+}
+
+/**
+ * T274: the row's WHOLE current state, written over whatever the table
+ * holds (an upsert by id), the charge_holds way: the caller chains the
+ * writes for one id in order, so a slow first insert cannot land over
+ * the answer. The check columns are never touched here; only
+ * `setSaleLogCheck` writes them. Whether the row landed.
+ */
+export async function upsertSaleLog(row: SaleLogRow): Promise<boolean> {
+  try {
+    const p = await ready();
+    if (!p) return false;
+    await p.query(
+      `INSERT INTO sale_log
+         (id, route, tap_key_sha, site, target, staff_id, client_ids,
+          dry_run, write_guard, request, outcome, http_status, message,
+          sale_ids, total, answer, started_at, finished_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
+               $14, $15, $16, $17, $18)
+       ON CONFLICT (id) DO UPDATE SET
+         outcome = EXCLUDED.outcome,
+         http_status = EXCLUDED.http_status,
+         message = EXCLUDED.message,
+         sale_ids = EXCLUDED.sale_ids,
+         total = EXCLUDED.total,
+         answer = EXCLUDED.answer,
+         finished_at = EXCLUDED.finished_at`,
+      [
+        row.id,
+        row.route,
+        row.tapKeySha,
+        row.site,
+        row.target,
+        row.staffId,
+        row.clientIds,
+        row.dryRun,
+        row.writeGuard,
+        row.request === undefined ? null : JSON.stringify(row.request),
+        row.outcome,
+        row.httpStatus,
+        row.message,
+        row.saleIds,
+        row.total,
+        row.answer === undefined ? null : JSON.stringify(row.answer),
+        new Date(row.startedAt),
+        row.finishedAt === null ? null : new Date(row.finishedAt),
+      ],
+    );
+    return true;
+  } catch (err) {
+    logDbError("sale-log-write", err);
+    return false;
+  }
+}
+
+function saleLogFromDb(r: Record<string, any>): SaleLogRow {
+  const ms = (v: unknown): number | null =>
+    v === null || v === undefined ? null : new Date(v as string).getTime();
+  return {
+    id: String(r.id),
+    route: String(r.route),
+    tapKeySha: r.tap_key_sha ?? null,
+    site: r.site ?? null,
+    target: r.target ?? null,
+    staffId: r.staff_id ?? null,
+    clientIds: Array.isArray(r.client_ids) ? r.client_ids.map(String) : [],
+    dryRun: r.dry_run ?? null,
+    writeGuard: r.write_guard === true,
+    request: r.request ?? null,
+    outcome: String(r.outcome),
+    httpStatus: r.http_status ?? null,
+    message: r.message ?? null,
+    saleIds: Array.isArray(r.sale_ids) ? r.sale_ids.map(String) : [],
+    total: r.total === null || r.total === undefined ? null : Number(r.total),
+    answer: r.answer ?? null,
+    startedAt: ms(r.started_at) ?? 0,
+    finishedAt: ms(r.finished_at),
+    checkState: r.check_state ?? null,
+    checkDetail: r.check_detail ?? null,
+    checkedAt: ms(r.checked_at),
+  };
+}
+
+/** Rows started in [from, to), newest first; null when the store did
+ *  not answer. */
+export async function listSaleLog(
+  from: number,
+  to: number,
+  limit = 500,
+): Promise<SaleLogRow[] | null> {
+  try {
+    const p = await ready();
+    if (!p) return null;
+    const res = await p.query(
+      `SELECT * FROM sale_log
+        WHERE started_at >= $1 AND started_at < $2
+        ORDER BY started_at DESC
+        LIMIT $3`,
+      [new Date(from), new Date(to), limit],
+    );
+    return res.rows.map(saleLogFromDb);
+  } catch (err) {
+    logDbError("sale-log-read", err);
+    return null;
+  }
+}
+
+/** One row by id; null for none or a store that did not answer. */
+export async function findSaleLog(id: string): Promise<SaleLogRow | null> {
+  try {
+    const p = await ready();
+    if (!p) return null;
+    const res = await p.query(`SELECT * FROM sale_log WHERE id = $1`, [id]);
+    return res.rows[0] ? saleLogFromDb(res.rows[0]) : null;
+  } catch (err) {
+    logDbError("sale-log-read", err);
+    return null;
+  }
+}
+
+/** T274's check: what the read-back against Mindbody found. */
+export async function setSaleLogCheck(
+  id: string,
+  state: string,
+  detail: unknown,
+): Promise<boolean> {
+  try {
+    const p = await ready();
+    if (!p) return false;
+    await p.query(
+      `UPDATE sale_log
+          SET check_state = $2, check_detail = $3, checked_at = now()
+        WHERE id = $1`,
+      [id, state, JSON.stringify(detail ?? null)],
+    );
+    return true;
+  } catch (err) {
+    logDbError("sale-log-check", err);
+    return false;
+  }
+}
+
+/** How many rows since `since` the check found differing or missing,
+ *  for the header count; null when the store did not answer. */
+export async function countSaleLogProblems(
+  since: number,
+): Promise<number | null> {
+  try {
+    const p = await ready();
+    if (!p) return null;
+    const res = await p.query(
+      `SELECT count(*)::int AS n FROM sale_log
+        WHERE started_at >= $1 AND check_state IN ('differs', 'missing')`,
+      [new Date(since)],
+    );
+    return Number(res.rows[0]?.n ?? 0);
+  } catch (err) {
+    logDbError("sale-log-read", err);
+    return null;
   }
 }

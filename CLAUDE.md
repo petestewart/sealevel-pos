@@ -75,6 +75,21 @@ When THIS app is down, the teacher uses the Mindbody app and the existing
 reader. Blocked on Pete for the Square account (P6) and the Mindbody
 custom payment method (P7).
 
+**T274 (2026-11-22): every money tap is logged and read back against
+Mindbody** (Pete: "just log every transaction to the DB ... verify MB is
+recording what we want it to"). `sale_log` (migration 20) gets one row per
+tap on `/api/checkout`, `/api/purchase-contract`'s live purchase and
+`/api/guest`, opened before Mindbody is asked and closed with exactly
+what the iPad was told (`src/lib/salelog.ts`; in checkout through T113's
+`record`/`recordThrow`). The request is a whitelist and the answer is
+stripped: no card or gift card number, CVV, expiry, PIN or token, ever.
+A dead database never blocks a sale (`NOT STORED` in the `[sale-log]`
+line). `src/lib/salecheck.ts` reads each sale that stood back by id
+(READS ONLY) and compares lines and money; the first sign-in of each
+studio day runs it, and an admin's "Sales log" in the account modal shows
+the day, the problems and a "Check now", with a gold count on Profile.
+Driven against the fake only.
+
 **T241 (2026-11-15): the student chooses how to pay on the customer
 iPad**, and can type their own card there (Pete: "a student shouldnt have
 to hand them their card"). See Customer display below.
