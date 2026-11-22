@@ -24324,3 +24324,114 @@ stood, `NOT STORED`). Screens seen at 1180x820.
 - A SOLD membership was not driven (the fake needs the PIN or a
   signature); its row would be `unverified`, since the answer carries no
   sale id.
+
+## T223 to T225. The Square card reader, up to a hold (2026-11-22)
+
+Phase 4's first three items, built against a fake Square while Pete sets
+up the Square account (PLAN Phase 4). Nothing here sells: the most it does
+is put an amount on the Terminal and hold an approved card, which the
+checkout (T226) will sell against or release.
+
+- **The switch** (`card_reader`, default OFF, `POS_CARD_READER` without a
+  database; `/api/admin/card-reader`; the drawer's Settings tab). Off,
+  every `/api/reader/*` route that starts anything answers 403
+  `reason: "reader-off"` and calls nothing; status, poll and cancel still
+  answer, so a hold open when it was switched off still ends cleanly.
+- **The mode** (`src/lib/cardreader.ts`): Square's sandbox unless the
+  Mindbody target is prod AND `POS_READER_LIVE=true`. A test reader on the
+  live studio sells only to clients the write guard names. The banner
+  adds "Card reader in TEST mode: reader sales take no money." when the
+  switch is on in that state.
+- **The client** (`src/lib/square.ts`): plain fetch, `Square-Version:
+  2026-11-18`, every call in the dev drawer as `square:<path>`, the token
+  never recorded.
+- **The row** (`reader_payments`, migration 21) and **the state machine**
+  (`src/lib/readerpayment.ts`): created, collecting, authorized,
+  cancelling, cancelled, and `unresolved` for money taken that this code
+  cannot settle. Every move is a compare-and-set. A hold is known from the
+  PAYMENT (`APPROVED`), never the checkout's status. Every cancel reads
+  the checkout's payments after and voids any approved one. A create
+  whose answer was lost is retried with the same idempotency key, then
+  searched for by reference. Square releases a forgotten hold itself
+  after 12 hours (`delay_action` CANCEL).
+- **The sweep**, in-process every 15 seconds once the reader has been
+  used: open attempts refreshed (the 90 second wait for a card, the three
+  minute wait for a sale), half-finished cancels finished, and cancelled
+  attempts of the last ten minutes read again for a late approval, which
+  is voided. Square calls only, never Mindbody, switch or no switch.
+- **Routes**: `/api/reader/status`, `/api/reader/pair` (POST a code, GET
+  the poll, which stores the device id per mode), `/api/reader/collect`
+  (rehearses with Mindbody exactly as the checkout does and holds the
+  GrandTotal), `/api/reader/attempt/[id]` (the poll) and `.../cancel`.
+- **The fake** (`scripts/training/fake-square.mjs`, port 4020): device
+  codes, checkouts (idempotent by key), payments, and hands to pair, tap,
+  decline, cancel on the Terminal, take the money at the tap, make a
+  cancel lose the race, and force failures.
+
+### Driven (fakes, local Postgres, 2026-11-22)
+
+Every case in PLAN T225's entry, listed there. `tsc` and `next build`
+pass.
+
+### Not yet
+
+- Real Square: waits on Pete's developer application and sandbox token.
+  Square's sandbox has no Devices API, so pairing is proven only on the
+  fake until the real Terminal.
+- The location assertion, the pairing screen, and selling against the
+  hold (T226, T227).
+
+## T226. Selling against the card reader's hold (2026-11-22)
+
+`/api/checkout` takes `method: "reader"` with `reader: { attemptId }` and
+the same ticket `/api/reader/collect` held. Refused before anything else:
+the switch off, and the shapes the reader does not take yet (gift card,
+account credit, discount, override, typed card, overdraft, a line for
+someone else). In the method dispatch (`m === "reader"`):
+
+1. `claimHold`: the row must be `authorized`, this teacher's, for this
+   client, cart sha, target and mode, and Square must read the payment as
+   APPROVED for exactly `Math.round(total * 100)`, the fresh rehearsal.
+   Then `authorized -> selling`, a compare-and-set.
+2. The sale, under the teacher's token, paid `{Type: "Custom", Metadata:
+   {Amount, Id}}` with `MINDBODY_{SANDBOX,PROD}_READER_PAYMENT_ID` (P7).
+3. Stood: `captureHold` takes the money (retried three times in the
+   request, then by the sweep; never a second charge). Refused,
+   suppressed, or T103's empty basket: `releaseHold` voids the payment and
+   the answer says "The card was not charged." No answer: the hold is KEPT
+   (`unresolved`), the answer is ambiguous, and T253 holds the client.
+
+POST's exit also releases a hold still `authorized` for any answer that
+is not a sale (a dry run or refusal before the dispatch, an approval, a
+PIN), and adds `readerReleased: true`. A hold never approved is left for
+the reader. Driven against the fakes; see PLAN T226.
+
+## T227 to T231. The card reader's screens, failure windows and match (2026-11-22)
+
+Pete: "go ahead with the screens, work autonomosly to finish everything
+you can before i have the reader". Built against the fakes, driven in a
+browser; the Square half of the money order (hold, complete, cancel) also
+ran against Square's real sandbox with Pete's sandbox token.
+
+- **T227** `useReaderPayment` + `ReaderWait` (one hook and one panel for
+  both charge screens). Cart screen: a "Card reader" tile while the switch
+  is on, greyed with the reason it cannot take this ticket (not
+  connected, a discount, an override, account credit, a gift card, a line
+  for someone else, another tender), taking the whole sale with its amount
+  fixed. Finalize builds the request once, holds the card on the reader
+  (`/api/reader/collect`, panel with Cancel), and only an approved hold
+  goes on to `/api/checkout` with `reader: { attemptId }`. "Connect card
+  reader" (`ReaderPair`) in the account modal.
+- **T228** the no-answer path: the checkout looks for the sale (same
+  client, exact amount, after the approval, not linked to another reader
+  payment) for ~25 seconds; found, it takes the money; not found, the
+  hold is kept `unresolved` for the Sales log's "charge" (only against a
+  sale Mindbody shows) or "release" (only when Mindbody answers with
+  none). **Caught in testing**: without the "not linked" and "after the
+  approval" rules, the lookup matched an earlier sale for the same
+  student and amount and took the second card for it.
+- **T229** the roster's "Pay and check in": "Use the card reader", the
+  same hold, then the existing charge, attach and check-in.
+- **T230 (half)** the customer screen: "Paying by Card reader" and "Tap,
+  insert or hold your phone to the card reader." P8 still open.
+- **T231** the Sales log's Square match (`readerMismatches`).

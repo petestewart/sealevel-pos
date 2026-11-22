@@ -12,6 +12,17 @@ import { useCallback, useEffect, useState } from "react";
  * modal; the server refuses everybody else.
  */
 
+interface ReaderHoldRow {
+  id: string;
+  state: string;
+  amountCents: number;
+  clientId: string | null;
+  cardBrand: string | null;
+  lastFour: string | null;
+  failure: string | null;
+  createdAt: number;
+}
+
 interface Row {
   id: string;
   route: string;
@@ -126,6 +137,52 @@ export default function SalesSheet({
   const [busy, setBusy] = useState(false);
   const [onlyProblems, setOnlyProblems] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
+  /** T228: card reader holds that need a person. Empty when there are
+   *  none or the reader is not in use (the route answers 403 off). */
+  const [holds, setHolds] = useState<ReaderHoldRow[]>([]);
+  const [holdNote, setHoldNote] = useState<string | null>(null);
+  const [holdBusy, setHoldBusy] = useState<string | null>(null);
+  /** T231: Square's record against ours, for the day on screen; null
+   *  when Square could not be read. */
+  const [squareProblems, setSquareProblems] = useState<{ sentence: string }[] | null>([]);
+
+  const loadHolds = useCallback(async (d?: string) => {
+    try {
+      const res = await fetch(`/api/reader/attention${d ? `?day=${d}` : ""}`);
+      if (!res.ok) {
+        setHolds([]);
+        return;
+      }
+      const body = await res.json().catch(() => null);
+      setHolds(Array.isArray(body?.rows) ? body.rows : []);
+      setSquareProblems(Array.isArray(body?.mismatches) ? body.mismatches : body?.mismatches === null ? null : []);
+    } catch {
+      setHolds([]);
+    }
+  }, []);
+
+  const settle = async (id: string, decision: "charge" | "release") => {
+    setHoldBusy(id);
+    setHoldNote(null);
+    try {
+      const res = await fetch(`/api/reader/attempt/${encodeURIComponent(id)}/resolve`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ decision }),
+      });
+      const body = await res.json().catch(() => null);
+      setHoldNote(
+        res.ok
+          ? decision === "charge"
+            ? `Charged, against sale ${body?.saleId ?? "?"}.`
+            : "Released. Nothing was charged."
+          : String(body?.error ?? `HTTP ${res.status}`),
+      );
+      await loadHolds();
+    } finally {
+      setHoldBusy(null);
+    }
+  };
 
   const load = useCallback(async (d: string) => {
     setNote(null);
@@ -155,8 +212,9 @@ export default function SalesSheet({
     if (open) {
       setDay(today);
       void load(today);
+      void loadHolds(today);
     }
-  }, [open, today, load]);
+  }, [open, today, load, loadHolds]);
 
   const check = async () => {
     setBusy(true);
@@ -208,6 +266,57 @@ export default function SalesSheet({
           <p className="modal-kicker">Sales log</p>
           <p className="modal-title">{dayLabel(day)}</p>
         </div>
+        {squareProblems === null ? (
+          <p className="reason-note">Square could not be read, so card reader payments were not matched.</p>
+        ) : squareProblems.length > 0 ? (
+          <div className="sales-holds">
+            <p className="sales-holds-head">Card reader: Square and this counter disagree</p>
+            {squareProblems.map((m, i) => (
+              <p key={i} className="sales-problem">
+                {m.sentence}
+              </p>
+            ))}
+          </div>
+        ) : null}
+        {holds.length > 0 ? (
+          <div className="sales-holds">
+            <p className="sales-holds-head">Card reader holds to settle</p>
+            {holdNote ? <p className="reason-note">{holdNote}</p> : null}
+            {holds.map((h) => (
+              <div key={h.id} className="sales-hold">
+                <p>
+                  <strong>{money(h.amountCents / 100)}</strong>
+                  {h.lastFour ? ` on ${h.cardBrand ?? "card"} ending ${h.lastFour}` : ""}
+                  {h.clientId ? `, client ${h.clientId}` : ""}, {time(h.createdAt)}.
+                </p>
+                {h.failure ? <p className="sales-problem">{h.failure}</p> : null}
+                {h.state === "unresolved" ? (
+                  <div className="sales-nav">
+                    <button
+                      className="modal-cancel"
+                      disabled={holdBusy !== null}
+                      onClick={() => void settle(h.id, "charge")}
+                    >
+                      Sale is in Mindbody: charge the card
+                    </button>
+                    <button
+                      className="modal-cancel"
+                      disabled={holdBusy !== null}
+                      onClick={() => void settle(h.id, "release")}
+                    >
+                      No sale: release the hold
+                    </button>
+                  </div>
+                ) : (
+                  <p className="reason-sub">
+                    Sold in Mindbody, and the card was not charged. Charge it in Square, or void
+                    the sale in Mindbody.
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+        ) : null}
         <div className="sales-nav">
           <button
             className="modal-cancel"
@@ -216,6 +325,7 @@ export default function SalesSheet({
               setDay(d);
               setRows(null);
               void load(d);
+              void loadHolds(d);
             }}
           >
             Previous day
@@ -228,6 +338,7 @@ export default function SalesSheet({
               setDay(d);
               setRows(null);
               void load(d);
+              void loadHolds(d);
             }}
           >
             Next day

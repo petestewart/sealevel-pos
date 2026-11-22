@@ -10074,3 +10074,75 @@ button.display-mark-row {
   line-height: 22px;
   font-variant-numeric: tabular-nums;
 }
+
+/* T227: the card reader's waiting panel and the pairing screen. */
+.modal.reader-wait .modal-title {
+  font-size: 40px;
+  font-variant-numeric: tabular-nums;
+}
+
+.reader-words {
+  margin: 12px 0 4px;
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.reader-code {
+  margin: 16px 0 8px;
+  padding: 16px 0;
+  border: 2px solid var(--rule);
+  background: var(--surface-2);
+  color: var(--ink);
+  font-size: 56px;
+  font-weight: 700;
+  letter-spacing: 0.3em;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.reader-countdown {
+  color: var(--muted);
+  font-size: 18px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.reader-paired {
+  margin: 16px 0;
+  color: var(--ok);
+  font-size: 22px;
+  font-weight: 700;
+}
+
+/* T228: card reader holds that need a person, at the top of the Sales log. */
+.sales-holds {
+  margin: 8px 0 12px;
+  padding: 8px 12px;
+  border: 2px solid var(--stop);
+  background: var(--stop-bg);
+}
+
+.sales-holds-head {
+  margin: 0 0 6px;
+  color: var(--stop);
+  font-weight: 700;
+  font-size: 18px;
+}
+
+.sales-hold {
+  padding: 6px 0;
+  border-top: 1px solid var(--line);
+  font-size: 16px;
+}
+
+.sales-hold p {
+  margin: 4px 0;
+}
+
+/* T230: on the customer screen, where the student's card goes. */
+.dticket-tender.dticket-reader {
+  margin-top: 6px;
+  font-size: 20px;
+  font-weight: 400;
+}

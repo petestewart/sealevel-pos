@@ -19,6 +19,8 @@ import ApprovalDialog, { type ApprovalArmed } from "./ApprovalDialog";
 import { useDisplayMirror } from "./useDisplayMirror";
 import ApprovalWait from "./ApprovalWait";
 import { useSaleApproval } from "./useSaleApproval";
+import ReaderWait from "./ReaderWait";
+import { useReaderPayment } from "./useReaderPayment";
 import { useTenderPick, type TenderPick } from "./useTenderPick";
 import { cancelOnDisplay, presenterId } from "./presenter";
 import type { TypedCard } from "@/lib/typedcard";
@@ -121,6 +123,8 @@ export interface ModeConfig {
   siteId: string | null;
   configError: string | null;
   writeClientIds: string[];
+  /** T223: the Square card reader's switch and mode, for the TEST line. */
+  reader?: { enabled: boolean; mode: string } | null;
   banner: string | null;
   /** T38: the server's STUDIO_TAX_RATE, mirrored for the while-pricing
    *  estimate only. Null before the config loads and on the lock
@@ -209,6 +213,33 @@ export const NEEDS_HOUSE_CLIENT_LINE =
  * of mode brings a hidden banner back.
  */
 export function modeNotice(config: {
+  dryRun: boolean;
+  dryRunSource?: string | null;
+  target: string;
+  siteId?: string | null;
+  writeClientIds?: string[];
+  /** T223: the Square card reader, when /api/config reports it. */
+  reader?: { enabled: boolean; mode: string } | null;
+}): { text: string; live: boolean } | null {
+  const base = baseModeNotice(config);
+  /* T223: a card reader switched on in Square's TEST mode on the live
+   * studio takes no money for what it sells, so it is said loudly, beside
+   * whatever else the banner says (the server refuses those sales unless
+   * the write guard narrows them to its test clients). */
+  if (
+    config.reader?.enabled === true &&
+    config.reader.mode !== "production" &&
+    config.target === "prod"
+  ) {
+    const line = "Card reader in TEST mode: reader sales take no money.";
+    return base === null
+      ? { text: line, live: true }
+      : { text: `${base.text} ${line}`, live: base.live };
+  }
+  return base;
+}
+
+function baseModeNotice(config: {
   dryRun: boolean;
   dryRunSource?: string | null;
   target: string;
@@ -1738,7 +1769,11 @@ type TenderSource =
   | "typedcard"
   | "credit"
   | "cash"
-  | "giftcard";
+  | "giftcard"
+  /** T227: the studio's Square Terminal. Its line is the WHOLE sale: the
+   *  card is held on the reader, the sale is made in Mindbody, then the
+   *  money is taken (useReaderPayment, /api/checkout method "reader"). */
+  | "reader";
 
 /** Keep in sync with src/lib/giftcard.ts. Mirrored rather than
  *  imported: that module reaches Mindbody, and nothing server-side
@@ -2522,6 +2557,10 @@ function PaymentPanel(props: {
    *  further down once the handlers that answer them exist. */
   const pickReceive = useRef<(value: unknown) => void>(() => undefined);
   const sceneGone = useRef<(requestId: string) => void>(() => undefined);
+  /* T227: the Square card reader, behind its switch. */
+  const reader = useReaderPayment();
+  /** T227: the reader's card, in words, for the done block. */
+  const readerCardAtTap = useRef<string | null>(null);
   const approvalFlow = useSaleApproval({
     on: customerConfirmsSale,
     build: () => ({
@@ -3765,6 +3804,24 @@ function PaymentPanel(props: {
      * does to it: the pick replaces the tender, it does not join it. */
     /* T259: a credit given at no charge takes no payment at all. */
     if (freeCredit !== null) return "The credit is given at no charge";
+    /* T227: the card reader pays a whole, plain sale, and nothing joins
+     * it. What it does not take yet is said here, before the tap, in the
+     * same words /api/reader/collect would refuse with. */
+    if (source === "reader") {
+      if (reader.status === null || !reader.status.enabled) return "Card reader is off";
+      if (!reader.status.ready) return reader.status.why ?? "Card reader is not ready";
+      if (comp !== null) return "Not on the card reader yet: a discount";
+      if (armedOverride !== null) return "Not on the card reader yet: an override";
+      if (hasCredit) return "Not on the card reader yet: account credit";
+      if (hasGiftCard) return "Not on the card reader yet: a gift card";
+      if (hasOtherClient) return "Not on the card reader yet: a line for someone else";
+      const others = (fresh || replacesAuto(source) ? [] : lines).filter(
+        (l) => l.source !== "reader",
+      );
+      if (others.length > 0) return "The card reader takes the whole sale";
+    } else if (!fresh && usedSources.has("reader")) {
+      return "The card reader takes the whole sale";
+    }
     const replacing = fresh || replacesAuto(source);
     const used: ReadonlySet<TenderSource> = replacing
       ? new Set<TenderSource>()
@@ -4451,7 +4508,9 @@ function PaymentPanel(props: {
           ? "Account"
           : s === "giftcard"
             ? "Gift card"
-            : "Cash";
+            : s === "reader"
+              ? "Card reader"
+              : "Cash";
 
   /** The tender row's name. A gift card wears its last four, which is
    *  the only part of the number that ever reaches a screen (T83). */
@@ -5031,6 +5090,127 @@ function PaymentPanel(props: {
       giftDiscountOff: roundToCents(armedParts.giftCents / 100),
       tenders: displayTenders,
     });
+    /* The request this tap sends, built once: T227's card reader holds
+     * EXACTLY this ticket (its cart sha is computed over it on both
+     * routes), and the checkout then sells it. */
+    const requestBody: Record<string, unknown> = {
+      /* T241 third review: this tab, so a PIN-approved charge takes
+         down only this tab's own approval. */
+      presenter: presenterId(),
+      items: saleLines.map((line) => ({
+        type: line.item.type,
+        metadataId: line.item.id,
+        quantity: line.quantity,
+        price: line.item.price,
+        taxExempt: line.item.taxExempt,
+        taxRate: line.item.taxRate,
+        /* T43: on a comp only, the item's name rides along for the
+         * comp receipt's record of what was given away. T90 sends it
+         * on any ticket holding a line for another client too: the
+         * route's partial-outcome sentence names the item and the
+         * person. Never forwarded; Mindbody's cart takes ids. */
+        ...(comp !== null || hasOtherClient ? { name: line.item.name } : {}),
+        /* T90: this line's own Mindbody sale, under this client. */
+        ...(line.forClient
+          ? {
+              forClientId: line.forClient.id,
+              forClientName: line.forClient.name,
+            }
+          : {}),
+      })),
+      /* T95: the gift cards, beside the cart and never inside it.
+         The product id and how many, and nothing else: the route
+         re-reads the live product for the value and the price, and
+         generates each card's id itself. */
+      ...(hasGiftCard
+        ? {
+            giftCards: giftCardLines.map((line) => ({
+              productId: Number(line.item.id),
+              quantity: line.quantity,
+              /* T96: the amount, and only for the editable product:
+                 Mindbody has no other way of being told what a
+                 custom card is worth. The route refuses an amount on
+                 a fixed product and requires one here. */
+              ...((line.item as GiftCardItem).editable
+                ? { amount: line.item.price }
+                : {}),
+            })),
+          }
+        : {}),
+      ...(clientId ? { clientId } : {}),
+      /* T256: account credit, the whole of a credit ticket. The amount
+         is the teacher's keypad figure; the route rehearses it with
+         `Test: true` and asserts what Mindbody would charge. */
+      ...(freeCredit !== null
+        ? /* T259: given at no charge, on the teacher's `credit`
+             PIN token and their reason. */
+          {
+            accountCredit: {
+              amount: freeCredit.cents / 100,
+              noCharge: { token: freeCredit.token, reason: freeCredit.reason },
+            },
+          }
+        : hasCredit
+          ? { accountCredit: { amount: creditTotal } }
+          : {}),
+      /* T112: the override's authorization, whichever of its two
+         things it is. The route verifies the token, spends it once,
+         runs the rehearsal under this teacher's own login for an
+         attempt, computes a substitution's discount itself from the
+         live catalog, and files the record. Nothing here sets a
+         price or skips a rail. */
+      ...(armedOverride !== null
+        ? { override: overrideEnvelope(armedOverride) }
+        : {}),
+      /* T220: the code the pricing applied. The route rehearses WITH
+         it and charges Mindbody's rehearsed total, so the figure on
+         the ticket and the charge are the same Mindbody answer. */
+      ...(promotionCode !== null ? { promotionCode } : {}),
+      /* T90: display only, for the route's per-cart sentence; every
+         decision there is made on the id. */
+      ...((hasOtherClient || hasCredit) && client ? { clientName: client.name } : {}),
+      /* T203: the customer's approval, or the PIN that stood in for
+         it. The server checks the setting itself and refuses a
+         charge that carries neither; with the setting off it reads
+         neither field, so a stale dialog state cannot refuse a
+         sale. */
+      ...(approved?.id ? { displayApprovalId: approved.id } : {}),
+      ...(approved?.token
+        ? { approvalOverride: { token: approved.token } }
+        : {}),
+      ...payment,
+      /* T53: the toggle, as this render read it. The route ignores
+       * it for the house client and for a comp anyway. */
+      sendEmail,
+    };
+    /* T227: the Square Terminal. The card is HELD on the reader first
+     * (nothing taken), with the panel up and Cancel live; only an
+     * approved hold goes on to /api/checkout, which sells in Mindbody and
+     * then takes the money. A reader that ends without approval charged
+     * nothing, so it is a plain refusal here, with nothing held. */
+    if (soleLine?.source === "reader" && !comped && freeCredit === null) {
+      if (inFlight.current) return;
+      inFlight.current = true;
+      setCharging(true);
+      onBusyChange(true);
+      setResult(null);
+      const held = await reader.hold(requestBody, newIdempotencyKey());
+      if (!held.ok) {
+        inFlight.current = false;
+        setCharging(false);
+        onBusyChange(false);
+        setResult(
+          held.unknown
+            ? { kind: "ambiguous", message: held.message }
+            : { kind: "error", message: held.message },
+        );
+        return;
+      }
+      requestBody["reader"] = { attemptId: held.attemptId };
+      readerCardAtTap.current = held.lastFour
+        ? `${held.cardBrand ? `${held.cardBrand.charAt(0)}${held.cardBrand.slice(1).toLowerCase()} ` : ""}ending ${held.lastFour}`
+        : null;
+    }
     /* T249: the record goes down at the TAP, before anything is sent, so
      * a reload or an evicted tab from here until a definite answer comes
      * back as a charge that needs checking. The writer effect keeps it
@@ -5079,96 +5259,7 @@ function PaymentPanel(props: {
           "content-type": "application/json",
           [IDEMPOTENCY_HEADER]: idemKey,
         },
-        body: JSON.stringify({
-          /* T241 third review: this tab, so a PIN-approved charge takes
-             down only this tab's own approval. */
-          presenter: presenterId(),
-          items: saleLines.map((line) => ({
-            type: line.item.type,
-            metadataId: line.item.id,
-            quantity: line.quantity,
-            price: line.item.price,
-            taxExempt: line.item.taxExempt,
-            taxRate: line.item.taxRate,
-            /* T43: on a comp only, the item's name rides along for the
-             * comp receipt's record of what was given away. T90 sends it
-             * on any ticket holding a line for another client too: the
-             * route's partial-outcome sentence names the item and the
-             * person. Never forwarded; Mindbody's cart takes ids. */
-            ...(comp !== null || hasOtherClient ? { name: line.item.name } : {}),
-            /* T90: this line's own Mindbody sale, under this client. */
-            ...(line.forClient
-              ? {
-                  forClientId: line.forClient.id,
-                  forClientName: line.forClient.name,
-                }
-              : {}),
-          })),
-          /* T95: the gift cards, beside the cart and never inside it.
-             The product id and how many, and nothing else: the route
-             re-reads the live product for the value and the price, and
-             generates each card's id itself. */
-          ...(hasGiftCard
-            ? {
-                giftCards: giftCardLines.map((line) => ({
-                  productId: Number(line.item.id),
-                  quantity: line.quantity,
-                  /* T96: the amount, and only for the editable product:
-                     Mindbody has no other way of being told what a
-                     custom card is worth. The route refuses an amount on
-                     a fixed product and requires one here. */
-                  ...((line.item as GiftCardItem).editable
-                    ? { amount: line.item.price }
-                    : {}),
-                })),
-              }
-            : {}),
-          ...(clientId ? { clientId } : {}),
-          /* T256: account credit, the whole of a credit ticket. The amount
-             is the teacher's keypad figure; the route rehearses it with
-             `Test: true` and asserts what Mindbody would charge. */
-          ...(freeCredit !== null
-            ? /* T259: given at no charge, on the teacher's `credit`
-                 PIN token and their reason. */
-              {
-                accountCredit: {
-                  amount: freeCredit.cents / 100,
-                  noCharge: { token: freeCredit.token, reason: freeCredit.reason },
-                },
-              }
-            : hasCredit
-              ? { accountCredit: { amount: creditTotal } }
-              : {}),
-          /* T112: the override's authorization, whichever of its two
-             things it is. The route verifies the token, spends it once,
-             runs the rehearsal under this teacher's own login for an
-             attempt, computes a substitution's discount itself from the
-             live catalog, and files the record. Nothing here sets a
-             price or skips a rail. */
-          ...(armedOverride !== null
-            ? { override: overrideEnvelope(armedOverride) }
-            : {}),
-          /* T220: the code the pricing applied. The route rehearses WITH
-             it and charges Mindbody's rehearsed total, so the figure on
-             the ticket and the charge are the same Mindbody answer. */
-          ...(promotionCode !== null ? { promotionCode } : {}),
-          /* T90: display only, for the route's per-cart sentence; every
-             decision there is made on the id. */
-          ...((hasOtherClient || hasCredit) && client ? { clientName: client.name } : {}),
-          /* T203: the customer's approval, or the PIN that stood in for
-             it. The server checks the setting itself and refuses a
-             charge that carries neither; with the setting off it reads
-             neither field, so a stale dialog state cannot refuse a
-             sale. */
-          ...(approved?.id ? { displayApprovalId: approved.id } : {}),
-          ...(approved?.token
-            ? { approvalOverride: { token: approved.token } }
-            : {}),
-          ...payment,
-          /* T53: the toggle, as this render read it. The route ignores
-           * it for the house client and for a comp anyway. */
-          sendEmail,
-        }),
+        body: JSON.stringify(requestBody),
       });
       let body: any = null;
       try {
@@ -5314,7 +5405,9 @@ function PaymentPanel(props: {
                   ? "account balance"
                   : soleLine.source === "giftcard"
                     ? `gift card${giftFour ? ` ...${giftFour}` : ""}`
-                    : "cash";
+                    : soleLine.source === "reader"
+                      ? `card reader${readerCardAtTap.current ? `, ${readerCardAtTap.current}` : ""}`
+                      : "cash";
         /* T90: the sales the route made, in the order it made them.
            One cart answers as it always did, so the fallback below is
            that one sale built from what this tap sent. */
@@ -5435,6 +5528,9 @@ function PaymentPanel(props: {
                   client ? ` for ${client.name}` : ""
                 }.`,
           detail: [
+            /* T227: a reader sale whose money-taking had not answered yet,
+               or that Square refused, says so where the teacher looks. */
+            typeof body?.reader?.warning === "string" ? body.reader.warning : null,
             /* T90: a ticket that became more than one Mindbody sale
                lists every one of them, with whose it was; a single-sale
                ticket reads exactly as it always did. */
@@ -5671,6 +5767,8 @@ function PaymentPanel(props: {
       inFlight.current = false;
       setCharging(false);
       onBusyChange(false);
+      /* T227: the reader's panel goes once the sale has answered. */
+      reader.done();
       /* T94 review: the route spends the one-shot token before its first
          Mindbody call, so once this request has been answered at all the
          authorization is gone whatever the outcome. Holding it would let
@@ -5815,6 +5913,8 @@ function PaymentPanel(props: {
    *  line keeps the amount it already had. */
   const openPad = (id: number) => {
     if (tenderHeld) return;
+    /* T227: the card reader's line is always the whole sale. */
+    if (lines.find((l) => l.id === id)?.source === "reader") return;
     /* T239: so is opening a line's amount, on the automatic line too. */
     touchTender();
     setPadFor(id);
@@ -6832,6 +6932,10 @@ function PaymentPanel(props: {
        for a reason worth greying it with; what it needs is the number,
        which its modal asks for. */
     { s: "giftcard", label: "Gift card", icon: <GiftCardIcon /> },
+    /* T227: the Square Terminal, drawn only while the switch is on. */
+    ...(reader.status?.enabled
+      ? [{ s: "reader" as TenderSource, label: "Card reader", icon: <CardIcon /> }]
+      : []),
   ];
 
   /* The three figures (0.2): Due is settled once the lines cover the
@@ -7700,6 +7804,7 @@ function PaymentPanel(props: {
                   {tenderPick.note}
                 </p>
               ) : null}
+              <ReaderWait view={reader.view} onCancel={() => void reader.cancel()} />
               <ApprovalWait
                 approval={approval}
                 note={approvalNote}

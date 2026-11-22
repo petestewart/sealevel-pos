@@ -98,6 +98,9 @@ export const TENDER_WORDS = [
   "Cash",
   "Gift card",
   "No charge",
+  /* T230: the studio's Square Terminal, so the student knows where to
+   * tap. A word, like the rest: no card detail ever. */
+  "Card reader",
 ] as const;
 export type TenderWord = (typeof TENDER_WORDS)[number];
 
@@ -190,6 +193,9 @@ export function tenderWord(method: unknown): TenderWord | null {
     case "storedcard":
     case "typedcard":
       return "Card";
+    /* T230: the Square Terminal, named so the student looks for it. */
+    case "reader":
+      return "Card reader";
     case "cash":
       return "Cash";
     case "giftcard":

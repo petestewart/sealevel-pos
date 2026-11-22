@@ -372,6 +372,12 @@ export default function TicketScene(props: {
           <p className="dticket-tender">
             {noCharge ? "No charge" : `Paying by ${paying}`}
           </p>
+          {/* T230: the reader is where the student's hands go next. */}
+          {paying === "Card reader" ? (
+            <p className="dticket-tender dticket-reader">
+              Tap, insert or hold your phone to the card reader.
+            </p>
+          ) : null}
           {/* T241: a single-method tender may be changed by the student,
               to a way the teacher's iPad offered for this ticket. */}
           {choices.length > 0 ? (

@@ -57,6 +57,9 @@ export interface CallRecord {
    * no token at all.
    */
   actorToken: string | null;
+  /** T223: which service the call went to. Absent means Mindbody, which
+   *  is every record from before Phase 4. */
+  service?: "mindbody" | "square";
   requestBody: string | null;
   responseBody: string | null;
 }

@@ -62,7 +62,7 @@ Cheap, and each one removes a guess. All are read-only or `Test: true`.
 | R3 | R2 with a `Notes` key carrying a Square payment id | Whether `SalePayment.Notes` (sale.yml:4557) can carry the link, which would make the match exact inside Mindbody | Not run (T222) |
 | R4 | One real Custom sale for dummy client 100042041, then `/sale/sales` with `request.paymentMethodId` | How the sale reads back, whether the filter takes a custom id, how it shows in Pete's reports, and how a return of it reads | Not run (T231) |
 | R5 | Three `Test: true` calls: (a) `purchasegiftcard` paid Custom; (b) `purchaseaccountcredit` paid Custom; (c) `purchasegiftcard` paid `DebitAccount` | Which gift card route the reader can use: directly (a), or Pete's credit-then-spend workaround (b then c). c asks against the client's existing balance, so "insufficient" there is about the balance, not the payment type | Not run (T222; `scripts/probe-custom-payment.ts`) |
-| R6 | Square's sandbox and the real Terminal | What the docs leave open (checked 2026-11-22, see Phase 4): whether a sandbox checkout with `autocomplete: false` leaves an APPROVED payment that completes and cancels; whether a real Terminal payment carries `EDIT_AMOUNT_DOWN` (T234); pairing and `PING` on the real device (no Devices API in the sandbox); the cancel race on the real device; how a completed payment, its `reference_id` and a refund read back | Not run (before T225 is done; the real Terminal half after it arrives, 2026-11-22) |
+| R6 | Square's sandbox and the real Terminal | What the docs leave open (checked 2026-11-22, see Phase 4): whether a sandbox checkout with `autocomplete: false` leaves an APPROVED payment that completes and cancels; whether a real Terminal payment carries `EDIT_AMOUNT_DOWN` (T234); pairing and `PING` on the real device (no Devices API in the sandbox); the cancel race on the real device; how a completed payment, its `reference_id` and a refund read back | **Sandbox half answered (2026-11-22, Pete's sandbox app, location LDZRV71GCET59, test device 9fa747a2...)**: a checkout with `autocomplete: false` reads COMPLETED with its payment APPROVED (VISA 1111, `reference_id` carried, `delayed_until` set from `delay_duration`), and the payment's `capabilities` include `EDIT_AMOUNT_DOWN` in the sandbox; CompletePayment and CancelPayment both work, and a second complete or cancel answers 200 with the same status (no error); a cancelled payment reads `card_details.status: VOIDED`; the buyer-cancel test device ends CANCELED `BUYER_CANCELED`; a pending checkout cancelled ends `SELLER_CANCELED`, and a second cancel answers 200. The app itself ran a full reader sale against the sandbox (hold, Mindbody sale on the fake, captured) and cancelled an approved hold (VOIDED). Still owed on the REAL Terminal: pairing and PING, the cancel race, and whether a card-present payment carries `EDIT_AMOUNT_DOWN` |
 | A1 | Fire the investigator's scheduled task from the Railway service with a throwaway incident id | The fire endpoint and token shape, reachability from Railway, seconds from fire to the session's first tool call, any daily cap on fired runs | Not run (before T263 is done) |
 | A2 | From the investigator's cloud environment: call this app with no token in hand, and call `api.mindbodyonline.com` | That the environment's proxy attaches the agent token so the session never sees it, and that Mindbody is unreachable from there | Not run (T262, T264) |
 | A3 | An unattended fired session posts to the alert channel, opens an issue and pushes a branch | That the connectors and the repo grant work with nobody watching | Not run (T264) |
@@ -406,8 +406,9 @@ this plan:
   floor is needed on the reader.
 - **The sandbox** answers Terminal checkouts on special test device ids;
   they approve at most $25 (anything larger stays PENDING until it times
-  out), and there is no plain decline id. Whether a sandbox checkout with
-  `autocomplete: false` leaves an APPROVED payment is unseen (R6).
+  out), and there is no plain decline id. A sandbox checkout with
+  `autocomplete: false` DOES leave an APPROVED payment that completes and
+  cancels (R6, 2026-11-22).
 - **Smaller points**: `idempotency_key` is required on a checkout and
   limited to 64 characters (128 on a device code, 45 on an update or a
   refund, so one key format must fit 45); the checkout's `reference_id`
@@ -908,39 +909,122 @@ which needs nothing afterwards.
   (written 2026-11-15, not yet run; needs P7's method to exist). Done when
   it has been run on both sites and the answers are recorded in the probe
   table.
-- [ ] **T223 The Square client, the mode and the switch.** `square.ts`,
+- [x] **T223 The Square client, the mode and the switch.** Built
+  2026-11-22: `src/lib/cardreader.ts` (switch, mode, env by NAME, the
+  test-on-prod refusal, the paired device per mode), `src/lib/square.ts`
+  (fetch, `Square-Version` pinned, every call in the drawer as
+  `square:`), `/api/admin/card-reader` and its drawer control,
+  `reader` on `/api/config`, and `modeNotice`'s TEST line. The location
+  assertion is NOT built yet (T226 checks the payment's own location).
+  Spec as written: `square.ts`,
   the call log's `service` field, the environment table, the location
   assertion, `/api/config`, the `modeNotice` state, and the `card_reader`
   switch (default off). Done when a Square read shows in
   the drawer tagged square, and a location that does not match is refused
   with nothing created.
-- [ ] **T224 The fake and the row.** `scripts/training/fake-square.mjs`,
+- [x] **T224 The fake and the row.** Built 2026-11-22:
+  `scripts/training/fake-square.mjs` (with hands for pairing, a tap,
+  a decline, a buyer cancel, a cancel that loses the race, money taken
+  at the tap, and forced failures), `reader_payments` (migration 21,
+  one open collection per Terminal by partial unique index) and
+  `src/lib/readerpayment.ts`. Spec as written: `scripts/training/fake-square.mjs`,
   the migration for `reader_payments`, `readerpayment.ts` with
   compare-and-set transitions. Done when the transitions are driven end to
   end against the fake with no network.
-- [ ] **T225 Pair, collect, poll, cancel.** "Connect card reader", the
+- [x] **T225 Pair, collect, poll, cancel.** Built and driven against the
+  fakes 2026-11-22: `/api/reader/status`, `/api/reader/pair`,
+  `/api/reader/collect`, `/api/reader/attempt/[id]` and its `cancel`.
+  Driven: switch off refuses with nothing sent; pairing by code;
+  collect puts the rehearsed total on the Terminal; a second collect
+  while one is open is "busy"; approve -> authorized with brand and last
+  four; Cancel on an approved hold voids it; decline, a buyer cancel and
+  the 90 second timeout end cancelled; a cancel that loses the race to
+  a tap voids the payment it produced; money taken at the tap ends
+  `unresolved`; an approved hold with no sale for three minutes is
+  released by the sweep with no request; a client outside the write
+  guard and a discount are refused. **First version narrower than the
+  plan below**: one cart, a named or house client and a promotion code;
+  a discount, an override, a split, a gift card, account credit and a
+  line for someone else are refused in words until T226 wires the PIN
+  tokens through and T233/T234 add the rest. The "Connect card reader"
+  SCREEN (big code, countdown) comes with T227's UI. Spec as written: "Connect card reader", the
   three routes and the 90 second timeout. Done when the fake pairs a
   device from a code, a simulated tap moves a row to `authorized`, and
   cancel, decline and timeout each end `cancelled` with the payment reading
   cancelled.
-- [ ] **T226 `method: "reader"` in `/api/checkout`.** The Custom variant,
+- [x] **T226 `method: "reader"` in `/api/checkout`.** Built and driven
+  against the fakes 2026-11-22: the `Custom` payment variant in
+  `sale.ts`; `claimHold` (the row AND a fresh Square read must agree with
+  the sale: teacher, client, cart sha, target and mode, and an APPROVED
+  payment for exactly the rehearsal's total, before `authorized ->
+  selling`); the sale under the custom payment method; `captureHold`
+  (retried three times, then by the sweep; a definite refusal ends
+  `uncollected`); `releaseHold` on a refusal, a suppression or T103's
+  empty basket; `markUnresolved` (hold kept) when Mindbody does not
+  answer; and a release at POST's single exit for any answer that is not
+  a sale while the hold is still `authorized`. Driven: a sale that
+  stands is captured; Mindbody refusing releases; Mindbody not answering
+  keeps the hold and T253 holds the client; a ticket changed after the
+  tap, and a dry run between tap and sale, release; charging before the
+  tap leaves the reader waiting; the same hold cannot sell twice; a
+  capture that does not answer is finished by the sweep. Not built: the
+  25 second read of `/sale/sales` before `unresolved`, and the resolve
+  controls (T228). Spec as written: The Custom variant,
   the claim, the single-exit complete or cancel, the refused shapes. Done
   when a sandbox sale stands with a completed Square sandbox payment linked
   to it, and a forced Mindbody refusal leaves the payment cancelled.
-- [ ] **T227 The Cart screen.** Tile, hook, panel, done block. **Done when a
+- [x] **T227 The Cart screen.** Built 2026-11-22 and driven in a browser
+  against the fakes: `src/app/useReaderPayment.ts` and
+  `src/app/ReaderWait.tsx` (shared with T229); a "Card reader" tile while
+  the switch is on, greyed with its reason, taking the whole sale (its
+  line's amount cannot be edited); Finalize holds the card first ("Ready
+  for card. $4.97", Cancel), then sells; the done block reads "Paid
+  $4.97 by card reader, Visa ending 4242"; "Connect card reader" in the
+  account modal (the code large, a five minute countdown, New code). The
+  sandbox half ran a full sale through the API against Square's real
+  sandbox (R6). Spec as written: Tile, hook, panel, done block. **Done when a
   teacher sells a drop-in in the sandbox on Square's sandbox Terminal, end
   to end, with no hardware.**
-- [ ] **T228 The failure windows.** Ambiguous resolution, the sweep,
+- [x] **T228 The failure windows.** Built 2026-11-22: on no answer the
+  checkout looks for the sale for about 25 seconds (same client, paid the
+  hold's exact amount, made after the card was approved, not linked to
+  another reader payment) and takes the money if found, else keeps the
+  hold `unresolved`; `/api/reader/attempt/[id]/resolve` (admin) charges
+  only against a sale Mindbody shows (or one an admin names) and
+  releases only when Mindbody answers and shows none; the Sales log lists
+  holds to settle. Restart recovery and the reload are the sweep's (an
+  orphaned `selling` row becomes `unresolved` after five minutes). Driven
+  against the fakes, including a sale Mindbody recorded and answered too
+  late for. Not driven: a second iPad on one hold (the compare-and-set
+  refuses it; T226's double-sell test covers the same claim). Spec as
+  written: Ambiguous resolution, the sweep,
   restart recovery, reload, second iPad. Done when each row of the failure
   table is forced against the fake and ends as written, including a kill
   between `selling` and complete.
-- [ ] **T229 Pay and check in.** The roster dialog through the same hook.
+- [x] **T229 Pay and check in.** Built 2026-11-22 and driven in a
+  browser: "Use the card reader" in the dialog (the overdraft block hides
+  while it is chosen), the same hook and panel, then the existing attach
+  and check-in; an unpaid Drop In was paid on the fake reader and the row
+  went to checked in. Spec as written: The roster dialog through the same hook.
   Done when an unpaid row is paid on the sandbox Terminal and checked in,
   and closing the dialog mid-wait releases the hold.
-- [ ] **T230 Customer display and the approval rule.** The reader line on
+- [ ] **T230 Customer display and the approval rule.** Half built
+  2026-11-22: the customer screen says "Paying by Card reader" and "Tap,
+  insert or hold your phone to the card reader." Still waiting on P8: the
+  reader runs through the approval first, as today. Spec as written: The reader line on
   the mirror; P8's answer built. Done when the student's iPad shows the
   prompt, and the approval setting behaves as Pete chose on both screens.
-- [ ] **T231 Reconciliation.** The match on top of T274's check. Done when a
+- [x] **T231 Reconciliation.** Built 2026-11-22 (`readerMismatches` in
+  `src/lib/readerpayment.ts`, on the Sales log through
+  `/api/reader/attention?day=`): Square's payments at the location for
+  the studio day against our rows: a completed payment no sale knows
+  (`square-only`), a different amount (`amount`), a sold row Square has
+  not taken (`not-taken`), and a hold over an hour old (`old-hold`).
+  Mindbody's side is T274's check, which already reads every sale that
+  stood. Driven against the fake with a stray Terminal payment planted.
+  Not built: a Mindbody sale on the reader's payment method the app did
+  not make (needs R4's read of how the custom method reads back), and
+  refunds against returns (T235). Spec as written: The match on top of T274's check. Done when a
   day with one planted mismatch of each kind lists all of them and a clean
   day lists none.
 - [ ] **T232 Gift card sales on the reader**, by the route R5 opens. Done
