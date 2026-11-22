@@ -189,6 +189,8 @@ export function tenderWord(method: unknown): TenderWord | null {
       return "Account balance";
     case "storedcard":
     case "typedcard":
+    /* T227: the Square Terminal is a card to the student too. */
+    case "reader":
       return "Card";
     case "cash":
       return "Cash";

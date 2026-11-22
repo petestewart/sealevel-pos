@@ -89,6 +89,8 @@ import WaiverOverrideDialog, {
 import { waiverOverrideLabel, type WaiverFlow } from "@/lib/waiveroverride";
 import ApprovalWait from "./ApprovalWait";
 import { useSaleApproval } from "./useSaleApproval";
+import ReaderWait from "./ReaderWait";
+import { useReaderPayment } from "./useReaderPayment";
 import { useTenderPick, type TenderPick } from "./useTenderPick";
 import { displayFirstName, tendersFromCharge } from "@/lib/displayticket";
 import type { PassPick } from "@/lib/displaypasses";
@@ -1427,6 +1429,10 @@ function FrontDesk({
    *  covers the total. Credit is this dialog's default, never its rule,
    *  so the card is one tap away beside it. Reset per open. */
   const [payUseCard, setPayUseCard] = useState(false);
+  /** T229: the teacher chose the Square card reader for this ticket. */
+  const [payUseReader, setPayUseReader] = useState(false);
+  /* T229: the card reader, the same hook and panel as the Cart screen. */
+  const reader = useReaderPayment();
   /**
    * T250 (Pete: "When making a sale, if the client has no account
    * balance, the teacher needs the ability to override and give them a
@@ -1711,7 +1717,7 @@ function FrontDesk({
    * student taps rather than after. The effect sits beside `payMethod`,
    * further down; the builder above reads the method through this ref,
    * which the render body keeps current. */
-  const payMethodRef = useRef<"credit" | "storedcard" | null>(null);
+  const payMethodRef = useRef<"credit" | "storedcard" | "reader" | null>(null);
   /** T241: the ways to pay this dialog offers on the approval, kept
    *  current by the render body beside `payMethod`. */
   const payChoicesRef = useRef<
@@ -4148,6 +4154,7 @@ function FrontDesk({
       setPayPromoDraft("");
       setPayPromoNote(null);
       setPayUseCard(false);
+      setPayUseReader(false);
       /* T250: an overdraft authorized for another ticket is not this one's. */
       setPayOverdraft(null);
       setPayOverdraftPin(false);
@@ -4356,6 +4363,7 @@ function FrontDesk({
     setPayPromoDraft("");
     setPayPromoNote(null);
     setPayUseCard(false);
+    setPayUseReader(false);
     /* T250: and the overdraft its PIN authorized, which was for this
      * dialog's ticket and no other. */
     setPayOverdraft(null);
@@ -7178,12 +7186,24 @@ function FrontDesk({
   }, [payOverdraft, payDialog, paySelectedId, payPromoCode, payTotal, payUseCard]);
   /** T250: the account can pay, on its balance or on the PIN. */
   const payCreditReady = payCreditCovers || payOverdraftArmed;
-  const payMethod: "credit" | "storedcard" | null =
-    payCreditReady && !(payUseCard && payCardLive)
-      ? "credit"
-      : payCardLive
-        ? "storedcard"
-        : null;
+  /** T229: why the card reader cannot take this ticket, or null. The
+   *  reader takes a plain sale: no overdraft. */
+  const payReaderWhy: string | null =
+    reader.status === null || !reader.status.enabled
+      ? "Card reader is off"
+      : !reader.status.ready
+        ? (reader.status.why ?? "Card reader is not ready")
+        : payOverdraftArmed
+          ? "The account is being charged past its balance"
+          : null;
+  const payMethod: "credit" | "storedcard" | "reader" | null =
+    payUseReader && payReaderWhy === null
+      ? "reader"
+      : payCreditReady && !(payUseCard && payCardLive)
+        ? "credit"
+        : payCardLive
+          ? "storedcard"
+          : null;
   payMethodRef.current = payMethod;
   /* T240: the method moved under an outstanding approval (see
    * payMethodRef): it ends, with one sentence. A no-op otherwise. */
@@ -7207,7 +7227,7 @@ function FrontDesk({
   /* T241: and so does the customer screen, on the approval: the one
    * other method, with the balance beside the account (Pete: "yes"). */
   payChoicesRef.current =
-    !payCanSwitchMethod || payMethod === null
+    !payCanSwitchMethod || payMethod === null || payMethod === "reader"
       ? []
       : payMethod === "credit"
         ? [{ choice: "storedcard" }]
@@ -7377,6 +7397,8 @@ function FrontDesk({
    */
   const payOverdraftOffered =
     payDialog !== null &&
+    /* T229: not while the card reader is the method. */
+    payMethod !== "reader" &&
     !payMoneyMoved &&
     !payCreditCovers &&
     payTotal !== null &&
@@ -7421,8 +7443,63 @@ function FrontDesk({
      * charge alone -- the visit is already paid and checked in and is
      * deliberately not touched -- so it needs no visit id. */
     if (flavor === "unpaid" && entry.visitId === null) return;
+    /* The request this gesture sends, built once: T229's card reader
+     * holds EXACTLY this ticket, and the checkout then sells it. */
+    const chargeRequest: Record<string, unknown> = {
+    /* T241 third review: this tab, so a PIN-approved charge takes
+       down only this tab's own approval. */
+    presenter: presenterId(),
+      items: [
+        {
+          type: paySelected.type,
+          metadataId: paySelected.id,
+          quantity: 1,
+          price: paySelected.price,
+          taxExempt: paySelected.taxExempt,
+          taxRate: paySelected.taxRate,
+        },
+      ],
+      clientId: entry.clientId,
+      /* T220: the code the pricing applied; the route rehearses
+         with it and charges Mindbody's rehearsed total. */
+      ...(payAppliedPromo !== null
+        ? { promotionCode: payAppliedPromo }
+        : {}),
+      /* T209: the customer's approval, or the PIN that stood in
+         for it. The server checks the setting itself and refuses
+         a charge that carries neither. */
+      ...(approved?.id ? { displayApprovalId: approved.id } : {}),
+      ...(approved?.token
+        ? { approvalOverride: { token: approved.token } }
+        : {}),
+      method: payMethod,
+      /* T250: the teacher's PIN for a negative balance (T94). The
+         route verifies its purpose and teacher, spends it once and
+         files the overdraft on the client. */
+      ...(overdraftToken !== null ? { overdraftToken } : {}),
+    };
     payFlight.current = true;
     setPayOutcome(null);
+    /* T229: the Square Terminal. The card is HELD first (nothing taken),
+     * with the shared panel and its Cancel; only an approved hold goes on
+     * to /api/checkout, which sells and then takes the money. A reader
+     * that ends without approval charged nothing. */
+    if (payMethod === "reader") {
+      setPayStage("charge");
+      const held = await reader.hold(chargeRequest, newIdempotencyKey());
+      if (!held.ok) {
+        reader.done();
+        payFlight.current = false;
+        setPayStage(null);
+        setPayOutcome(
+          held.unknown
+            ? { kind: "charge-ambiguous", message: held.message }
+            : { kind: "charge-failed", message: held.message },
+        );
+        return;
+      }
+      chargeRequest["reader"] = { attemptId: held.attemptId };
+    }
     /* T252: the tab's record of this charge, written at the TAP, before
      * anything is sent, so a reload, an evicted tab or a Close and reopen
      * from here until a definite answer comes back as a charge that needs
@@ -7470,39 +7547,7 @@ function FrontDesk({
              * is still what stops a second tap. */
             [IDEMPOTENCY_HEADER]: newIdempotencyKey(),
           },
-          body: JSON.stringify({
-          /* T241 third review: this tab, so a PIN-approved charge takes
-             down only this tab's own approval. */
-          presenter: presenterId(),
-            items: [
-              {
-                type: paySelected.type,
-                metadataId: paySelected.id,
-                quantity: 1,
-                price: paySelected.price,
-                taxExempt: paySelected.taxExempt,
-                taxRate: paySelected.taxRate,
-              },
-            ],
-            clientId: entry.clientId,
-            /* T220: the code the pricing applied; the route rehearses
-               with it and charges Mindbody's rehearsed total. */
-            ...(payAppliedPromo !== null
-              ? { promotionCode: payAppliedPromo }
-              : {}),
-            /* T209: the customer's approval, or the PIN that stood in
-               for it. The server checks the setting itself and refuses
-               a charge that carries neither. */
-            ...(approved?.id ? { displayApprovalId: approved.id } : {}),
-            ...(approved?.token
-              ? { approvalOverride: { token: approved.token } }
-              : {}),
-            method: payMethod,
-            /* T250: the teacher's PIN for a negative balance (T94). The
-               route verifies its purpose and teacher, spends it once and
-               files the overdraft on the client. */
-            ...(overdraftToken !== null ? { overdraftToken } : {}),
-          }),
+          body: JSON.stringify(chargeRequest),
         });
       } catch {
         /* The request died between us and our server: the outcome is
@@ -7778,6 +7823,8 @@ function FrontDesk({
     } finally {
       payFlight.current = false;
       setPayStage(null);
+      /* T229: the reader's panel goes once the charge has answered. */
+      reader.done();
     }
   };
 
@@ -12283,7 +12330,9 @@ function FrontDesk({
               </p>
             ) : null}
             <p className="pay-method-line">
-              {payMethod === "credit" && payOverdraftArmed
+              {payMethod === "reader"
+                ? "Pays on the card reader: the student taps, inserts or uses their phone."
+                : payMethod === "credit" && payOverdraftArmed
                 ? `Charges the account past its balance (${money(
                     payBalance ?? 0,
                   )}).`
@@ -12350,7 +12399,30 @@ function FrontDesk({
             {/* T238: when the balance and the card can both pay, the
                 other one is a tap away. The balance is the default, not
                 the rule. */}
-            {payCanSwitchMethod && !payMoneyMoved && payCard ? (
+            {/* T229: the Square card reader, while its switch is on.
+                One tap chooses it; another goes back to the account or
+                the card on file. Greyed with the reason when it cannot
+                take this ticket. */}
+            {reader.status?.enabled && !payMoneyMoved ? (
+              <button
+                className="pay-method-switch"
+                disabled={
+                  payStage !== null ||
+                  payApproval.pending ||
+                  (payMethod !== "reader" && payReaderWhy !== null)
+                }
+                title={payReaderWhy ?? undefined}
+                onClick={() => setPayUseReader((cur) => !cur)}
+              >
+                {payMethod === "reader"
+                  ? "Use the account or card on file instead"
+                  : payReaderWhy === null
+                    ? "Use the card reader"
+                    : `Card reader: ${payReaderWhy}`}
+              </button>
+            ) : null}
+            <ReaderWait view={reader.view} onCancel={() => void reader.cancel()} />
+            {payCanSwitchMethod && !payMoneyMoved && payCard && payMethod !== "reader" ? (
               <button
                 className="pay-method-switch"
                 /* T240: locked from the moment the approval is BEGUN,

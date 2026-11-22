@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 
+import ReaderPair from "./ReaderPair";
 import SalesSheet from "./SalesSheet";
 import PasswordInput from "./PasswordInput";
 import PinModal from "./PinModal";
@@ -151,6 +152,10 @@ export default function StaffModal({
     undefined,
   );
   const [salesOpen, setSalesOpen] = useState(false);
+  /** T227: whether the card reader is switched on here (the switch, not
+   *  the pairing), which is what offers "Connect card reader". */
+  const [readerOn, setReaderOn] = useState<{ paired: boolean } | null>(null);
+  const [pairOpen, setPairOpen] = useState(false);
 
   const runProbe = useCallback(async () => {
     setProbeBusy(true);
@@ -202,6 +207,25 @@ export default function StaffModal({
       cancelled = true;
     };
   }, [open, teacher]);
+
+  /* T227: the card reader's switch and pairing, read on each opening. */
+  useEffect(() => {
+    if (!open || !teacher) {
+      setReaderOn(null);
+      return;
+    }
+    let cancelled = false;
+    fetch("/api/reader/status")
+      .then(async (r) => (r.ok ? r.json() : null))
+      .then((body) => {
+        if (cancelled) return;
+        setReaderOn(body?.enabled === true ? { paired: body.paired === true } : null);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [open, teacher, pairOpen]);
 
   /* T80: and whether they have a PIN, read the same way. A failed read
    * leaves it unknown, which offers nothing rather than offering a
@@ -374,6 +398,11 @@ export default function StaffModal({
               error={probeError}
               onRun={() => void runProbe()}
             />
+            {readerOn !== null ? (
+              <button className="sales-open" onClick={() => setPairOpen(true)}>
+                {readerOn.paired ? "Card reader connected. Connect again" : "Connect card reader"}
+              </button>
+            ) : null}
             {salesProblems !== undefined ? (
               <button
                 className={salesProblems ? "sales-open bad" : "sales-open"}
@@ -408,6 +437,7 @@ export default function StaffModal({
                 Sign out
               </button>
             </div>
+            <ReaderPair open={pairOpen} onClose={() => setPairOpen(false)} />
             <SalesSheet
               open={salesOpen}
               today={studioToday()}
