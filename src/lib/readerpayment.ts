@@ -8,7 +8,8 @@ import {
   type ReaderPaymentRow,
 } from "./db";
 import { readerEnv, readerMode, type ReaderEnv } from "./cardreader";
-import { currentSiteId, target } from "./mindbody";
+import { currentSiteId, mindbody, target } from "./mindbody";
+import { studioWall } from "./roster";
 import {
   square,
   squareAmbiguous,
@@ -738,6 +739,94 @@ async function tryComplete(env: ReaderEnv, row: ReaderPaymentRow): Promise<Reade
 export async function markUnresolved(id: string, why: string): Promise<void> {
   await transitionReaderPayment(id, ["selling"], "unresolved", { failure: why });
   console.warn(`[reader] ${id} unresolved: ${why}`);
+}
+
+/* --- Settling a hold Mindbody did not answer for (T228) ----------------- */
+
+/**
+ * T228: looks in Mindbody for the sale a reader hold paid for, when the
+ * checkout's answer was lost: a sale on the hold's client, from a few
+ * minutes before the hold to now, whose payments total exactly the hold's
+ * amount. READS ONLY. Answers the sale id, or null when none (or the read
+ * failed, which is never evidence that there is no sale: `unknown`).
+ */
+export async function findSaleForHold(
+  row: ReaderPaymentRow,
+): Promise<{ saleId: string | null; unknown: boolean }> {
+  if (row.clientId === null) return { saleId: null, unknown: true };
+  const DAY = 86_400_000;
+  const from = `${studioWall(new Date(row.createdAt - DAY)).slice(0, 10)}T00:00:00`;
+  const to = `${studioWall(new Date(Date.now() + DAY)).slice(0, 10)}T00:00:00`;
+  try {
+    const body: any = await mindbody(
+      `/sale/sales?request.startSaleDateTime=${encodeURIComponent(from)}` +
+        `&request.endSaleDateTime=${encodeURIComponent(to)}&request.limit=200`,
+    );
+    const sales: any[] = Array.isArray(body?.Sales) ? body.Sales : [];
+    /* The sale was made AFTER the card was approved (the checkout claims
+     * an approved hold and only then sells), so anything earlier is some
+     * other sale, a minute of slack for the two clocks. And a sale another
+     * reader payment already paid for is never this one's: without that,
+     * two drop-ins for one student a minute apart would take the second
+     * card for the first sale (seen against the fake, 2026-11-22). */
+    const floor = (row.authorizedAt ?? row.createdAt) - 60_000;
+    const wallFloor = Date.parse(`${studioWall(new Date(floor))}Z`);
+    const linked = new Set(await linkedSaleIds());
+    const match = sales.find((s) => {
+      if (String(s?.ClientId ?? "") !== row.clientId) return false;
+      if (linked.has(String(s?.Id))) return false;
+      const when = Date.parse(`${String(s?.SaleDateTime ?? "").replace("Z", "")}Z`);
+      if (!Number.isFinite(when) || when < wallFloor) return false;
+      const paid = (Array.isArray(s?.Payments) ? s.Payments : []).reduce(
+        (a: number, p: any) => a + (typeof p?.Amount === "number" ? p.Amount : 0),
+        0,
+      );
+      return Math.round(paid * 100) === row.amountCents;
+    });
+    return { saleId: match ? String(match.Id) : null, unknown: false };
+  } catch {
+    return { saleId: null, unknown: true };
+  }
+}
+
+/** Every Mindbody sale id a reader payment of the last two days is
+ *  linked to. A store that does not answer throws: no answer must never
+ *  read as "nothing is linked". */
+async function linkedSaleIds(): Promise<string[]> {
+  const rows = await readerPaymentsIn(
+    ["sold", "captured", "uncollected", "unresolved", "selling"],
+    Date.now() - 2 * 86_400_000,
+  );
+  if (rows === null) throw new Error("the reader payments did not answer");
+  return rows.map((r) => r.mbSaleId).filter((id): id is string => id !== null);
+}
+
+/** T228: the person's decision, "the sale is in Mindbody: take the
+ *  money". From `unresolved` only; then exactly as a sale that stood. */
+export async function resolveCharge(
+  id: string,
+  mbSaleId: string,
+): Promise<ReaderPaymentRow | null> {
+  const env = readerEnv();
+  const moved = await transitionReaderPayment(id, ["unresolved"], "sold", { mbSaleId });
+  if (moved === null || moved === "unavailable") return reread(id);
+  console.log(`[reader] ${id} resolved: charge, sale=${mbSaleId}`);
+  if ("missing" in env) return moved;
+  return tryComplete(env, moved);
+}
+
+/** T228: the person's decision, "no sale: release the hold". From
+ *  `unresolved` only, through the ordinary cancel (which ends unresolved
+ *  again if Square had already taken the money). */
+export async function resolveRelease(id: string): Promise<ReaderPaymentRow | null> {
+  const env = readerEnv();
+  const moved = await transitionReaderPayment(id, ["unresolved"], "cancelling", {
+    failure: "Released by hand: no sale in Mindbody. Nothing was charged.",
+  });
+  if (moved === null || moved === "unavailable") return reread(id);
+  console.log(`[reader] ${id} resolved: release`);
+  if ("missing" in env) return reread(id);
+  return finishCancel(env, moved).catch(() => reread(id));
 }
 
 /** T226, for the sweep: complete what was sold and not yet taken, and

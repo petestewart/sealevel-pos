@@ -38,7 +38,7 @@ import {
 } from "@/lib/approval";
 import { cartSha256 } from "@/lib/cartsha";
 import { READER_OFF_SENTENCE, cardReaderEnabled } from "@/lib/cardreader";
-import { cancelAttempt, captureHold, claimHold, markUnresolved, releaseHold } from "@/lib/readerpayment";
+import { cancelAttempt, captureHold, claimHold, findSaleForHold, markUnresolved, releaseHold } from "@/lib/readerpayment";
 import { findReaderPayment } from "@/lib/db";
 import { currentShelfConfig } from "@/lib/catalog";
 import {
@@ -5538,6 +5538,37 @@ async function runCheckout(
         );
       } catch (err) {
         if (isAmbiguous(err)) {
+          /* T228: no answer. Before keeping the hold for a person, look
+           * for the sale itself for about 25 seconds: found, it stands,
+           * and the money is taken exactly as for a sale that answered. */
+          for (let tries = 0; tries < 5; tries++) {
+            await new Promise((r) => setTimeout(r, 5000));
+            const found = await findSaleForHold(claim.row);
+            if (found.saleId !== null) {
+              const captured = await captureHold(attemptId, found.saleId);
+              const state = captured?.state ?? "sold";
+              console.warn(
+                `[reader] ${attemptId} Mindbody did not answer; found sale ${found.saleId} and took the payment (${state})`,
+              );
+              return NextResponse.json({
+                ok: true,
+                method: m,
+                total,
+                saleId: found.saleId,
+                cartId: null,
+                receiptRequested: sendEmail,
+                emailReceipt: null,
+                reader: {
+                  ...cardTail.reader,
+                  state,
+                  warning:
+                    state === "captured"
+                      ? `Mindbody answered late, so the sale was looked up (sale ${found.saleId}) before the card was charged.`
+                      : "Sold. Taking the card payment did not answer yet; the app keeps trying. Do not run the card again.",
+                },
+              });
+            }
+          }
           await markUnresolved(
             attemptId,
             "Mindbody did not answer. The card is on hold and has NOT been charged. Do not run the card again: check Mindbody for the sale.",

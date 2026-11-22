@@ -10114,3 +10114,28 @@ button.display-mark-row {
   font-size: 22px;
   font-weight: 700;
 }
+
+/* T228: card reader holds that need a person, at the top of the Sales log. */
+.sales-holds {
+  margin: 8px 0 12px;
+  padding: 8px 12px;
+  border: 2px solid var(--stop);
+  background: var(--stop-bg);
+}
+
+.sales-holds-head {
+  margin: 0 0 6px;
+  color: var(--stop);
+  font-weight: 700;
+  font-size: 18px;
+}
+
+.sales-hold {
+  padding: 6px 0;
+  border-top: 1px solid var(--line);
+  font-size: 16px;
+}
+
+.sales-hold p {
+  margin: 4px 0;
+}
