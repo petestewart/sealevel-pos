@@ -1687,6 +1687,24 @@ function KeypadIcon() {
   );
 }
 
+/** T282: Square's mark on the card reader tile (Pete: "add a square logo
+ *  on the right to card reader"), so a teacher knows which device it is.
+ *  The rounded ring with a square inside, drawn in `currentColor` so it
+ *  follows the theme like every other glyph. Decorative: the tile's name
+ *  says what it is. */
+function SquareMark() {
+  return (
+    <svg width="30" height="30" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path
+        fill="currentColor"
+        fillRule="evenodd"
+        d="M6.5 1.5h11a5 5 0 0 1 5 5v11a5 5 0 0 1-5 5h-11a5 5 0 0 1-5-5v-11a5 5 0 0 1 5-5Zm.5 4a1.5 1.5 0 0 0-1.5 1.5v10a1.5 1.5 0 0 0 1.5 1.5h10a1.5 1.5 0 0 0 1.5-1.5V7a1.5 1.5 0 0 0-1.5-1.5H7Z"
+      />
+      <rect x="9" y="9" width="6" height="6" rx="1" fill="currentColor" />
+    </svg>
+  );
+}
+
 function AccountIcon() {
   return (
     <Icon d="M4 21c0-4 3.6-6 8-6s8 2 8 6" size={24}>
@@ -3491,8 +3509,12 @@ function PaymentPanel(props: {
   /** T94: the tile's quiet line when there is nothing on the account.
    *  Not a refusal: the tile works, and the modal is where the overdraft
    *  is authorized. */
+  /* T284 (Pete: "Account should show $0 or negative amount rather than
+   * 'No balance'. subtext should just be 'requires a PIN'"). The badge
+   * now carries the balance whatever it is; the note only says what a
+   * charge past it takes. */
   const creditNote =
-    balance !== null && balance > 0 ? null : "No balance";
+    balance !== null && balance > 0 ? null : "Requires a PIN";
 
   /**
    * Whether Account is OFFERED at all. T33 hid it with no balance (Pete,
@@ -3572,7 +3594,14 @@ function PaymentPanel(props: {
     waitingForScreen ||
     partialLock !== null ||
     (result !== null && result.kind !== "error" && result.kind !== "suppressed");
+  /* T280 (Pete, 2026-11-22: "account should not be selected on its own,
+   * teacher should have to select it"): T239's automatic line is OFF.
+   * The machinery stays, so turning it back on is this one constant;
+   * with it false `autoTarget` is always null and the effect below only
+   * ever takes a stale automatic line off. */
+  const AUTO_ACCOUNT_LINE = false;
   const autoTarget =
+    AUTO_ACCOUNT_LINE &&
     client !== null &&
     !comped &&
     creditReason === null &&
@@ -6906,8 +6935,14 @@ function PaymentPanel(props: {
         : dueCents !== null && dueCents > 0 && lines.length > 0
           ? `Add a source for the remaining ${money(dueCents / 100)}.`
           : lines.length === 0
-            ? cardReason !== null
-              ? `Card: ${cardReason}`
+            ? /* T279: with the card reader ready, a missing card on file
+                 is no reason to stop anyone, so the line stays quiet. */
+              (reader.status?.enabled === true && reader.status.ready) || !client
+              ? ""
+              : cardReason !== null
+              ? /card on file/i.test(cardReason)
+                ? cardReason
+                : `Card on file: ${cardReason}`
               : /* Only for a credit source that is actually on screen: a
                    reason for an absent control explains nothing. */
                 creditVisible && creditReason !== null
@@ -6919,24 +6954,55 @@ function PaymentPanel(props: {
      glyph back beside each name at Pete's ask ("'Card', 'Cash' and
      'Account' should have icons next to them"). The label text is as it
      was; the icon rides in the name span and inherits its colour. */
+  /* T279 (Pete, after the first live reader sale, 2026-11-22: "Card
+     should be 'Card on file'. Account shouldn't be in the payment
+     already (ESPECIALLY WHEN THE CLIENT HAS NO CREDIT!) ... it's also
+     not in a good order and it's weird with an odd amount of buttons").
+     The order is how a student most often pays: the card reader, the
+     card on file, cash, a gift card. Account LEADS only when it holds a
+     balance; an empty account goes LAST, because T94's overdraft is still
+     reached through it, and its note says so. An odd count never leaves
+     an empty cell: the account (else the last tile) takes the full row,
+     `pay-tile-wide`. */
+  /* T280 (Pete, same day: "stored card should be first if there is a
+     stored card. should also display last 4 digits ... account should
+     not be selected on its own, teacher should have to select it"). A
+     usable card on file leads; otherwise the card reader does. Account
+     is always LAST now, its balance on its badge, since nothing puts it
+     on the payment by itself any more. */
+  const storedCardFirst = cardDetail !== null;
+  const readerTile = reader.status?.enabled
+    ? [{ s: "reader" as TenderSource, label: "Card reader", icon: <CardIcon /> }]
+    : [];
+  /* T283 (Pete: "lets just make manual card entry its own button always
+     so we dont have to have the extra wide account button"). Card on
+     file is its own tile, offered only with a client attached (a walk-in
+     has no card on file); T93's typed card is ALWAYS its own tile, the
+     whole of it opening the card entry. */
+  const storedTile = client
+    ? [{ s: "storedcard" as TenderSource, label: "Card on file", icon: <CardIcon /> }]
+    : [];
   const sources: { s: TenderSource; label: string; icon: ReactNode }[] = [
-    /* Credit leads when there IS credit, and is absent when there is not
-       (Pete, fourth live test). */
+    /* T227: the Square Terminal, drawn only while the switch is on. */
+    ...(storedCardFirst ? [...storedTile, ...readerTile] : [...readerTile, ...storedTile]),
+    /* T285 (Pete: "cash should always be before manual card entry"). */
+    { s: "cash", label: "Cash", icon: <CashIcon /> },
+    { s: "typedcard", label: "Manual card entry", icon: <CardIcon /> },
+    /* T83: always offered. A gift card needs no client and no card on
+       file, so there is no state in which it is unusable for a reason
+       worth greying it with; what it needs is the number, which its
+       modal asks for. */
+    { s: "giftcard", label: "Gift card", icon: <GiftCardIcon /> },
     ...(creditVisible
       ? [{ s: "credit" as TenderSource, label: "Account", icon: <AccountIcon /> }]
       : []),
-    { s: "storedcard", label: "Card", icon: <CardIcon /> },
-    { s: "cash", label: "Cash", icon: <CashIcon /> },
-    /* T83: the fourth tile, always offered. A gift card needs no client
-       and no card on file, so there is no state in which it is unusable
-       for a reason worth greying it with; what it needs is the number,
-       which its modal asks for. */
-    { s: "giftcard", label: "Gift card", icon: <GiftCardIcon /> },
-    /* T227: the Square Terminal, drawn only while the switch is on. */
-    ...(reader.status?.enabled
-      ? [{ s: "reader" as TenderSource, label: "Card reader", icon: <CardIcon /> }]
-      : []),
   ];
+  const wideSource: TenderSource | null =
+    sources.length > 3 && sources.length % 2 === 1
+      ? creditVisible
+        ? "credit"
+        : (sources[sources.length - 1]?.s ?? null)
+      : null;
 
   /* The three figures (0.2): Due is settled once the lines cover the
    * total with at least one line present (or the sale is comped), and
@@ -7243,6 +7309,46 @@ function PaymentPanel(props: {
                 aria-label="Payment sources"
               >
                 {sources.map(({ s, label, icon }) => {
+                  if (s === "typedcard") {
+                    /* T283: the typed card's own tile. */
+                    const why = addReason("typedcard");
+                    const manualOff = why !== null;
+                    return (
+                      <button
+                        key={s}
+                        className={
+                          (manualOff ? "pay-tile off" : "pay-tile") +
+                          (usedSources.has("typedcard") ? " in" : "") +
+                          (s === wideSource ? " pay-tile-wide" : "") +
+                          " with-mark"
+                        }
+                        disabled={manualOff || charging || tenderHeld}
+                        onClick={openCardEntry}
+                        title={why ?? "Type a card number for this sale"}
+                      >
+                        <span className="pay-tile-name">
+                          {icon}
+                          {label}
+                        </span>
+                        <span className="pay-tile-reason">
+                          {why ?? "Type the card number"}
+                        </span>
+                        {/* T282: the keypad glyph on the right, as on
+                            "Card on file". Not a second button: the
+                            whole tile already opens the card entry. */}
+                        <span
+                          className={
+                            usedSources.has("typedcard")
+                              ? "pay-tile-mark pay-keypad on"
+                              : "pay-tile-mark pay-keypad"
+                          }
+                          aria-hidden="true"
+                        >
+                          <KeypadIcon />
+                        </span>
+                      </button>
+                    );
+                  }
                   const reason = addReason(s);
                   /* Layout plan 2.7: tapping Cash when a cash line is
                      already in the payment opens THAT line's keypad
@@ -7280,25 +7386,27 @@ function PaymentPanel(props: {
                            authorized. */
                         s === "credit"
                         ? creditNote
-                        : null;
+                        : /* T280: the card's last four on its tile, and
+                             what the Terminal takes on the reader's. */
+                          s === "storedcard" && card && !card.expired
+                          ? `****${card.lastFour}`
+                          : s === "reader"
+                            ? "Cards, Apple Pay, Google Pay"
+                            : null;
                   /* In the payment: the selected marker (--accent-bg and
                      the 4px accent edge), whether or not the tile can
                      still take a tap. */
                   const inPayment = usedSources.has(s);
-                  /* T93: the Card tile carries the keypad square that
-                     opens the manual-entry modal. It is a SIBLING button
-                     in the same cell, never nested inside the tile (a
-                     button inside a button is not a control), and it is
-                     live when the tile body is not: "no card on file" and
-                     "attach a client" both still allow a card handed
-                     across the counter. */
-                  const typedReason =
-                    s === "storedcard" ? addReason("typedcard") : null;
+                  /* T283: T93's keypad square on the Card tile is gone;
+                     the typed card is its own tile ("Manual card entry"). */
                   const tile = (
                     <button
                       key={s}
                       className={
-                        (off ? "pay-tile off" : "pay-tile") + (inPayment ? " in" : "")
+                        (off ? "pay-tile off" : "pay-tile") +
+                        (inPayment ? " in" : "") +
+                        (s === wideSource ? " pay-tile-wide" : "") +
+                        (s === "reader" ? " with-mark" : "")
                       }
                       disabled={off || charging || tenderHeld}
                       onClick={() =>
@@ -7331,33 +7439,27 @@ function PaymentPanel(props: {
                       {shown ? (
                         <span className="pay-tile-reason">{shown}</span>
                       ) : null}
-                      {s === "credit" && balance !== null && balance > 0 ? (
-                        <span className="pay-tile-badge">{money(balance)}</span>
+                      {s === "credit" && balance !== null ? (
+                        <span
+                          className={
+                            balance > 0
+                              ? "pay-tile-badge"
+                              : balance < 0
+                                ? "pay-tile-badge owed"
+                                : "pay-tile-badge empty"
+                          }
+                        >
+                          {money(balance)}
+                        </span>
+                      ) : null}
+                      {s === "reader" ? (
+                        <span className="pay-tile-mark pay-tile-square" aria-hidden="true">
+                          <SquareMark />
+                        </span>
                       ) : null}
                     </button>
                   );
-                  if (s !== "storedcard") return tile;
-                  return (
-                    <div className="pay-tile-cell" key={s}>
-                      {tile}
-                      <button
-                        className={
-                          usedSources.has("typedcard")
-                            ? "pay-keypad on"
-                            : "pay-keypad"
-                        }
-                        disabled={typedReason !== null || charging || tenderHeld}
-                        onClick={openCardEntry}
-                        aria-label="Type a card number for this sale"
-                        title={
-                          typedReason ??
-                          "Type a card number for this sale"
-                        }
-                      >
-                        <KeypadIcon />
-                      </button>
-                    </div>
-                  );
+                  return tile;
                 })}
               </div>
 

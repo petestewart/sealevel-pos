@@ -22,7 +22,7 @@ path for the phase that carries them.
 | P4 | ~~Is the $10 minimum measured before or after tax?~~ **Moot (T238, 2026-11-15): there is no card minimum any more.** | Phase 2 payments | A $2.72 item is $3.00 charged, on the card, as $3.00 |
 | P5 | Where does the studio banner text live once an env var is not enough? | Phase 3 | Env var is fine until someone other than Pete edits it |
 | P6 | The Square account: legal entity, bank account for payouts, who holds the login; and a Square developer application for the sandbox and production access tokens | T223, T237 | Phase 4, on Square since 2026-11-21 |
-| P7 | The custom payment method's name in Mindbody, created on 471, and one on the sandbox | T222 | e.g. "Card (Square reader)" |
+| P7 | ~~The custom payment method~~ **Done on 471 (2026-11-22): "Square Terminal", id 18** (`MINDBODY_PROD_READER_PAYMENT_ID=18`). Still owed: one on the sandbox site | T222 | Named for Apple Pay and Google Pay too, not just cards |
 | P8 | Does the card tapped on the reader count as the customer's approval (T203)? | T230 | Recommended yes: approve-then-tap is the friction the brief rules out |
 | P9 | Tipping on the reader? | T225 | Recommended none; a tip changes the held amount |
 | P10 | ~~Does the $10 card minimum apply to the reader?~~ **Answered (Pete, 2026-11-15, T238): any amount, on the reader too.** The floor is retired everywhere | T226 | A $3 water by tap is the kind of sale being lost |
@@ -57,8 +57,8 @@ Cheap, and each one removes a guess. All are read-only or `Test: true`.
 | B7 | First, the drawer's record of the next refused gift card sale (which call, which payment, Mindbody's words). Then, if it is the tender: a `GiftCard` payment on `checkoutshoppingcart`, `Test: true`, a real barcode with a balance, once with T83's `Metadata` as a JSON STRING (what ships), once as an OBJECT `{amount, cardNumber}` | What Pete's "when finalizing a sale with a Gift card - 'missing key account' bug" (2026-11-09, T255) was: a gift card SPENT (the tender's Metadata shape) or a gift card SOLD from the account (T108, `purchasegiftcard` with `DebitAccount`), and which shape Mindbody reads | Not run. T255 claimed the string was the cause and switched to the object; the merge kept the string because no recorded call ties the refusal to the shape |
 | B9 | Dummy client 100042041, write guard narrowed to it, `POS_DRY_RUN=false`, prod, from the deployed counter: $1.00 of account credit beside the cheapest retail item, paid in cash | That step 2's `DebitAccount` cart sale spends the credit step 1 just bought, the balance ends up by exactly $1.00, and Mindbody's sales list shows the two sales the done screen names (T256) | Not run. The credit-only shape is settled by the controlled run (sale 428953) |
 | B8 | Dummy client 100042041, the write guard narrowed to it, `POS_DRY_RUN=false`, prod: ONE real `checkoutshoppingcart` (not `Test: true`) with two card payments, a good card (the stored card or a typed one, $1.00) beside a typed card number built to decline, for a small item. Then read `/sale/sales` for the client and look at the good card's own activity (the processor's dashboard or statement) for an authorization or a charge, and again a day later | Whether Mindbody voids card A's authorization when card B in the same checkout declines (T255 review). Until it is answered, `/api/checkout` answers a 4xx on a split with two or more card legs as AMBIGUOUS, holds the client (T253) and offers no retry | Not run |
-| R1 | `GET /sale/custompaymentmethods` on 471 and on -99 | What exists, and the response key: the spec says `PaymentMethods` (sale.yml:2798) while `scripts/probe-giftcard-free.ts` reads `CustomPaymentMethods`, so that script may have printed "none configured" wrongly. Read both | Not run (T222) |
-| R2 | `checkoutshoppingcart`, `Test: true`, a Custom payment with the new id | Whether Mindbody accepts it, and in which key casing | Not run (T222) |
+| R1 | `GET /sale/custompaymentmethods` on 471 and on -99 | What exists, and the response key | **Answered on 471 (2026-11-22)**: the key is `PaymentMethods`; Pete created "Square Terminal" (Active, Allow >$0, Allow Refund, PayNotes "Square payment"), which reads back as `{Id: 18, Name: "Square Terminal"}` and on `/site/paymenttypes` as type 18. The sandbox site (-99) has none yet |
+| R2 | `checkoutshoppingcart`, `Test: true`, a Custom payment with the new id | Whether Mindbody accepts it, and in which key casing | **Answered on 471 (2026-11-22)**: `{Type: "Custom", Metadata: {Amount: 28, Id: 18}}` for a Drop In (service 298) on dummy client 100042041 was accepted, GrandTotal $28.00, nothing moved |
 | R3 | R2 with a `Notes` key carrying a Square payment id | Whether `SalePayment.Notes` (sale.yml:4557) can carry the link, which would make the match exact inside Mindbody | Not run (T222) |
 | R4 | One real Custom sale for dummy client 100042041, then `/sale/sales` with `request.paymentMethodId` | How the sale reads back, whether the filter takes a custom id, how it shows in Pete's reports, and how a return of it reads | Not run (T231) |
 | R5 | Three `Test: true` calls: (a) `purchasegiftcard` paid Custom; (b) `purchaseaccountcredit` paid Custom; (c) `purchasegiftcard` paid `DebitAccount` | Which gift card route the reader can use: directly (a), or Pete's credit-then-spend workaround (b then c). c asks against the client's existing balance, so "insufficient" there is about the balance, not the payment type | Not run (T222; `scripts/probe-custom-payment.ts`) |
@@ -1061,8 +1061,54 @@ which needs nothing afterwards.
   ways forward, the header count. Done when a refused pass, a total that
   moved, and an unmatched walk-in each stop for a teacher, and each way
   forward ends the row with nothing charged twice.
+- [x] **T279 The Cart screen's payment tiles, in order.** Built 2026-11-22
+  (Pete, after the first reader sale: "Card should be 'Card on file'.
+  Account shouldn't be in the payment already (ESPECIALLY WHEN THE CLIENT
+  HAS NO CREDIT!) ... not in a good order and it's weird with an odd
+  amount of buttons"). Order: Account first ONLY with a balance, then Card
+  reader, Card on file, Cash, Gift card, and an empty account LAST ("No
+  balance. Charging past it needs a PIN.", T94's door). An odd count gives
+  the account, else the last tile, the full row: no empty cell. With the
+  reader ready, the foot no longer says "No card on file". Seen against
+  the fakes: walk-in (2x2), no balance (2x2 plus account), a balance.
+- [x] **T280 Card on file first, nothing chosen for the teacher.** Built
+  2026-11-22 (Pete, on T279's screenshots: "stored card should be first
+  if there is a stored card. should also display last 4 digits ... card
+  reader should have under it in small letters the forms of payment we
+  take ... account should not be selected on its own, teacher should have
+  to select it"). A usable card on file leads ("Ending 7311"), else the
+  card reader ("Cards, Apple Pay, Google Pay"); Account is always last
+  with its balance badge; T239's automatic account line is off
+  (`AUTO_ACCOUNT_LINE`). The roster's pay dialog is unchanged: it still
+  defaults to a balance that covers the total (Pete: "that is fine, we can
+  leave it like that"). T281, same day: on a walk-in sale that tile is
+  "Manual card entry" ("Type the card number"), and the whole tile opens
+  T93's card entry. T282, same day: Square's mark on the right of the
+  card reader tile, and the keypad glyph back on the right of "Manual
+  card entry" (decorative: the whole tile is the button). T283, same day
+  (Pete: "change card on file subtext to ****7311 and lets just make
+  manual card entry its own button always so we dont have to have the
+  extra wide account button"): Card on file reads "****7311" and is
+  offered only with a client; "Manual card entry" is always its own tile
+  and the keypad square on Card on file is gone. With the reader on: six
+  tiles with a client, four on a walk-in. With it off and a client, five,
+  and the account still takes the full row.
+  T284, same day (Pete: "Account should show $0 or negative amount rather
+  than 'No balance'. subtext should just be 'requires a PIN'"): the badge
+  always carries the balance ($0.00 muted, owed in the warn pair, credit
+  green) and an empty or owed account reads "Requires a PIN". T285: Cash
+  always comes before Manual card entry. Seen against the fakes:
+  walk-in, card on file with no balance, card on file with $40.
 - [ ] **T237 Hardware day.** Buy and pair the Terminal, the production
-  token, `POS_READER_LIVE=true`, write guard on the dummy client. Done when
+  token, `POS_READER_LIVE=true`. **Never `POS_WRITE_CLIENT_IDS` while the
+  studio is open**: it suppresses every write for every other client,
+  check-ins included, on every iPad (2026-11-22, it stopped a teacher's
+  check-ins mid-class; sell to the dummy client by hand instead).
+  **Half done 2026-11-22**: paired by device code, and Pete's own card
+  bought one LMNT Electrolytes ($2.00) for John NewGuy, Mindbody sale
+  429494 paid $2.00 by method 18 "Square Terminal". Owed: the Square
+  side read as COMPLETED, the refund/void (Pete may keep it), the next
+  day's match. Done when
   Pete's own card buys the cheapest item, the sale reads back from
   Mindbody with the reader's payment method, the payment is completed in
   Square, both are refunded and voided, and the next day's match is clean.

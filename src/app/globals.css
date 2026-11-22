@@ -5009,6 +5009,11 @@ button.sale-for:disabled {
   border-right: 0;
 }
 
+/* T279: an odd count takes a full row rather than leave an empty cell. */
+.pay-tiles.wrap .pay-tile-wide {
+  grid-column: 1 / -1;
+}
+
 .pay-tile.off {
   cursor: default;
 }
@@ -5065,6 +5070,18 @@ button.sale-for:disabled {
   font-weight: 600;
   line-height: 1.4;
   font-variant-numeric: tabular-nums;
+}
+
+/* T284: the balance is always on the Account tile. Nothing on it is
+ * muted; owed reads as a warning, never as the green of money to spend. */
+.pay-tile-badge.empty {
+  background: var(--surface-2);
+  color: var(--muted);
+}
+
+.pay-tile-badge.owed {
+  background: var(--warn-bg);
+  color: var(--warn);
 }
 
 /* Tender rows (Payment.dc.html): 64px on a 1px line, the method at
@@ -10145,4 +10162,32 @@ button.display-mark-row {
   margin-top: 6px;
   font-size: 20px;
   font-weight: 400;
+}
+
+/* T282: a glyph on the right of a payment tile (the Square mark on the
+ * card reader, the keypad on a walk-in's manual card entry), placed where
+ * "Card on file"'s keypad button sits. Decorative: the tile is the
+ * button. */
+.pay-tile.with-mark {
+  padding-right: 64px;
+}
+
+.pay-tile-mark {
+  position: absolute;
+  top: 26px;
+  right: 10px;
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.pay-tile-square {
+  color: var(--ink);
+}
+
+.pay-tile.off .pay-tile-mark {
+  opacity: 0.5;
 }
