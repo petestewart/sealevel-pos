@@ -592,6 +592,23 @@ below).
   `SQUARE_DEVICE_ID` as the no-database fallback.
 - Nothing about the reader's MODE is settable from the drawer. Pairing is
   (below): it decides which Terminal, never whether money moves.
+- **The whole reader is behind a switch** (Pete, 2026-11-22: "the square
+  functionality should be behind a flag"). `card_reader` in
+  `app_settings`, **DEFAULT OFF**, with `POS_CARD_READER` as the
+  no-database fallback (only `true` or `1` turn it on), an admin-only
+  64px control in the drawer's Settings tab, the log naming the staff id,
+  read and stored the way T241's `display_typed_card` is (a store that
+  goes quiet keeps the last answer it gave; here the environment's
+  answer is the safe one, off). Off, the SERVER refuses `method:
+  "reader"`, every `/api/reader/*` route and "Connect card reader" with
+  one sentence and nothing sent to Square; the Card reader tile, the
+  reader line on the customer screen and the outage mode's Terminal
+  tender are not drawn; and every other tender is exactly as it is
+  today. Turning it off with a hold open does not strand the hold: the
+  sweep still releases or completes it, since that is cleaning up, not
+  starting a sale. It is a fifth recorded Settings exception only in the
+  sense T207's is: it can only REMOVE a way to pay. Built in T223, before
+  any reader route exists.
 
 ### Pairing and reconnecting the Terminal
 
@@ -891,9 +908,10 @@ which needs nothing afterwards.
   (written 2026-11-15, not yet run; needs P7's method to exist). Done when
   it has been run on both sites and the answers are recorded in the probe
   table.
-- [ ] **T223 The Square client and the mode.** `square.ts`, the call log's
-  `service` field, the environment table, the location assertion,
-  `/api/config`, the `modeNotice` state. Done when a Square read shows in
+- [ ] **T223 The Square client, the mode and the switch.** `square.ts`,
+  the call log's `service` field, the environment table, the location
+  assertion, `/api/config`, the `modeNotice` state, and the `card_reader`
+  switch (default off). Done when a Square read shows in
   the drawer tagged square, and a location that does not match is refused
   with nothing created.
 - [ ] **T224 The fake and the row.** `scripts/training/fake-square.mjs`,
