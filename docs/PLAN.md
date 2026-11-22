@@ -1096,7 +1096,8 @@ which needs nothing afterwards.
   T284, same day (Pete: "Account should show $0 or negative amount rather
   than 'No balance'. subtext should just be 'requires a PIN'"): the badge
   always carries the balance ($0.00 muted, owed in the warn pair, credit
-  green) and an empty or owed account reads "Requires a PIN". Seen against the fakes:
+  green) and an empty or owed account reads "Requires a PIN". T285: Cash
+  always comes before Manual card entry. Seen against the fakes:
   walk-in, card on file with no balance, card on file with $40.
 - [ ] **T237 Hardware day.** Buy and pair the Terminal, the production
   token, `POS_READER_LIVE=true`. **Never `POS_WRITE_CLIENT_IDS` while the

@@ -59,8 +59,8 @@ with the tender, and loses to any profile read begun after it.
 it"; `AUTO_ACCOUNT_LINE` in `SaleScreen.tsx`); the roster's pay dialog
 still defaults to a covering balance. The Cart screen's tiles are now Card
 on file ("****7311", only with a client) first when there is one, else the
-Card reader ("Cards, Apple Pay, Google Pay", Square's mark), then Manual
-card entry (T93's typed card, always its own tile since T283), Cash, Gift
+Card reader ("Cards, Apple Pay, Google Pay", Square's mark), then Cash,
+Manual card entry (T93's typed card, always its own tile since T283), Gift
 card, and Account last.
 `purchaseCredit` is kept, unreached, for Phase 4's gift card (PLAN
 T232). The design doc's "$10 card minimum" section is reasoning of record

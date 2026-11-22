@@ -6985,8 +6985,9 @@ function PaymentPanel(props: {
   const sources: { s: TenderSource; label: string; icon: ReactNode }[] = [
     /* T227: the Square Terminal, drawn only while the switch is on. */
     ...(storedCardFirst ? [...storedTile, ...readerTile] : [...readerTile, ...storedTile]),
-    { s: "typedcard", label: "Manual card entry", icon: <CardIcon /> },
+    /* T285 (Pete: "cash should always be before manual card entry"). */
     { s: "cash", label: "Cash", icon: <CashIcon /> },
+    { s: "typedcard", label: "Manual card entry", icon: <CardIcon /> },
     /* T83: always offered. A gift card needs no client and no card on
        file, so there is no state in which it is unusable for a reason
        worth greying it with; what it needs is the number, which its
