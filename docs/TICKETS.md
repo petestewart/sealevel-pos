@@ -24247,3 +24247,80 @@ gate. Keyboard up, simulated the way `useVisualViewport` publishes it
 (`--vvh` half the height, `--vv-bot` the rest): the pad sits inside the
 band (24..386 of 410 in landscape, 24..566 of 590 in portrait) and the
 focused reason field is visible inside it. Not seen on a real iPad.
+
+## T274. Every money tap logged, and read back against Mindbody (Pete, 2026-11-21)
+
+Pete: "for a queue, we will need a DB to store records of what needs to
+be processed in MB anyway. so we should just log every transaction to the
+DB. that gives us observability and insight to verify MB is recording
+what we want it to, and identify and fix bugs more easily." First item of
+Phase 4 (PLAN); it needs nothing from Square.
+
+### What it does
+
+- **`sale_log`** (migration 20): one row per money tap on `/api/checkout`
+  (every shape), `/api/purchase-contract`'s LIVE purchase and `/api/guest`.
+  A replayed T113 key is not a tap and gets no row; the contract's
+  `Test: true` rehearsal is not logged.
+- **Opened before Mindbody is asked** (`startSaleLog` in
+  `src/lib/salelog.ts`), bounded at `DB_MARKER_WAIT_MS` (750ms), and
+  **closed with exactly what the iPad was told**: in checkout, through the
+  T113 gate's `record` and `recordThrow`, which every exit already passes
+  through. Writes per row are chained, so the answer never lands under
+  the `started` insert. A row left `started` is the process dying
+  mid-charge, and the sheet shows it as a problem.
+- **No card data**: the request is a WHITELIST (ids, quantities, prices,
+  names, methods, amounts, discount and reason, promotion code, last
+  fours, whether a PIN, an overdraft, an approval or a display card was
+  used), never the body. The answer drops every key that could carry a
+  number, a barcode, a CVV, an expiry, a token, a PIN or a signature and
+  is scrubbed with `scrubSecrets`. Gift card barcodes are not kept here.
+- **One `[sale-log] {json}` console line per step, always**, with `NOT
+  STORED` when the row did not land. A database that does not answer never
+  blocks a sale (driven: stopped Postgres, the sale answered in 0.25s).
+- **The check** (`src/lib/salecheck.ts`, READS ONLY): every `stood` row
+  is read back by sale id (`/sale/sales` with a date window around the
+  sale) and compared: each sale found, on a client from the ticket (or the
+  house client), every requested line present in its quantity (T254's
+  matching rule) for an ordinary cart, and the non-Comp payments equal to
+  what the counter was told, to the cent. Verdicts: `ok`, `differs`,
+  `missing` (after 15 minutes), `unverified` (no sale id, such as a
+  membership, or a read that failed). Runs on the first teacher sign-in
+  of each studio day (yesterday and today) and on "Check now"; at most 60
+  sales per run.
+- **The Sales log** (`src/app/SalesSheet.tsx`): in the account modal for
+  a teacher in `POS_ADMIN_STAFF_IDS` (not the devtools gate: the drawer is
+  off on the counter), a day at a time, with "Only problems", each row
+  expanding to client, teacher, tender, sale ids, what the counter was told
+  and the check's problems. The last week's problems are a gold count on
+  the account control and on Profile in the nav bar. Routes: `GET
+  /api/sale-log?day=` and `?problems=1`, `POST /api/sale-log/check`.
+
+### The fake
+
+`scripts/training/fake-mindbody.mjs` now records a sale's `Payments` the
+way Mindbody's `SalePayment` reads (`Type`, `Amount`; sale.yml:4534)
+instead of the request's `{Type, Metadata}`, lists real gift card sales in
+`/sale/sales`, and has `POST /__fake/short-sale?n=1`, which records the
+next checkout without its last line (the answer unchanged), to plant a
+difference.
+
+### Driven (fake Mindbody, local Postgres, 2026-11-22)
+
+Cash sale with a pass and two products; a typed card (no card digits or
+CVV anywhere in the table); a refused account charge; account credit; a
+split of cash and a typed card; a T90 ticket with a line for someone else
+(two sale ids, both checked); a custom-amount gift card; a guest pass; a
+membership refused for want of a signature; a planted short sale, which
+the check named ("Water Bottle (1L) (Product p100) was asked for and is
+not on the sale."); a replayed key (no second row); Postgres stopped (sale
+stood, `NOT STORED`). Screens seen at 1180x820.
+
+### Not verified
+
+- Nothing against live Mindbody yet. On real sales, look at the first
+  day's check: a `differs` that is our matching rule, not Mindbody, is the
+  thing to expect and fix.
+- A SOLD membership was not driven (the fake needs the PIN or a
+  signature); its row would be `unverified`, since the answer carries no
+  sale id.

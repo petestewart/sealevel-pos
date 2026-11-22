@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 
+import { startSaleLog, summarizeGuestRequest } from "@/lib/salelog";
+
 import {
   actorFields,
   requireActor,
@@ -143,8 +145,26 @@ export async function POST(request: Request) {
     );
   }
   inFlight.add(key);
+  /* T274: the guest's $0 Guest Pass is a sale, and the flow gets its
+   * sale_log row, closed with whatever it answers (a throw as null). */
+  const saleLog = await startSaleLog({
+    route: "/api/guest",
+    request,
+    staffId: staff.session.staffId,
+    staffName: staff.session.name,
+    clientIds: [
+      String(peek["guestClientId"] ?? ""),
+      String(peek["memberClientId"] ?? ""),
+    ],
+    summary: summarizeGuestRequest(peek),
+  });
   try {
-    return await guestFlow(staff.session, raw);
+    const res = await guestFlow(staff.session, raw);
+    void saleLog.finish(res);
+    return res;
+  } catch (err) {
+    void saleLog.finish(null);
+    throw err;
   } finally {
     inFlight.delete(key);
   }

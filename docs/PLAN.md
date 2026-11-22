@@ -30,7 +30,7 @@ path for the phase that carries them.
 | P12 | The statement descriptor | T237 | Ideally matching what Mindbody Payments shows |
 | P13 | Who reconciles, who refunds, and where do they hear about a mismatch off the counter? | T231, T235 | |
 | P14 | ~~S700 or a second WisePOS E?~~ **Moot (2026-11-21): Square Terminal.** | T237 | |
-| P15 | The service charge on card transactions under $10 (Pete, 2026-11-15, T239: "we are eventually going to implement adding a service charge for CC transactions under $10"). **Planned, not built; until it is, a card is charged exactly the sale.** Undecided: the amount; whether it is a Mindbody product line on the cart or a fee outside it; whether it applies to the reader, a typed card and the card on file alike; and how it is shown to the student before the tap | Nothing yet | Not the retired $10 floor: nothing is bought as credit. Square's own card minimum (believed $1.00, U) still meets the reader (T226) |
+| P15 | The service charge on card transactions under $10 (Pete, 2026-11-15, T239: "we are eventually going to implement adding a service charge for CC transactions under $10"). **Planned, not built; until it is, a card is charged exactly the sale.** Undecided: the amount; whether it is a Mindbody product line on the cart or a fee outside it; whether it applies to the reader, a typed card and the card on file alike; and how it is shown to the student before the tap | Nothing yet | Not the retired $10 floor: nothing is bought as credit. Square's US card minimum is $0.01, so nothing meets the reader there. Square's "Auto Card Surcharge" (US, Beta) may be one way to build this, if it can be read back into Mindbody |
 | P16 | Where do incident alerts and diagnoses reach you? Recommended: one private Slack channel, GitHub issues as the record | T263, T264 | Phase 5 |
 | P17 | Which Claude account runs the investigator's sessions, and the monthly ceiling | T264 | Estimated $30 to $80 in a normal month |
 | P18 | Who may tap a one-tap repair: you alone, or anyone in `POS_ADMIN_STAFF_IDS`? | T269 | |
@@ -62,7 +62,7 @@ Cheap, and each one removes a guess. All are read-only or `Test: true`.
 | R3 | R2 with a `Notes` key carrying a Square payment id | Whether `SalePayment.Notes` (sale.yml:4557) can carry the link, which would make the match exact inside Mindbody | Not run (T222) |
 | R4 | One real Custom sale for dummy client 100042041, then `/sale/sales` with `request.paymentMethodId` | How the sale reads back, whether the filter takes a custom id, how it shows in Pete's reports, and how a return of it reads | Not run (T231) |
 | R5 | Three `Test: true` calls: (a) `purchasegiftcard` paid Custom; (b) `purchaseaccountcredit` paid Custom; (c) `purchasegiftcard` paid `DebitAccount` | Which gift card route the reader can use: directly (a), or Pete's credit-then-spend workaround (b then c). c asks against the client's existing balance, so "insufficient" there is about the balance, not the payment type | Not run (T222; `scripts/probe-custom-payment.ts`) |
-| R6 | Square's sandbox, Terminal API | Every (U) in Phase 4: device codes and pairing, sandbox test device ids, checkout and payment statuses and failure codes, offline and busy answers, the checkout's own timeout, `autocomplete: false` and how long an approved payment may wait (believed 36 hours) and what `delay_action` does, completing for less than was approved, `reference_id` and `note` on the payment, the card minimum, whether the Devices API reports a Terminal online | Not run (before T225 is done) |
+| R6 | Square's sandbox and the real Terminal | What the docs leave open (checked 2026-11-22, see Phase 4): whether a sandbox checkout with `autocomplete: false` leaves an APPROVED payment that completes and cancels; whether a real Terminal payment carries `EDIT_AMOUNT_DOWN` (T234); pairing and `PING` on the real device (no Devices API in the sandbox); the cancel race on the real device; how a completed payment, its `reference_id` and a refund read back | Not run (before T225 is done; the real Terminal half after it arrives, 2026-11-22) |
 | A1 | Fire the investigator's scheduled task from the Railway service with a throwaway incident id | The fire endpoint and token shape, reachability from Railway, seconds from fire to the session's first tool call, any daily cap on fired runs | Not run (before T263 is done) |
 | A2 | From the investigator's cloud environment: call this app with no token in hand, and call `api.mindbodyonline.com` | That the environment's proxy attaches the agent token so the session never sees it, and that Mindbody is unreachable from there | Not run (T262, T264) |
 | A3 | An unattended fired session posts to the alert channel, opens an issue and pushes a branch | That the connectors and the repo grant work with nobody watching | Not run (T264) |
@@ -368,12 +368,65 @@ studio's existing reader, which records the sale in Mindbody directly and
 needs nothing reconciled afterwards. The Square Terminal is only ever
 driven from this app; it is never switched to Square's own POS app.
 
-**Square is unverified from here.** `squareup.com` and
-`developer.squareup.com` could not be fetched from the planning session;
-what is below comes from search snippets and memory and is marked (U).
-Probe R6 settles it before T225 is called done, and `connect.squareup.com`
-and `connect.squareupsandbox.com` must be allowed in the cloud environment
-before live Square work. T224's fake lets the build start without them.
+**Square's docs were checked on 2026-11-22** (the docs and the API hosts
+are now allowed in the cloud environment; every claim below was read in
+Square's own developer documentation, nothing yet observed against the
+API). What they settled, and what they corrected in the first draft of
+this plan:
+
+- **Pairing** is as planned: `POST /v2/devices/codes`
+  (`product_type: TERMINAL_API`), five minutes unused, then `PAIRED` with
+  the `device_id` (the Terminal's serial), typed through the "Device Code"
+  button on the Terminal's sign-in page. **There is no API to unpair or
+  sign a Terminal out**: that is done on the device (Settings > Sign
+  Out). **The Devices API does not work in Square's sandbox**, so pairing
+  and device status are tested on the real Terminal only. A Terminal is
+  paired to this app OR running Square's POS app, one at a time.
+- **The hold** is as planned: `payment_options.autocomplete: false`, then
+  `CompletePayment` or `CancelPayment`, at most 36 hours (send `PT35H` or
+  less, one page says "less than"), `delay_action` CANCEL by default.
+- **A checkout reads `COMPLETED` while its payment is only `APPROVED`**
+  when autocomplete is off, so the state machine reads the PAYMENT, never
+  the checkout's status, to know whether a hold exists.
+- **A cancel can lose the race to the tap**: a cancelled checkout can end
+  `COMPLETED`, and a timed-out one can read `CANCELED` and later turn
+  `COMPLETED`. So every cancel is followed by a read of the checkout's
+  `payment_ids`, and any approved payment found is cancelled with
+  `CancelPayment` (the release path), for as long as the sweep looks.
+- **`deadline_duration` is deprecated**, with a default and a maximum of
+  five minutes; our own 90 second wait is the timeout that matters.
+- **No `amount` on `CompletePayment`.** Taking less than was approved
+  means `UpdatePayment` first, which works only when the payment's
+  `capabilities` include `EDIT_AMOUNT_DOWN`, and "UpdatePayment requests
+  aren't guaranteed to succeed". Unseen for a Terminal payment: R6, and
+  T234 depends on it.
+- **Never call the Dismiss endpoint** on a hold: it "attempts to capture"
+  an authorized payment.
+- **The US card minimum is $0.01**, not $1.00 ($1.00 is Afterpay's). No
+  floor is needed on the reader.
+- **The sandbox** answers Terminal checkouts on special test device ids;
+  they approve at most $25 (anything larger stays PENDING until it times
+  out), and there is no plain decline id. Whether a sandbox checkout with
+  `autocomplete: false` leaves an APPROVED payment is unseen (R6).
+- **Smaller points**: `idempotency_key` is required on a checkout and
+  limited to 64 characters (128 on a device code, 45 on an update or a
+  refund, so one key format must fit 45); the checkout's `reference_id`
+  and `note` carry onto the payment; `Square-Version` is optional and
+  pinned here to `2026-11-18`; a personal access token from the developer
+  console is fine for our own account, sent as `Authorization: Bearer`;
+  device status from the Devices API can be 15 to 30 minutes old, while
+  the Terminal's `PING` action answers live (`device:<serial>` there,
+  the bare serial on a checkout); a paired Terminal cannot use an
+  external printer, takes no cash and cannot split a checkout; refunds
+  take an idempotency key, may be partial, within a year, up to 20 per
+  payment, and only on a COMPLETED payment (an approved one is
+  cancelled instead); webhooks (`terminal.checkout.updated`) can arrive
+  twice or out of order. US fees on the Terminal: 2.6% + 15c card
+  present, 3.5% + 15c keyed. Square offers a US "Auto Card Surcharge"
+  (Beta), which bears on P15.
+
+Full notes with the doc URLs: kept with the session's research, and
+re-checked by R6 before T225 is called done.
 
 **When the reader works, remove the student-typed card (T241).** Pete,
 2026-11-17, on students typing their own card on the customer iPad: "i
@@ -453,7 +506,7 @@ Hold, sell, take.
    GrandTotal is the only amount ever sent to Square.
 2. Create a Terminal checkout (`POST /v2/terminals/checkouts`) for that
    total on the studio's device, with `payment_options.autocomplete: false`
-   (U), so the tap places a hold (the payment reads `APPROVED`) and takes
+   so the tap places a hold (the payment reads `APPROVED`) and takes
    nothing. Tipping off, the receipt screen per P11, `reference_id` the
    attempt id.
 3. Run the real `checkoutshoppingcart` with a `Custom` payment.
@@ -465,8 +518,8 @@ Hold, sell, take.
    go either way safely after an ambiguous answer.
 
 A delayed payment must be completed or cancelled within Square's limit,
-believed 36 hours (U), and Square applies `delay_action` (believed CANCEL by
-default) when it lapses. The sweep (below) acts long before; the lapse is
+36 hours (we send less than that), and Square applies `delay_action`
+(CANCEL by default) when it lapses. The sweep (below) acts long before; the lapse is
 the backstop for a server that died holding one.
 
 The other two orders are worse. Taking the money first turns a Mindbody
@@ -490,7 +543,8 @@ below).
 - **Call log.** Each Square call goes through `record()` in `calllog.ts`
   with a new `service: "square"` field and a tag on the drawer row.
   Suppressed and refused-by-mode calls are recorded like dry-run ones. No
-  card number reaches a Terminal API response (U).
+  card number reaches a Terminal API response (a Terminal payment carries
+  brand and last four only; R6 confirms on the real device).
 - **The seam is the `CheckoutPayment` union** and `checkoutPaymentPayload`
   in `sale.ts`. It gains one variant, `{ type: "Custom"; amount; id }`,
   sent as `{ Type: "Custom", Metadata: { Amount, Id } }` (sale.yml:3934),
@@ -538,6 +592,23 @@ below).
   `SQUARE_DEVICE_ID` as the no-database fallback.
 - Nothing about the reader's MODE is settable from the drawer. Pairing is
   (below): it decides which Terminal, never whether money moves.
+- **The whole reader is behind a switch** (Pete, 2026-11-22: "the square
+  functionality should be behind a flag"). `card_reader` in
+  `app_settings`, **DEFAULT OFF**, with `POS_CARD_READER` as the
+  no-database fallback (only `true` or `1` turn it on), an admin-only
+  64px control in the drawer's Settings tab, the log naming the staff id,
+  read and stored the way T241's `display_typed_card` is (a store that
+  goes quiet keeps the last answer it gave; here the environment's
+  answer is the safe one, off). Off, the SERVER refuses `method:
+  "reader"`, every `/api/reader/*` route and "Connect card reader" with
+  one sentence and nothing sent to Square; the Card reader tile, the
+  reader line on the customer screen and the outage mode's Terminal
+  tender are not drawn; and every other tender is exactly as it is
+  today. Turning it off with a hold open does not strand the hold: the
+  sweep still releases or completes it, since that is cleaning up, not
+  starting a sale. It is a fifth recorded Settings exception only in the
+  sense T207's is: it can only REMOVE a way to pay. Built in T223, before
+  any reader route exists.
 
 ### Pairing and reconnecting the Terminal
 
@@ -554,8 +625,9 @@ Pete, 2026-11-21: make reconnecting easy for a teacher.
   the screen says "Card reader connected". Logged with the staff id.
 - **The reader tile says when it is not paired or offline**, so nobody
   charges into nothing. Whether Square reports a Terminal's online state
-  through the Devices API is part of R6 (U); if it does not, the first
-  checkout's refusal is the signal.
+  through the Devices API lags 15 to 30 minutes, so the tile asks the
+  Terminal's `PING` action, which answers live; if that cannot answer, the
+  first checkout's refusal is the signal.
 
 ### The state machine
 
@@ -573,7 +645,8 @@ allows it.
   one.** No database: the tile is disabled with a reason and every other
   tender works. A row write failing mid-flow logs `NOT STORED` and the sale
   carries on. The checkout's `reference_id` and the payment's `note` carry
-  the attempt id as the fallback journal (U).
+  the attempt id as the fallback journal (Square carries both onto the
+  payment).
 
 States: `created → collecting → authorized → selling → sold → captured`,
 with `cancelled`, `unresolved` and `uncollected` as the other ends. Every
@@ -599,13 +672,13 @@ Failure windows:
 |---|---|
 | Rehearsal refuses, or totals disagree | Nothing created. |
 | Reader offline, unpaired or busy | Refused in words. A second iPad reads "The reader is busy with another sale." One open collection per device, by partial unique index. |
-| Customer cancels, card declines, 90 seconds with no card | Checkout cancelled. "Nothing was charged." No PIN was spent, so Try again is a fresh tap. |
+| Customer cancels, card declines, 90 seconds with no card | Checkout cancelled, then its `payment_ids` read: a cancel can lose the race to a tap, so any approved payment found is cancelled with `CancelPayment` before the screen says "Nothing was charged." No PIN was spent, so Try again is a fresh tap. |
 | Authorized, browser never returns | A hold with no Mindbody attempt older than 3 minutes is released by an in-process sweep (Square calls only, never a Mindbody write). |
 | Reload mid-flow | The cart is browser state and is gone. On load, an open `collecting` or `authorized` attempt for this teacher is released with one sentence. `selling` or `unresolved` reopens the resolution panel. |
 | Any refusal after the tap (token, approval, drift, Mindbody 4xx, staff session gone) | The exit releases the hold and the answer adds "The card was not charged." |
 | T103: the sale answered with an empty basket | NOT completed. Hold released, flagged at once as a Mindbody sale to void. T103's sentence says the payment was taken, so this path needs its own words. |
 | Mindbody times out or 5xx | Hold kept. The server reads `/sale/sales` (client, reader payment method, amount, time floor, not already linked) for about 25 seconds. Found: complete. Not found: `unresolved`, with two controls after 2 minutes: "Sale is in Mindbody, charge the card" (only when the server's own read finds it, or an admin names the sale id) and "No sale, release the hold". |
-| Complete does not answer | Retried three times in the request, then each minute by the sweep. Not a second charge: a payment completes once (U), and the tap, the card and the sale already decided it. The teacher sees the sale as done with an amber line. |
+| Complete does not answer | Retried three times in the request, then each minute by the sweep. Not a second charge: a payment completes once, and the tap, the card and the sale already decided it. The teacher sees the sale as done with an amber line. |
 | Complete definitively refused | `uncollected`: "Sold in Mindbody, but the card was NOT charged." in `--stop`, and a row on the Sales sheet. |
 | Server restart | Rows decide. `created`, `collecting`, `authorized`: release. `selling`: the ambiguous case, and a replayed checkout finds the row already claimed and can never sell twice, which T113's in-memory store alone could not promise. `sold`: complete retried. |
 
@@ -623,8 +696,9 @@ Cart screen and the roster's "Pay and check in", and:
   complete.
 - **T90 tickets with lines for other people** (T234): one hold for the whole
   ticket, one Mindbody checkout per recipient as today, and a capture of
-  exactly what stood. Whether Square can complete a delayed payment for
-  LESS than it approved is part of R6 (U); if it cannot, the hold is
+  exactly what stood. Square completes for less only through
+  `UpdatePayment` on a payment that carries `EDIT_AMOUNT_DOWN`, which R6
+  checks on a real Terminal payment; if it cannot, the hold is
   cancelled and the carts that stood are charged as one fresh tap, said so
   on the screen, or T234 ships refusing a second recipient on the reader.
 
@@ -652,9 +726,8 @@ Refused in words before any call:
   (sale.yml:6261 on), has no slot for an outside payment, and every autopay
   after the first bills the card on file. "A membership bills a card on
   file. Add a card first."
-- **A total under Square's card minimum**, believed $1.00 (U): "Card
-  payments start at $1.00. Use cash or the account." Since T238 nothing of
-  ours sets a floor; this one is Square's.
+- **Nothing else.** Square's US card minimum is $0.01, so the reader
+  takes any amount above zero, as every other card does since T238.
 
 ### The teacher's screen
 
@@ -795,24 +868,35 @@ which needs nothing afterwards.
   to $299 in 2026-11 listings, U; call ahead for stock). It charges over
   USB-C and can stay plugged in on the counter; Square's countertop mount
   ($19) holds it there, and its battery lets a teacher hand it to a
-  student. Square's Terminal Hub adds ethernet and USB (U).
+  student. Square's Terminal Hub adds ethernet and USB. Bought
+  2026-11-22, Square Terminal from Amazon, $264.99.
 - Pete creates a Square application in Square's developer dashboard, for
   the sandbox and production access tokens and the location ids (P6).
 - The Terminal talks to Square over its own wifi or ethernet, not to our
   server, so Railway hosting needs nothing on the studio LAN.
-- **Sandbox**: Square's sandbox is believed to offer test device ids that
-  answer a Terminal checkout as approved, declined or cancelled (U; one
-  old forum post says the sandbox does not support the Devices API, which
-  R6 settles first). Devtools-gated "Simulate tap" and "Simulate decline"
-  buttons drive them and refuse in production.
-- **Costs** (2026-11-21, search snippets, U): 2.6% + 15c per in-person
-  payment, no monthly fee found, standard payout the next business day.
+- **Sandbox**: Square's sandbox answers Terminal checkouts on special
+  test device ids (approved up to $25, no plain decline id) and does NOT
+  support the Devices API, so pairing is exercised on the real Terminal
+  and on T224's fake. Devtools-gated "Simulate tap" and "Simulate
+  decline" buttons drive the fake and the test ids and refuse in
+  production.
+- **Costs** (Square's docs, 2026-11-22): 2.6% + 15c per in-person
+  payment, 3.5% + 15c keyed, no monthly fee found, standard payout the next business day.
   Against Stripe's 2.7% + 5c it breaks even at $100 a sale. Confirm on
   squareup.com before relying on it.
 
 ### Work items
 
-- [ ] **T274 The transaction log.** `sale_log` (the next migration),
+- [x] **T274 The transaction log.** Built 2026-11-22: `sale_log`
+  (migration 20), `src/lib/salelog.ts` (open the row before Mindbody is
+  asked, close it with the answer, a whitelisted request and a stripped
+  answer), `src/lib/salecheck.ts` (the read-back), `GET /api/sale-log`,
+  `POST /api/sale-log/check`, the Sales log in the account modal for an
+  admin and the gold count on Profile. Driven against the fake with a
+  local Postgres: a cash sale, a typed card (no digits stored), a
+  refused credit sale, account credit and a planted short sale, which
+  the check named; a dead database sold in 0.25s and logged `NOT
+  STORED`. Not yet run against live Mindbody. Spec as written: `sale_log` (the next migration),
   `src/lib/salelog.ts`, written ahead and updated on every money route
   above, the daily check against Mindbody, the admin Sales sheet and its
   header count. Done when a cart sale, a split, a T90 ticket, a gift card,
@@ -824,9 +908,10 @@ which needs nothing afterwards.
   (written 2026-11-15, not yet run; needs P7's method to exist). Done when
   it has been run on both sites and the answers are recorded in the probe
   table.
-- [ ] **T223 The Square client and the mode.** `square.ts`, the call log's
-  `service` field, the environment table, the location assertion,
-  `/api/config`, the `modeNotice` state. Done when a Square read shows in
+- [ ] **T223 The Square client, the mode and the switch.** `square.ts`,
+  the call log's `service` field, the environment table, the location
+  assertion, `/api/config`, the `modeNotice` state, and the `card_reader`
+  switch (default off). Done when a Square read shows in
   the drawer tagged square, and a location that does not match is refused
   with nothing created.
 - [ ] **T224 The fake and the row.** `scripts/training/fake-square.mjs`,

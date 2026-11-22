@@ -78,6 +78,7 @@ import {
   type ResolvedSubstitute,
 } from "@/lib/substitute";
 import { beginIdempotent } from "@/lib/idemstore";
+import { startSaleLog, summarizeCheckoutRequest } from "@/lib/salelog";
 import {
   claimCharge,
   heldSentence,
@@ -594,8 +595,40 @@ export async function POST(request: Request) {
    * unauthenticated request can neither read the store nor put a key in
    * it, and before every validation and every Mindbody call, so a replay
    * costs nothing at all. See src/lib/idemstore.ts. */
-  const gate = await beginIdempotent(request, payload, String(session.staffId));
-  if (gate.replay !== null) return gate.replay;
+  const idemGate = await beginIdempotent(
+    request,
+    payload,
+    String(session.staffId),
+  );
+  if (idemGate.replay !== null) return idemGate.replay;
+
+  /* T274: a NEW tap (a replayed key returned above and gets no row) opens
+   * its sale_log row here, before any hold, PIN or Mindbody call, and
+   * every way out below passes through `gate.record` or
+   * `gate.recordThrow`, which close it with exactly what the iPad is told.
+   * The close is not awaited: the write chain keeps its order, and a slow
+   * database must not hold the answer. See src/lib/salelog.ts. */
+  const saleLog = await startSaleLog({
+    route: "/api/checkout",
+    request,
+    staffId: session.staffId,
+    staffName: session.name,
+    clientIds: chargeClientIds(payload),
+    summary: summarizeCheckoutRequest(payload),
+  });
+  const gate: typeof idemGate = {
+    replay: null,
+    record: async (res) => {
+      const out = await idemGate.record(res);
+      void saleLog.finish(out);
+      return out;
+    },
+    recordThrow: (err) => {
+      const out = idemGate.recordThrow(err);
+      void saleLog.finish(out);
+      return out;
+    },
+  };
 
   /* T253 (and its review): a charge for any client on this ticket that
    * is still in flight, or that may have moved money and no teacher has

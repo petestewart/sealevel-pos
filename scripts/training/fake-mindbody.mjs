@@ -408,6 +408,8 @@ function paymentRow(p) {
 /* T257: POST /__fake/fail-purchases?n=1 makes the next N clientpurchases
  * reads answer a 500. Not part of any Mindbody API. */
 let failPurchases = 0;
+/* T274: see /__fake/short-sale. */
+let shortSales = 0;
 /* T259: POST /__fake/fail-paymenttypes?n=1 makes the next N
  * /site/paymenttypes reads answer a 500. Not part of any Mindbody API. */
 let failPaymentTypes = 0;
@@ -576,6 +578,13 @@ function handle(method, path, q, body, res) {
     case "/__fake/delay-execute": {
       delayExecutes = { n: Number(q.get("n") ?? 1) || 0, ms: Number(q.get("ms") ?? 3000) || 0 };
       return send(res, 200, delayExecutes);
+    }
+    case "/__fake/short-sale": {
+      /* T274: the next N real checkouts RECORD their sale without its
+       * last line (the answer is unchanged), so the sales log's read-back
+       * has a planted difference to find. Not part of any Mindbody API. */
+      shortSales = Number(q.get("n") ?? 1) || 0;
+      return send(res, 200, { shortSales });
     }
     case "/__fake/delay-checkout": {
       delayCheckouts = { n: Number(q.get("n") ?? 1) || 0, ms: Number(q.get("ms") ?? 20000) || 0 };
@@ -921,7 +930,16 @@ function handle(method, path, q, body, res) {
       };
       if (body.Test === true) return send(res, 200, { ShoppingCart: cart });
       const saleId = ++saleSeq;
-      sales.push({ Id: saleId, ClientId: String(body.ClientId ?? ""), SaleDateTime: wall(new Date()), PurchasedItems: purchased, Payments: body.Payments ?? [] });
+      /* T274: a sale's Payments read back the way Mindbody's SalePayment
+       * does (sale.yml:4534: Type and Amount at the top), not in the
+       * request's {Type, Metadata} shape, which no reader of a real sale
+       * would ever see. */
+      let recorded = purchased;
+      if (shortSales > 0 && purchased.length > 0) {
+        shortSales -= 1;
+        recorded = purchased.slice(0, -1);
+      }
+      sales.push({ Id: saleId, ClientId: String(body.ClientId ?? ""), SaleDateTime: wall(new Date()), PurchasedItems: recorded, Payments: (body.Payments ?? []).map(paymentRow) });
       /* T250: an account payment comes off the account, below zero too,
        * so an overdraft reads back as the negative balance it left. */
       const payer = body.ClientId ? byId(body.ClientId) : null;
@@ -961,7 +979,12 @@ function handle(method, path, q, body, res) {
       const amount = body.PaymentInfo?.Metadata?.Amount ?? body.PaymentInfo?.Amount ?? 0;
       const gc = giftcards.find((g) => g.Id === Number(body.GiftCardId));
       const value = gc && !gc.EditableByConsumer ? gc.CardValue : Number(amount);
-      return send(res, 200, { BarcodeId: body.BarcodeId, Value: value, AmountPaid: Number(amount), SaleId: body.Test ? null : ++saleSeq });
+      if (body.Test) return send(res, 200, { BarcodeId: body.BarcodeId, Value: value, AmountPaid: Number(amount), SaleId: null });
+      /* T274: a real gift card sale is a sale Mindbody lists, like any
+       * other, so the sales log's read-back finds it. */
+      const gcSale = ++saleSeq;
+      sales.push({ Id: gcSale, ClientId: String(body.PurchaserClientId ?? body.ClientId ?? ""), SaleDateTime: wall(new Date()), PurchasedItems: [{ Id: Number(body.GiftCardId), IsService: false, Description: gc?.Description ?? "Gift Card", Quantity: 1, UnitPrice: Number(amount), TotalAmount: Number(amount) }], Payments: [paymentRow(body.PaymentInfo ?? {})] });
+      return send(res, 200, { BarcodeId: body.BarcodeId, Value: value, AmountPaid: Number(amount), SaleId: gcSale });
     }
     case "/sale/purchaseaccountcredit": {
       /* T256: account credit, bought with ONE PaymentInfo: Cash, the
@@ -1016,7 +1039,7 @@ function handle(method, path, q, body, res) {
         return send(res, 500, { Error: { Message: "Internal error (fake)", Code: "InternalError" } });
       }
       const saleId = ++saleSeq;
-      sales.push({ Id: saleId, ClientId: who.Id, SaleDateTime: wall(new Date()), PurchasedItems: [{ Id: 422, IsService: true, BarcodeId: null, Description: "account adjustment", CategoryId: 23, UnitPrice: amount, Quantity: 1, TotalAmount: amount, TaxAmount: 0 }], Payments: [pay] });
+      sales.push({ Id: saleId, ClientId: who.Id, SaleDateTime: wall(new Date()), PurchasedItems: [{ Id: 422, IsService: true, BarcodeId: null, Description: "account adjustment", CategoryId: 23, UnitPrice: amount, Quantity: 1, TotalAmount: amount, TaxAmount: 0 }], Payments: [paymentRow(pay)] });
       if (loseCredits > 0) {
         /* The sale books and the balance does not move: what the route's
          * fresh balance read exists to catch. */
