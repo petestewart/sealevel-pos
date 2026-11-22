@@ -1083,7 +1083,9 @@ which needs nothing afterwards.
   defaults to a balance that covers the total (Pete: "that is fine, we can
   leave it like that"). T281, same day: on a walk-in sale that tile is
   "Manual card entry" ("Type the card number"), and the whole tile opens
-  T93's card entry. Seen against the fakes:
+  T93's card entry. T282, same day: Square's mark on the right of the
+  card reader tile, and the keypad glyph back on the right of "Manual
+  card entry" (decorative: the whole tile is the button). Seen against the fakes:
   walk-in, card on file with no balance, card on file with $40.
 - [ ] **T237 Hardware day.** Buy and pair the Terminal, the production
   token, `POS_READER_LIVE=true`. **Never `POS_WRITE_CLIENT_IDS` while the

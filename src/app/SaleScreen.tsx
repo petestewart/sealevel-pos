@@ -1687,6 +1687,24 @@ function KeypadIcon() {
   );
 }
 
+/** T282: Square's mark on the card reader tile (Pete: "add a square logo
+ *  on the right to card reader"), so a teacher knows which device it is.
+ *  The rounded ring with a square inside, drawn in `currentColor` so it
+ *  follows the theme like every other glyph. Decorative: the tile's name
+ *  says what it is. */
+function SquareMark() {
+  return (
+    <svg width="30" height="30" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path
+        fill="currentColor"
+        fillRule="evenodd"
+        d="M6.5 1.5h11a5 5 0 0 1 5 5v11a5 5 0 0 1-5 5h-11a5 5 0 0 1-5-5v-11a5 5 0 0 1 5-5Zm.5 4a1.5 1.5 0 0 0-1.5 1.5v10a1.5 1.5 0 0 0 1.5 1.5h10a1.5 1.5 0 0 0 1.5-1.5V7a1.5 1.5 0 0 0-1.5-1.5H7Z"
+      />
+      <rect x="9" y="9" width="6" height="6" rx="1" fill="currentColor" />
+    </svg>
+  );
+}
+
 function AccountIcon() {
   return (
     <Icon d="M4 21c0-4 3.6-6 8-6s8 2 8 6" size={24}>
@@ -7302,7 +7320,8 @@ function PaymentPanel(props: {
                         className={
                           (manualOff ? "pay-tile off" : "pay-tile") +
                           (usedSources.has("typedcard") ? " in" : "") +
-                          (s === wideSource ? " pay-tile-wide" : "")
+                          (s === wideSource ? " pay-tile-wide" : "") +
+                          " with-mark"
                         }
                         disabled={manualOff || charging || tenderHeld}
                         onClick={openCardEntry}
@@ -7314,6 +7333,19 @@ function PaymentPanel(props: {
                         </span>
                         <span className="pay-tile-reason">
                           {why ?? "Type the card number"}
+                        </span>
+                        {/* T282: the keypad glyph on the right, as on
+                            "Card on file". Not a second button: the
+                            whole tile already opens the card entry. */}
+                        <span
+                          className={
+                            usedSources.has("typedcard")
+                              ? "pay-tile-mark pay-keypad on"
+                              : "pay-tile-mark pay-keypad"
+                          }
+                          aria-hidden="true"
+                        >
+                          <KeypadIcon />
                         </span>
                       </button>
                     );
@@ -7381,7 +7413,8 @@ function PaymentPanel(props: {
                       className={
                         (off ? "pay-tile off" : "pay-tile") +
                         (inPayment ? " in" : "") +
-                        (s === wideSource ? " pay-tile-wide" : "")
+                        (s === wideSource ? " pay-tile-wide" : "") +
+                        (s === "reader" ? " with-mark" : "")
                       }
                       disabled={off || charging || tenderHeld}
                       onClick={() =>
@@ -7416,6 +7449,11 @@ function PaymentPanel(props: {
                       ) : null}
                       {s === "credit" && balance !== null && balance > 0 ? (
                         <span className="pay-tile-badge">{money(balance)}</span>
+                      ) : null}
+                      {s === "reader" ? (
+                        <span className="pay-tile-mark pay-tile-square" aria-hidden="true">
+                          <SquareMark />
+                        </span>
                       ) : null}
                     </button>
                   );
