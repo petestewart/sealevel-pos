@@ -1014,7 +1014,17 @@ which needs nothing afterwards.
   reader runs through the approval first, as today. Spec as written: The reader line on
   the mirror; P8's answer built. Done when the student's iPad shows the
   prompt, and the approval setting behaves as Pete chose on both screens.
-- [ ] **T231 Reconciliation.** The match on top of T274's check. Done when a
+- [x] **T231 Reconciliation.** Built 2026-11-22 (`readerMismatches` in
+  `src/lib/readerpayment.ts`, on the Sales log through
+  `/api/reader/attention?day=`): Square's payments at the location for
+  the studio day against our rows: a completed payment no sale knows
+  (`square-only`), a different amount (`amount`), a sold row Square has
+  not taken (`not-taken`), and a hold over an hour old (`old-hold`).
+  Mindbody's side is T274's check, which already reads every sale that
+  stood. Driven against the fake with a stray Terminal payment planted.
+  Not built: a Mindbody sale on the reader's payment method the app did
+  not make (needs R4's read of how the custom method reads back), and
+  refunds against returns (T235). Spec as written: The match on top of T274's check. Done when a
   day with one planted mismatch of each kind lists all of them and a clean
   day lists none.
 - [ ] **T232 Gift card sales on the reader**, by the route R5 opens. Done

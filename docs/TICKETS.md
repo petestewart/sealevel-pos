@@ -24405,3 +24405,33 @@ POST's exit also releases a hold still `authorized` for any answer that
 is not a sale (a dry run or refusal before the dispatch, an approval, a
 PIN), and adds `readerReleased: true`. A hold never approved is left for
 the reader. Driven against the fakes; see PLAN T226.
+
+## T227 to T231. The card reader's screens, failure windows and match (2026-11-22)
+
+Pete: "go ahead with the screens, work autonomosly to finish everything
+you can before i have the reader". Built against the fakes, driven in a
+browser; the Square half of the money order (hold, complete, cancel) also
+ran against Square's real sandbox with Pete's sandbox token.
+
+- **T227** `useReaderPayment` + `ReaderWait` (one hook and one panel for
+  both charge screens). Cart screen: a "Card reader" tile while the switch
+  is on, greyed with the reason it cannot take this ticket (not
+  connected, a discount, an override, account credit, a gift card, a line
+  for someone else, another tender), taking the whole sale with its amount
+  fixed. Finalize builds the request once, holds the card on the reader
+  (`/api/reader/collect`, panel with Cancel), and only an approved hold
+  goes on to `/api/checkout` with `reader: { attemptId }`. "Connect card
+  reader" (`ReaderPair`) in the account modal.
+- **T228** the no-answer path: the checkout looks for the sale (same
+  client, exact amount, after the approval, not linked to another reader
+  payment) for ~25 seconds; found, it takes the money; not found, the
+  hold is kept `unresolved` for the Sales log's "charge" (only against a
+  sale Mindbody shows) or "release" (only when Mindbody answers with
+  none). **Caught in testing**: without the "not linked" and "after the
+  approval" rules, the lookup matched an earlier sale for the same
+  student and amount and took the second card for it.
+- **T229** the roster's "Pay and check in": "Use the card reader", the
+  same hold, then the existing charge, attach and check-in.
+- **T230 (half)** the customer screen: "Paying by Card reader" and "Tap,
+  insert or hold your phone to the card reader." P8 still open.
+- **T231** the Sales log's Square match (`readerMismatches`).

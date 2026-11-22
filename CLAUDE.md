@@ -97,8 +97,20 @@ Settings; `POS_CARD_READER` without a database). `src/lib/cardreader.ts`
 client), `reader_payments` (migration 21) and `src/lib/readerpayment.ts`
 (the compare-and-set state machine and its sweep), and `/api/reader/*`:
 pair a Terminal by code, put a rehearsed total on it as a HOLD, poll,
-cancel. Nothing sells yet: T226 sells against the hold. Driven against
-`scripts/training/fake-square.mjs` only.
+cancel. **T226 to T231 (same day)**: `/api/checkout` `method: "reader"`
+claims an approved hold only when the row and a fresh Square read agree
+with the sale to the cent, sells under the custom payment method, then
+completes the payment; a refusal, suppression or empty basket releases
+the hold, no answer looks for the sale for ~25 seconds and otherwise
+keeps the hold for an admin to settle on the Sales log (charge only
+against a sale Mindbody shows, release only when it shows none). The
+Cart screen's "Card reader" tile and the roster's "Use the card reader"
+share `useReaderPayment` and `ReaderWait`; "Connect card reader" is in
+the account modal; the customer screen says "Paying by Card reader";
+the Sales log matches Square's payments against ours. Driven against
+the fakes in a browser, and the hold/complete/cancel half against
+Square's real sandbox (R6). Still owed: the real Terminal, P7's payment
+method, P8, splits, T90 tickets, gift cards and refunds.
 
 **T241 (2026-11-15): the student chooses how to pay on the customer
 iPad**, and can type their own card there (Pete: "a student shouldnt have

@@ -194,6 +194,16 @@ const server = createServer(async (req, res) => {
     c.updated_at = now();
     return send(res, 200, { checkout: c });
   }
+  if (req.method === "GET" && path === "/v2/payments") {
+    /* T231: the list the daily match reads, by location and time. */
+    const begin = Date.parse(q.get("begin_time") ?? "") || 0;
+    const end = Date.parse(q.get("end_time") ?? "") || Date.now() + 1;
+    const list = [...payments.values()].filter((p) => {
+      const t = Date.parse(p.created_at ?? "") || 0;
+      return t >= begin && t < end;
+    });
+    return send(res, 200, { payments: list });
+  }
   if (req.method === "GET" && (m = path.match(/^\/v2\/payments\/([^/]+)$/))) {
     const p = payments.get(m[1]);
     if (!p) return err(res, 404, "NOT_FOUND", "Payment not found");

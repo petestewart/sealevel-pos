@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 
 import { readerPaymentsIn } from "@/lib/db";
 import { readerGate } from "@/lib/readergate";
+import { readerMismatches } from "@/lib/readerpayment";
+import { shiftDay, studioMidnight } from "@/lib/salecheck";
 import { isTargetAdmin } from "@/lib/target";
 
 export const dynamic = "force-dynamic";
@@ -23,7 +25,15 @@ export async function GET(request: Request) {
   if (rows === null) {
     return NextResponse.json({ error: "The database did not answer.", rows: [] }, { status: 503 });
   }
+  /* T231: Square's own record of the studio day, against ours. Reads
+   * only; null (Square or the store did not answer) is said, not hidden. */
+  const url = new URL(request.url);
+  const day = url.searchParams.get("day");
+  const from = day && /^\d{4}-\d{2}-\d{2}$/.test(day) ? studioMidnight(day) : Date.now() - 36 * 3600_000;
+  const to = day && /^\d{4}-\d{2}-\d{2}$/.test(day) ? studioMidnight(shiftDay(day, 1)) : Date.now();
+  const mismatches = gate.enabled ? await readerMismatches(from, to) : [];
   return NextResponse.json({
+    mismatches,
     rows: rows.map((r) => ({
       id: r.id,
       state: r.state,

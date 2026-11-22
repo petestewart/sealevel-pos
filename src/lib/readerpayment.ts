@@ -741,6 +741,114 @@ export async function markUnresolved(id: string, why: string): Promise<void> {
   console.warn(`[reader] ${id} unresolved: ${why}`);
 }
 
+/* --- The daily match (T231) ---------------------------------------------- */
+
+export interface ReaderMismatch {
+  kind:
+    | "not-taken"
+    | "amount"
+    | "square-only"
+    | "old-hold";
+  paymentId: string | null;
+  attemptId: string | null;
+  amountCents: number | null;
+  sentence: string;
+}
+
+/**
+ * T231: Square's payments at the studio's location between `from` and
+ * `to`, against our reader rows. READS ONLY. Finds:
+ *   not-taken   a row we sold whose Square payment is not COMPLETED
+ *   amount      a COMPLETED payment for a different amount than the row
+ *   square-only a COMPLETED payment no row of ours knows (taken on the
+ *               Terminal some other way, or by a row this server lost)
+ *   old-hold    an APPROVED payment over an hour old (a hold nobody
+ *               settled; Square cancels it at 12 hours by itself)
+ * Null when Square or the database could not be read.
+ */
+export async function readerMismatches(
+  from: number,
+  to: number,
+): Promise<ReaderMismatch[] | null> {
+  const env = readerEnv();
+  if ("missing" in env) return [];
+  const rows = await readerPaymentsIn(
+    ["sold", "captured", "uncollected", "unresolved", "authorized", "selling", "cancelled", "cancelling"],
+    from - 86_400_000,
+  );
+  if (rows === null) return null;
+  const byPayment = new Map(rows.filter((r) => r.paymentId).map((r) => [r.paymentId as string, r]));
+  const payments: SquarePayment[] = [];
+  let cursor: string | undefined;
+  try {
+    for (let page = 0; page < 10; page++) {
+      const q =
+        `/v2/payments?location_id=${encodeURIComponent(env.locationId)}` +
+        `&begin_time=${encodeURIComponent(new Date(from).toISOString())}` +
+        `&end_time=${encodeURIComponent(new Date(to).toISOString())}&limit=100` +
+        (cursor ? `&cursor=${encodeURIComponent(cursor)}` : "");
+      const r = await square<{ payments?: SquarePayment[]; cursor?: string }>(q, {}, env);
+      payments.push(...(r.payments ?? []));
+      if (!r.cursor) break;
+      cursor = r.cursor;
+    }
+  } catch {
+    return null;
+  }
+  const out: ReaderMismatch[] = [];
+  const dollars = (c: number | null | undefined) =>
+    typeof c === "number" ? `$${(c / 100).toFixed(2)}` : "an unknown amount";
+  for (const p of payments) {
+    const row = byPayment.get(p.id);
+    const amt = p.amount_money?.amount ?? null;
+    if (p.status === "COMPLETED") {
+      if (!row) {
+        out.push({
+          kind: "square-only",
+          paymentId: p.id,
+          attemptId: null,
+          amountCents: amt,
+          sentence: `Square took ${dollars(amt)} (payment ${p.id}) that no sale on this counter knows about. Find its sale in Mindbody, or refund it in Square.`,
+        });
+      } else if (amt !== row.amountCents) {
+        out.push({
+          kind: "amount",
+          paymentId: p.id,
+          attemptId: row.id,
+          amountCents: amt,
+          sentence: `Square took ${dollars(amt)} for a sale of ${dollars(row.amountCents)} (sale ${row.mbSaleId ?? "?"}).`,
+        });
+      }
+    } else if (p.status === "APPROVED") {
+      const created = Date.parse(String((p as { created_at?: string }).created_at ?? ""));
+      if (Number.isFinite(created) && Date.now() - created > 3600_000) {
+        out.push({
+          kind: "old-hold",
+          paymentId: p.id,
+          attemptId: row?.id ?? null,
+          amountCents: amt,
+          sentence: `A ${dollars(amt)} hold has been on a card for over an hour. Settle it on the Sales log; Square releases it by itself after 12 hours.`,
+        });
+      }
+    }
+  }
+  for (const r of rows) {
+    if ((r.state === "captured" || r.state === "sold") && r.paymentId) {
+      const p = payments.find((x) => x.id === r.paymentId);
+      if (p !== undefined && p.status !== "COMPLETED" && r.updatedAt >= from && r.updatedAt < to) {
+        out.push({
+          kind: "not-taken",
+          paymentId: r.paymentId,
+          attemptId: r.id,
+          amountCents: r.amountCents,
+          sentence: `Sale ${r.mbSaleId ?? "?"} was sold on the card reader, but Square shows the ${dollars(r.amountCents)} as ${p.status}, not taken.`,
+        });
+      }
+    }
+  }
+  return out;
+}
+
 /* --- Settling a hold Mindbody did not answer for (T228) ----------------- */
 
 /**
