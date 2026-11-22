@@ -1099,6 +1099,35 @@ which needs nothing afterwards.
   green) and an empty or owed account reads "Requires a PIN". T285: Cash
   always comes before Manual card entry. Seen against the fakes:
   walk-in, card on file with no balance, card on file with $40.
+- [x] **T286 A discount on the card reader.** Built 2026-11-22 (Pete,
+  after the first live sales: "still cant charge with a discount, WHY?";
+  it had been left out of the first version and never followed up).
+  `/api/reader/collect` checks the discount as `/api/checkout` does
+  (package refusal, `parseDiscount`, a comp token of THIS teacher's, never
+  spent there), refuses a discount covering the whole sale and a
+  promotion code beside one, and rehearses WITH it, so the hold is the
+  discounted total. `/api/checkout` no longer refuses a discount with
+  `method: "reader"`, spends the token as for any tender, and the reader
+  branch now calls `recordDiscount` (the note, the comp receipt row and
+  the customer approval spent) on a sale that stands, one found late, and
+  a suppressed one. Seen against the fakes: $5.00 Kombucha less 20%,
+  hold and payment $4.41, "Discount $1.00 (20%): Damaged item" on the
+  done block. Not yet run live.
+- [x] **T287 Cancel waits for Square.** Built 2026-11-22 (Pete, with a
+  screenshot of "This card reader attempt is cancelling, so nothing was
+  charged.": "when i tap cancel on the app does it confirm that the
+  square charge didn't finish before it displays this"). It did not: a
+  Cancel that crossed a tap let the poll read `authorized` and go on to
+  the checkout, which refused on `cancelling` with a sentence written
+  before Square had answered. `useReaderPayment` now never sells after a
+  Cancel (an `authorized` read re-sends the cancel), keeps reading until
+  the server has FINISHED the cancel (`finishCancel`: the checkout
+  cancelled and every approved payment voided), and only then says
+  "Cancelled. Square confirmed nothing was charged."; a cancel Square has
+  not confirmed in 30 seconds says so and is held as unknown. The
+  reader's own time-out cancels the same way. Seen against the fakes:
+  a tap then Cancel, and a Cancel that loses the race to a tap; both
+  ended with the payment CANCELED in Square and those words on screen.
 - [ ] **T237 Hardware day.** Buy and pair the Terminal, the production
   token, `POS_READER_LIVE=true`. **Never `POS_WRITE_CLIENT_IDS` while the
   studio is open**: it suppresses every write for every other client,

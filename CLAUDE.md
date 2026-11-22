@@ -117,8 +117,14 @@ share `useReaderPayment` and `ReaderWait`; "Connect card reader" is in
 the account modal; the customer screen says "Paying by Card reader";
 the Sales log matches Square's payments against ours. Driven against
 the fakes in a browser, and the hold/complete/cancel half against
-Square's real sandbox (R6). Still owed: the real Terminal, P7's payment
-method, P8, splits, T90 tickets, gift cards and refunds.
+Square's real sandbox (R6). **Sold live on 2026-11-22** (sale 429494,
+$2.00, Pete's own card, method 18 "Square Terminal"). **T286 (same day)
+takes a teacher's discount on the reader**: the hold is the discounted
+total and the checkout files the discount as for any tender. **T287: a
+Cancel waits for Square** and never sells after it: the screen says
+"Square confirmed nothing was charged" only once the checkout is
+cancelled and any approved payment voided. Still owed: splits, T90
+tickets, gift cards and refunds.
 
 **T241 (2026-11-15): the student chooses how to pay on the customer
 iPad**, and can type their own card there (Pete: "a student shouldnt have

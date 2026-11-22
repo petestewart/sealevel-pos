@@ -624,7 +624,9 @@ export async function claimHold(input: {
       error:
         row.state === "collecting"
           ? "The reader has not approved a card yet."
-          : `This card reader attempt is ${row.state}, so nothing was charged.`,
+          : row.state === "cancelling"
+            ? "This card reader attempt is being cancelled, so it was not sold. Wait for the reader to confirm the cancel."
+            : `This card reader attempt is ${row.state}, so it was not sold.`,
     };
   }
   if (row.target !== target() || row.mode !== readerMode()) {
