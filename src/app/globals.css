@@ -5072,6 +5072,18 @@ button.sale-for:disabled {
   font-variant-numeric: tabular-nums;
 }
 
+/* T284: the balance is always on the Account tile. Nothing on it is
+ * muted; owed reads as a warning, never as the green of money to spend. */
+.pay-tile-badge.empty {
+  background: var(--surface-2);
+  color: var(--muted);
+}
+
+.pay-tile-badge.owed {
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+
 /* Tender rows (Payment.dc.html): 64px on a 1px line, the method at
  * 19px/800 with the `covers $X` sub-line under an over-tendered cash
  * line; a 160px amount cell (22px/800 tabular) that opens the keypad;

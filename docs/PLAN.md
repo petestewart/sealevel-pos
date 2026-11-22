@@ -1092,7 +1092,11 @@ which needs nothing afterwards.
   offered only with a client; "Manual card entry" is always its own tile
   and the keypad square on Card on file is gone. With the reader on: six
   tiles with a client, four on a walk-in. With it off and a client, five,
-  and the account still takes the full row. Seen against the fakes:
+  and the account still takes the full row.
+  T284, same day (Pete: "Account should show $0 or negative amount rather
+  than 'No balance'. subtext should just be 'requires a PIN'"): the badge
+  always carries the balance ($0.00 muted, owed in the warn pair, credit
+  green) and an empty or owed account reads "Requires a PIN". Seen against the fakes:
   walk-in, card on file with no balance, card on file with $40.
 - [ ] **T237 Hardware day.** Buy and pair the Terminal, the production
   token, `POS_READER_LIVE=true`. **Never `POS_WRITE_CLIENT_IDS` while the

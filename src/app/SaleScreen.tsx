@@ -3509,10 +3509,12 @@ function PaymentPanel(props: {
   /** T94: the tile's quiet line when there is nothing on the account.
    *  Not a refusal: the tile works, and the modal is where the overdraft
    *  is authorized. */
+  /* T284 (Pete: "Account should show $0 or negative amount rather than
+   * 'No balance'. subtext should just be 'requires a PIN'"). The badge
+   * now carries the balance whatever it is; the note only says what a
+   * charge past it takes. */
   const creditNote =
-    balance !== null && balance > 0
-      ? null
-      : "No balance. Charging past it needs a PIN.";
+    balance !== null && balance > 0 ? null : "Requires a PIN";
 
   /**
    * Whether Account is OFFERED at all. T33 hid it with no balance (Pete,
@@ -7436,8 +7438,18 @@ function PaymentPanel(props: {
                       {shown ? (
                         <span className="pay-tile-reason">{shown}</span>
                       ) : null}
-                      {s === "credit" && balance !== null && balance > 0 ? (
-                        <span className="pay-tile-badge">{money(balance)}</span>
+                      {s === "credit" && balance !== null ? (
+                        <span
+                          className={
+                            balance > 0
+                              ? "pay-tile-badge"
+                              : balance < 0
+                                ? "pay-tile-badge owed"
+                                : "pay-tile-badge empty"
+                          }
+                        >
+                          {money(balance)}
+                        </span>
                       ) : null}
                       {s === "reader" ? (
                         <span className="pay-tile-mark pay-tile-square" aria-hidden="true">
