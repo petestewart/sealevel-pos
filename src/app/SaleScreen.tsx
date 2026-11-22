@@ -6917,7 +6917,7 @@ function PaymentPanel(props: {
           : lines.length === 0
             ? /* T279: with the card reader ready, a missing card on file
                  is no reason to stop anyone, so the line stays quiet. */
-              reader.status?.enabled === true && reader.status.ready
+              (reader.status?.enabled === true && reader.status.ready) || !client
               ? ""
               : cardReason !== null
               ? /card on file/i.test(cardReason)
@@ -6951,11 +6951,21 @@ function PaymentPanel(props: {
      is always LAST now, its balance on its badge, since nothing puts it
      on the payment by itself any more. */
   const storedCardFirst = cardDetail !== null;
+  /** T281: a walk-in sale (no client) has no card on file. */
+  const manualCardTile = !client;
   const readerTile = reader.status?.enabled
     ? [{ s: "reader" as TenderSource, label: "Card reader", icon: <CardIcon /> }]
     : [];
   const storedTile = [
-    { s: "storedcard" as TenderSource, label: "Card on file", icon: <CardIcon /> },
+    {
+      s: "storedcard" as TenderSource,
+      /* T281 (Pete: "For walk in sale, it should not say 'Card on file',
+         it should just say something like manual card entry"). With no
+         client there is no card on file to offer, so the tile IS T93's
+         typed card: the whole tile opens the card entry. */
+      label: manualCardTile ? "Manual card entry" : "Card on file",
+      icon: <CardIcon />,
+    },
   ];
   const sources: { s: TenderSource; label: string; icon: ReactNode }[] = [
     /* T227: the Square Terminal, drawn only while the switch is on. */
@@ -7282,6 +7292,32 @@ function PaymentPanel(props: {
                 aria-label="Payment sources"
               >
                 {sources.map(({ s, label, icon }) => {
+                  if (s === "storedcard" && manualCardTile) {
+                    /* T281: the walk-in's card tile is the typed card. */
+                    const why = addReason("typedcard");
+                    const manualOff = why !== null;
+                    return (
+                      <button
+                        key={s}
+                        className={
+                          (manualOff ? "pay-tile off" : "pay-tile") +
+                          (usedSources.has("typedcard") ? " in" : "") +
+                          (s === wideSource ? " pay-tile-wide" : "")
+                        }
+                        disabled={manualOff || charging || tenderHeld}
+                        onClick={openCardEntry}
+                        title={why ?? "Type a card number for this sale"}
+                      >
+                        <span className="pay-tile-name">
+                          {icon}
+                          {label}
+                        </span>
+                        <span className="pay-tile-reason">
+                          {why ?? "Type the card number"}
+                        </span>
+                      </button>
+                    );
+                  }
                   const reason = addReason(s);
                   /* Layout plan 2.7: tapping Cash when a cash line is
                      already in the payment opens THAT line's keypad

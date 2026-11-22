@@ -1080,7 +1080,10 @@ which needs nothing afterwards.
   card reader ("Cards, Apple Pay, Google Pay"); Account is always last
   with its balance badge; T239's automatic account line is off
   (`AUTO_ACCOUNT_LINE`). The roster's pay dialog is unchanged: it still
-  defaults to a balance that covers the total. Seen against the fakes:
+  defaults to a balance that covers the total (Pete: "that is fine, we can
+  leave it like that"). T281, same day: on a walk-in sale that tile is
+  "Manual card entry" ("Type the card number"), and the whole tile opens
+  T93's card entry. Seen against the fakes:
   walk-in, card on file with no balance, card on file with $40.
 - [ ] **T237 Hardware day.** Buy and pair the Terminal, the production
   token, `POS_READER_LIVE=true`. **Never `POS_WRITE_CLIENT_IDS` while the
