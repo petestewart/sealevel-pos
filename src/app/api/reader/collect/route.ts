@@ -1,7 +1,15 @@
 import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 
+import { verifyCompToken } from "@/lib/auth";
 import { pairedDeviceId, testReaderOnProdRefusal } from "@/lib/cardreader";
+import {
+  discountRefusal,
+  isFullDiscount,
+  parseDiscount,
+  subtotalCents,
+  type Discount,
+} from "@/lib/comp";
 import { cartSha256 } from "@/lib/cartsha";
 import { allowedWriteClientIds } from "@/lib/mindbody";
 import { parsePromotionCode } from "@/lib/promocode";
@@ -21,11 +29,20 @@ export const dynamic = "force-dynamic";
  * (T226), which re-rehearses, checks the amount to the cent against this
  * hold, sells, and only then completes the payment.
  *
- * First version, on purpose: one cart, a named client or the house
- * client, and a promotion code. A discount, an override, a split, a
- * gift card, account credit or a line for someone else is refused in
- * words (PLAN T233, T234 and the discount follow-up) so the hold can
- * never be for a different total than the sale.
+ * One cart, a named client or the house client, a promotion code and,
+ * since T286, a teacher's discount (Pete: "still cant charge with a
+ * discount, WHY?"). An override, a split, a gift card, account credit or
+ * a line for someone else is refused in words (PLAN T233, T234) so the
+ * hold can never be for a different total than the sale.
+ *
+ * T286: the discount is checked here exactly as /api/checkout checks it
+ * (package refusal, parseDiscount's bounds, a comp token of THIS
+ * teacher's) but the token is NOT spent: it is spent by the checkout
+ * that sells, as for every other tender. The rehearsal carries the
+ * discount, so the hold is the DISCOUNTED total, and the checkout's own
+ * discounted rehearsal must match it to the cent before anything is
+ * taken. A discount that takes the whole sale is refused: there is
+ * nothing for a card to pay.
  *
  * Refused before Square is asked: the switch off (readerGate), no
  * Terminal paired, a test reader on the live studio for a client the
@@ -52,7 +69,6 @@ export async function POST(request: Request) {
     [payload?.split, "A split payment"],
     [payload?.giftCards, "A gift card"],
     [payload?.accountCredit, "Account credit"],
-    [payload?.discount, "A discount"],
     [payload?.override, "An override"],
     [payload?.typedCard ?? payload?.displayCard, "A typed card"],
   ];
@@ -74,9 +90,49 @@ export async function POST(request: Request) {
   if (parsed.error !== null) {
     return NextResponse.json({ error: parsed.error }, { status: 400 });
   }
+  let discount: Discount | null = null;
+  if (payload?.discount !== undefined && payload?.discount !== null) {
+    const refusal = discountRefusal(parsed.items);
+    if (refusal !== null) {
+      return NextResponse.json({ error: refusal, reason: "discount" }, { status: 409 });
+    }
+    const d = parseDiscount(payload.discount, subtotalCents(parsed.items));
+    if (typeof d === "string") {
+      return NextResponse.json({ error: d }, { status: 400 });
+    }
+    if (isFullDiscount(parsed.items, d)) {
+      return NextResponse.json(
+        {
+          error: "The discount covers the whole sale, so there is nothing to put on the card reader.",
+          reason: "discount",
+        },
+        { status: 409 },
+      );
+    }
+    const teacher =
+      typeof payload?.teacherToken === "string"
+        ? verifyCompToken(payload.teacherToken, "comp")
+        : null;
+    if (teacher === null || teacher.id !== session.staffId) {
+      return NextResponse.json(
+        { error: "Enter your PIN to discount this sale.", reason: "teacher" },
+        { status: 401 },
+      );
+    }
+    discount = d;
+  }
   const promo = parsePromotionCode(payload?.promotionCode);
   if ("error" in promo) {
     return NextResponse.json({ error: promo.error }, { status: 400 });
+  }
+  if (discount !== null && promo.code !== null) {
+    return NextResponse.json(
+      {
+        error: "A promotion code cannot be used beside a discount. Take one of them off. Nothing was charged.",
+        reason: "promotion",
+      },
+      { status: 409 },
+    );
   }
   const named = typeof payload?.clientId === "string" ? payload.clientId.trim() : "";
   const clientId = named !== "" ? named : houseClientId();
@@ -112,7 +168,7 @@ export async function POST(request: Request) {
 
   let priced;
   try {
-    priced = await rehearseCheckout(parsed.items, clientId, null, null, promo.code);
+    priced = await rehearseCheckout(parsed.items, clientId, discount, null, promo.code);
   } catch (err) {
     return NextResponse.json(
       {

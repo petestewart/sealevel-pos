@@ -1032,8 +1032,9 @@ async function runCheckout(
   }
 
   /* T226: the card reader sells only what /api/reader/collect would hold:
-   * one cart, no discount, override, gift card, account credit, typed
-   * card, overdraft or line for someone else. Refused here, before
+   * one cart, no override, gift card, account credit, typed card,
+   * overdraft or line for someone else (a discount is allowed since
+   * T286, checked below exactly as for any tender). Refused here, before
    * anything else is read and before any PIN is spent, with the switch
    * and the hold's own id checked at the charge. */
   let readerAttemptId: string | null = null;
@@ -1041,7 +1042,6 @@ async function runCheckout(
     const unsupported: [unknown, string][] = [
       [payload?.giftCards, "A gift card"],
       [payload?.accountCredit, "Account credit"],
-      [payload?.discount, "A discount"],
       [payload?.override, "An override"],
       [payload?.typedCard ?? payload?.displayCard, "A typed card"],
       [payload?.overdraftToken, "An account overdraft"],
@@ -5547,6 +5547,16 @@ async function runCheckout(
             if (found.saleId !== null) {
               const captured = await captureHold(attemptId, found.saleId);
               const state = captured?.state ?? "sold";
+              /* T286: the sale stands, so its discount and approval are
+               * filed and spent as for any other tender. */
+              const lateRec = await recordDiscount({
+                saleId: found.saleId,
+                cartId: null,
+                suppressed: false,
+                paid: total,
+                shape: "lines",
+                onStudio: discounted,
+              });
               console.warn(
                 `[reader] ${attemptId} Mindbody did not answer; found sale ${found.saleId} and took the payment (${state})`,
               );
@@ -5558,6 +5568,7 @@ async function runCheckout(
                 cartId: null,
                 receiptRequested: sendEmail,
                 emailReceipt: null,
+                ...lateRec,
                 reader: {
                   ...cardTail.reader,
                   state,
@@ -5599,9 +5610,18 @@ async function runCheckout(
       const outcome = run.result;
       if (outcome.suppressed !== null) {
         await releaseHold(attemptId, "The sale was not sent (dry run or the write guard). The card was not charged.");
+        const suppressedRec = await recordDiscount({
+          saleId: null,
+          cartId: null,
+          suppressed: true,
+          paid: total,
+          shape: "lines",
+          onStudio: discounted,
+        });
         return NextResponse.json({
           ok: false,
           suppressed: outcome.suppressed,
+          ...suppressedRec,
           readerReleased: true,
           ...cardTail,
           ...actorFields(run),
@@ -5632,6 +5652,16 @@ async function runCheckout(
       }
       const captured = await captureHold(attemptId, ids.saleId);
       const state = captured?.state ?? "sold";
+      /* T286: filed after the money is taken, as cash files it after the
+       * sale: the discount's note and receipt row, and the customer's
+       * approval spent. */
+      const rec = await recordDiscount({
+        ...ids,
+        suppressed: false,
+        paid: total,
+        shape: "lines",
+        onStudio: discounted,
+      });
       return NextResponse.json({
         ok: true,
         method: m,
@@ -5640,6 +5670,7 @@ async function runCheckout(
         cartId: ids.cartId,
         receiptRequested: sendEmail,
         emailReceipt: null,
+        ...rec,
         reader: {
           ...cardTail.reader,
           state,

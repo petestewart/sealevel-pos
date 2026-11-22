@@ -3839,7 +3839,10 @@ function PaymentPanel(props: {
     if (source === "reader") {
       if (reader.status === null || !reader.status.enabled) return "Card reader is off";
       if (!reader.status.ready) return reader.status.why ?? "Card reader is not ready";
-      if (comp !== null) return "Not on the card reader yet: a discount";
+      /* T286: a discount is fine; one that takes the whole sale leaves
+       * nothing for a card to pay. A promotion code beside it is the
+       * one-discount rule, refused for every tender elsewhere. */
+      if (comped) return "The discount covers the whole sale";
       if (armedOverride !== null) return "Not on the card reader yet: an override";
       if (hasCredit) return "Not on the card reader yet: account credit";
       if (hasGiftCard) return "Not on the card reader yet: a gift card";
