@@ -54,6 +54,12 @@ Since T240 a discounted total gets it too (only a full comp leaves it off),
 it is never judged on a balance being re-read (a refetch in flight freezes
 it), and a refused charge's reported balance is keyed to its client, cleared
 with the tender, and loses to any profile read begun after it.
+**T280 (2026-11-22) turned the Cart screen's automatic line OFF** (Pete:
+"account should not be selected on its own, teacher should have to select
+it"; `AUTO_ACCOUNT_LINE` in `SaleScreen.tsx`); the roster's pay dialog
+still defaults to a covering balance. The Cart screen's tiles are now Card
+on file (with its last four) first when there is one, else the Card reader
+("Cards, Apple Pay, Google Pay"), then Cash, Gift card, and Account last.
 `purchaseCredit` is kept, unreached, for Phase 4's gift card (PLAN
 T232). The design doc's "$10 card minimum" section is reasoning of record
 only. **A service charge on card transactions under $10 is planned, not

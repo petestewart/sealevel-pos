@@ -1071,6 +1071,17 @@ which needs nothing afterwards.
   the account, else the last tile, the full row: no empty cell. With the
   reader ready, the foot no longer says "No card on file". Seen against
   the fakes: walk-in (2x2), no balance (2x2 plus account), a balance.
+- [x] **T280 Card on file first, nothing chosen for the teacher.** Built
+  2026-11-22 (Pete, on T279's screenshots: "stored card should be first
+  if there is a stored card. should also display last 4 digits ... card
+  reader should have under it in small letters the forms of payment we
+  take ... account should not be selected on its own, teacher should have
+  to select it"). A usable card on file leads ("Ending 7311"), else the
+  card reader ("Cards, Apple Pay, Google Pay"); Account is always last
+  with its balance badge; T239's automatic account line is off
+  (`AUTO_ACCOUNT_LINE`). The roster's pay dialog is unchanged: it still
+  defaults to a balance that covers the total. Seen against the fakes:
+  walk-in, card on file with no balance, card on file with $40.
 - [ ] **T237 Hardware day.** Buy and pair the Terminal, the production
   token, `POS_READER_LIVE=true`. **Never `POS_WRITE_CLIENT_IDS` while the
   studio is open**: it suppresses every write for every other client,

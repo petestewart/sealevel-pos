@@ -3574,7 +3574,14 @@ function PaymentPanel(props: {
     waitingForScreen ||
     partialLock !== null ||
     (result !== null && result.kind !== "error" && result.kind !== "suppressed");
+  /* T280 (Pete, 2026-11-22: "account should not be selected on its own,
+   * teacher should have to select it"): T239's automatic line is OFF.
+   * The machinery stays, so turning it back on is this one constant;
+   * with it false `autoTarget` is always null and the effect below only
+   * ever takes a stale automatic line off. */
+  const AUTO_ACCOUNT_LINE = false;
   const autoTarget =
+    AUTO_ACCOUNT_LINE &&
     client !== null &&
     !comped &&
     creditReason === null &&
@@ -6937,24 +6944,31 @@ function PaymentPanel(props: {
      reached through it, and its note says so. An odd count never leaves
      an empty cell: the account (else the last tile) takes the full row,
      `pay-tile-wide`. */
-  const hasBalance = balance !== null && balance > 0;
-  const accountTile = creditVisible
-    ? [{ s: "credit" as TenderSource, label: "Account", icon: <AccountIcon /> }]
+  /* T280 (Pete, same day: "stored card should be first if there is a
+     stored card. should also display last 4 digits ... account should
+     not be selected on its own, teacher should have to select it"). A
+     usable card on file leads; otherwise the card reader does. Account
+     is always LAST now, its balance on its badge, since nothing puts it
+     on the payment by itself any more. */
+  const storedCardFirst = cardDetail !== null;
+  const readerTile = reader.status?.enabled
+    ? [{ s: "reader" as TenderSource, label: "Card reader", icon: <CardIcon /> }]
     : [];
+  const storedTile = [
+    { s: "storedcard" as TenderSource, label: "Card on file", icon: <CardIcon /> },
+  ];
   const sources: { s: TenderSource; label: string; icon: ReactNode }[] = [
-    ...(hasBalance ? accountTile : []),
     /* T227: the Square Terminal, drawn only while the switch is on. */
-    ...(reader.status?.enabled
-      ? [{ s: "reader" as TenderSource, label: "Card reader", icon: <CardIcon /> }]
-      : []),
-    { s: "storedcard", label: "Card on file", icon: <CardIcon /> },
+    ...(storedCardFirst ? [...storedTile, ...readerTile] : [...readerTile, ...storedTile]),
     { s: "cash", label: "Cash", icon: <CashIcon /> },
     /* T83: always offered. A gift card needs no client and no card on
        file, so there is no state in which it is unusable for a reason
        worth greying it with; what it needs is the number, which its
        modal asks for. */
     { s: "giftcard", label: "Gift card", icon: <GiftCardIcon /> },
-    ...(hasBalance ? [] : accountTile),
+    ...(creditVisible
+      ? [{ s: "credit" as TenderSource, label: "Account", icon: <AccountIcon /> }]
+      : []),
   ];
   const wideSource: TenderSource | null =
     sources.length > 3 && sources.length % 2 === 1
@@ -7305,7 +7319,13 @@ function PaymentPanel(props: {
                            authorized. */
                         s === "credit"
                         ? creditNote
-                        : null;
+                        : /* T280: the card's last four on its tile, and
+                             what the Terminal takes on the reader's. */
+                          s === "storedcard" && card && !card.expired
+                          ? `Ending ${card.lastFour}`
+                          : s === "reader"
+                            ? "Cards, Apple Pay, Google Pay"
+                            : null;
                   /* In the payment: the selected marker (--accent-bg and
                      the 4px accent edge), whether or not the tile can
                      still take a tap. */
