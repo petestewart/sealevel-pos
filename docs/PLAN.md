@@ -908,17 +908,45 @@ which needs nothing afterwards.
   (written 2026-11-15, not yet run; needs P7's method to exist). Done when
   it has been run on both sites and the answers are recorded in the probe
   table.
-- [ ] **T223 The Square client, the mode and the switch.** `square.ts`,
+- [x] **T223 The Square client, the mode and the switch.** Built
+  2026-11-22: `src/lib/cardreader.ts` (switch, mode, env by NAME, the
+  test-on-prod refusal, the paired device per mode), `src/lib/square.ts`
+  (fetch, `Square-Version` pinned, every call in the drawer as
+  `square:`), `/api/admin/card-reader` and its drawer control,
+  `reader` on `/api/config`, and `modeNotice`'s TEST line. The location
+  assertion is NOT built yet (T226 checks the payment's own location).
+  Spec as written: `square.ts`,
   the call log's `service` field, the environment table, the location
   assertion, `/api/config`, the `modeNotice` state, and the `card_reader`
   switch (default off). Done when a Square read shows in
   the drawer tagged square, and a location that does not match is refused
   with nothing created.
-- [ ] **T224 The fake and the row.** `scripts/training/fake-square.mjs`,
+- [x] **T224 The fake and the row.** Built 2026-11-22:
+  `scripts/training/fake-square.mjs` (with hands for pairing, a tap,
+  a decline, a buyer cancel, a cancel that loses the race, money taken
+  at the tap, and forced failures), `reader_payments` (migration 21,
+  one open collection per Terminal by partial unique index) and
+  `src/lib/readerpayment.ts`. Spec as written: `scripts/training/fake-square.mjs`,
   the migration for `reader_payments`, `readerpayment.ts` with
   compare-and-set transitions. Done when the transitions are driven end to
   end against the fake with no network.
-- [ ] **T225 Pair, collect, poll, cancel.** "Connect card reader", the
+- [x] **T225 Pair, collect, poll, cancel.** Built and driven against the
+  fakes 2026-11-22: `/api/reader/status`, `/api/reader/pair`,
+  `/api/reader/collect`, `/api/reader/attempt/[id]` and its `cancel`.
+  Driven: switch off refuses with nothing sent; pairing by code;
+  collect puts the rehearsed total on the Terminal; a second collect
+  while one is open is "busy"; approve -> authorized with brand and last
+  four; Cancel on an approved hold voids it; decline, a buyer cancel and
+  the 90 second timeout end cancelled; a cancel that loses the race to
+  a tap voids the payment it produced; money taken at the tap ends
+  `unresolved`; an approved hold with no sale for three minutes is
+  released by the sweep with no request; a client outside the write
+  guard and a discount are refused. **First version narrower than the
+  plan below**: one cart, a named or house client and a promotion code;
+  a discount, an override, a split, a gift card, account credit and a
+  line for someone else are refused in words until T226 wires the PIN
+  tokens through and T233/T234 add the rest. The "Connect card reader"
+  SCREEN (big code, countdown) comes with T227's UI. Spec as written: "Connect card reader", the
   three routes and the 90 second timeout. Done when the fake pairs a
   device from a code, a simulated tap moves a row to `authorized`, and
   cancel, decline and timeout each end `cancelled` with the payment reading

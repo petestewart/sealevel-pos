@@ -612,6 +612,7 @@ function SettingsPanel({
       <ConfirmSalePanel open={open} admin={mode?.targetAdmin === true} />
       <ContractSignaturePanel open={open} admin={mode?.targetAdmin === true} />
       <DisplayTypedCardPanel open={open} admin={mode?.targetAdmin === true} />
+      <CardReaderPanel open={open} admin={mode?.targetAdmin === true} />
       <SignupModePanel open={open} admin={mode?.targetAdmin === true} />
       <p className="muted">
         The rest is stored in this browser. Applies immediately, no restart.
@@ -1367,6 +1368,158 @@ function DisplayTypedCardPanel({
               }}
             >
               {on ? "Turn off typed cards" : "Turn on typed cards"}
+            </button>
+          </div>
+        )
+      ) : null}
+    </>
+  );
+}
+
+/* --- The Square card reader's switch (T223) ---------------------------
+ *
+ * Pete, 2026-11-22: "the square functionality should be behind a flag".
+ * Default OFF. Off, the server refuses every card reader route and the
+ * tile is not drawn; on, the Cart screen offers "Card reader". It can
+ * only add or remove a way to pay. Admin-edited and logged.
+ */
+
+interface CardReaderInfo {
+  on: boolean;
+  source: string;
+  mode: string;
+  missing: string[];
+  envVar: string;
+  configured: boolean;
+  available: boolean;
+}
+
+function CardReaderPanel({ open, admin }: { open: boolean; admin: boolean }) {
+  const [info, setInfo] = useState<CardReaderInfo | null>(null);
+  const [asking, setAsking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch(admin ? "/api/admin/card-reader" : "/api/reader/status");
+      if (!res.ok) return;
+      const body = await res.json();
+      setInfo({
+        on: admin ? body.cardReader === true : body.enabled === true,
+        source: String(body.cardReaderSource ?? ""),
+        mode: String(body.mode ?? "sandbox"),
+        missing: Array.isArray(body.missing) ? body.missing.map(String) : [],
+        envVar: String(body.envVar ?? "POS_CARD_READER"),
+        configured: body.configured !== false,
+        available: body.available !== false,
+      });
+    } catch {
+      /* Quiet: nothing else depends on it. */
+    }
+  }, [admin]);
+
+  useEffect(() => {
+    if (open) void load();
+  }, [load, open]);
+
+  const setTo = async (next: boolean) => {
+    setBusy(true);
+    setError(null);
+    setDone(null);
+    try {
+      const res = await fetch("/api/admin/card-reader", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ on: next }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) {
+        setError(String(body?.error ?? `HTTP ${res.status}`));
+        return;
+      }
+      setAsking(false);
+      setDone(
+        next
+          ? "On. The Cart screen offers the card reader once a Terminal is connected."
+          : "Off. The card reader is no longer offered, and the server refuses it. A hold already open is still released or finished.",
+      );
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (info === null) return null;
+  const modeWords =
+    info.mode === "production"
+      ? "LIVE: real cards, real money."
+      : "TEST mode (Square's sandbox): no money moves.";
+  return (
+    <>
+      <div className="dev-label">card reader (Square Terminal)</div>
+      <p className="muted">
+        {info.on ? "On" : "Off"}.{" "}
+        {admin
+          ? info.source === "setting"
+            ? "Stored setting."
+            : `From ${info.envVar} in the server environment (unset means off).`
+          : ""}{" "}
+        {modeWords}
+        {info.missing.length > 0
+          ? ` Not set up: missing ${info.missing.join(", ")} in the server environment.`
+          : ""}
+      </p>
+      {done ? <p className="dev-changed">{done}</p> : null}
+      {error ? <p className="dev-target-error">{error}</p> : null}
+      {admin ? (
+        !info.configured || !info.available ? (
+          <p className="muted">
+            No database answering, so {info.envVar} in the server environment
+            decides and this cannot be changed here.
+          </p>
+        ) : asking ? (
+          <div className="dev-target-ask">
+            <p className="dev-target-question">
+              {info.on
+                ? "Turn the card reader off? Teachers stop seeing it; a hold already open is still released or finished."
+                : "Turn the card reader on for this counter?"}
+            </p>
+            <div className="dev-target-buttons">
+              <button
+                type="button"
+                className="dev-target-btn"
+                disabled={busy}
+                onClick={() => setAsking(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="dev-target-btn dev-target-go"
+                disabled={busy}
+                onClick={() => void setTo(!info.on)}
+              >
+                {busy ? "Saving" : info.on ? "Yes, turn it off" : "Yes, turn it on"}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="dev-target-buttons">
+            <button
+              type="button"
+              className="dev-target-btn"
+              disabled={busy}
+              onClick={() => {
+                setError(null);
+                setDone(null);
+                setAsking(true);
+              }}
+            >
+              {info.on ? "Turn off the card reader" : "Turn on the card reader"}
             </button>
           </div>
         )

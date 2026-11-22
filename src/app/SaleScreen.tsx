@@ -121,6 +121,8 @@ export interface ModeConfig {
   siteId: string | null;
   configError: string | null;
   writeClientIds: string[];
+  /** T223: the Square card reader's switch and mode, for the TEST line. */
+  reader?: { enabled: boolean; mode: string } | null;
   banner: string | null;
   /** T38: the server's STUDIO_TAX_RATE, mirrored for the while-pricing
    *  estimate only. Null before the config loads and on the lock
@@ -209,6 +211,33 @@ export const NEEDS_HOUSE_CLIENT_LINE =
  * of mode brings a hidden banner back.
  */
 export function modeNotice(config: {
+  dryRun: boolean;
+  dryRunSource?: string | null;
+  target: string;
+  siteId?: string | null;
+  writeClientIds?: string[];
+  /** T223: the Square card reader, when /api/config reports it. */
+  reader?: { enabled: boolean; mode: string } | null;
+}): { text: string; live: boolean } | null {
+  const base = baseModeNotice(config);
+  /* T223: a card reader switched on in Square's TEST mode on the live
+   * studio takes no money for what it sells, so it is said loudly, beside
+   * whatever else the banner says (the server refuses those sales unless
+   * the write guard narrows them to its test clients). */
+  if (
+    config.reader?.enabled === true &&
+    config.reader.mode !== "production" &&
+    config.target === "prod"
+  ) {
+    const line = "Card reader in TEST mode: reader sales take no money.";
+    return base === null
+      ? { text: line, live: true }
+      : { text: `${base.text} ${line}`, live: base.live };
+  }
+  return base;
+}
+
+function baseModeNotice(config: {
   dryRun: boolean;
   dryRunSource?: string | null;
   target: string;

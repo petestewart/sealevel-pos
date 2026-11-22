@@ -24324,3 +24324,59 @@ stood, `NOT STORED`). Screens seen at 1180x820.
 - A SOLD membership was not driven (the fake needs the PIN or a
   signature); its row would be `unverified`, since the answer carries no
   sale id.
+
+## T223 to T225. The Square card reader, up to a hold (2026-11-22)
+
+Phase 4's first three items, built against a fake Square while Pete sets
+up the Square account (PLAN Phase 4). Nothing here sells: the most it does
+is put an amount on the Terminal and hold an approved card, which the
+checkout (T226) will sell against or release.
+
+- **The switch** (`card_reader`, default OFF, `POS_CARD_READER` without a
+  database; `/api/admin/card-reader`; the drawer's Settings tab). Off,
+  every `/api/reader/*` route that starts anything answers 403
+  `reason: "reader-off"` and calls nothing; status, poll and cancel still
+  answer, so a hold open when it was switched off still ends cleanly.
+- **The mode** (`src/lib/cardreader.ts`): Square's sandbox unless the
+  Mindbody target is prod AND `POS_READER_LIVE=true`. A test reader on the
+  live studio sells only to clients the write guard names. The banner
+  adds "Card reader in TEST mode: reader sales take no money." when the
+  switch is on in that state.
+- **The client** (`src/lib/square.ts`): plain fetch, `Square-Version:
+  2026-11-18`, every call in the dev drawer as `square:<path>`, the token
+  never recorded.
+- **The row** (`reader_payments`, migration 21) and **the state machine**
+  (`src/lib/readerpayment.ts`): created, collecting, authorized,
+  cancelling, cancelled, and `unresolved` for money taken that this code
+  cannot settle. Every move is a compare-and-set. A hold is known from the
+  PAYMENT (`APPROVED`), never the checkout's status. Every cancel reads
+  the checkout's payments after and voids any approved one. A create
+  whose answer was lost is retried with the same idempotency key, then
+  searched for by reference. Square releases a forgotten hold itself
+  after 12 hours (`delay_action` CANCEL).
+- **The sweep**, in-process every 15 seconds once the reader has been
+  used: open attempts refreshed (the 90 second wait for a card, the three
+  minute wait for a sale), half-finished cancels finished, and cancelled
+  attempts of the last ten minutes read again for a late approval, which
+  is voided. Square calls only, never Mindbody, switch or no switch.
+- **Routes**: `/api/reader/status`, `/api/reader/pair` (POST a code, GET
+  the poll, which stores the device id per mode), `/api/reader/collect`
+  (rehearses with Mindbody exactly as the checkout does and holds the
+  GrandTotal), `/api/reader/attempt/[id]` (the poll) and `.../cancel`.
+- **The fake** (`scripts/training/fake-square.mjs`, port 4020): device
+  codes, checkouts (idempotent by key), payments, and hands to pair, tap,
+  decline, cancel on the Terminal, take the money at the tap, make a
+  cancel lose the race, and force failures.
+
+### Driven (fakes, local Postgres, 2026-11-22)
+
+Every case in PLAN T225's entry, listed there. `tsc` and `next build`
+pass.
+
+### Not yet
+
+- Real Square: waits on Pete's developer application and sandbox token.
+  Square's sandbox has no Devices API, so pairing is proven only on the
+  fake until the real Terminal.
+- The location assertion, the pairing screen, and selling against the
+  hold (T226, T227).

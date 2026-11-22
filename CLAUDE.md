@@ -90,6 +90,16 @@ studio day runs it, and an admin's "Sales log" in the account modal shows
 the day, the problems and a "Check now", with a gold count on Profile.
 Driven against the fake only.
 
+**T223 to T225 (2026-11-22): the Square card reader, up to a hold,
+behind a switch that is OFF by default** (`card_reader`, admin, drawer
+Settings; `POS_CARD_READER` without a database). `src/lib/cardreader.ts`
+(switch, test or live mode, env by name), `src/lib/square.ts` (the
+client), `reader_payments` (migration 21) and `src/lib/readerpayment.ts`
+(the compare-and-set state machine and its sweep), and `/api/reader/*`:
+pair a Terminal by code, put a rehearsed total on it as a HOLD, poll,
+cancel. Nothing sells yet: T226 sells against the hold. Driven against
+`scripts/training/fake-square.mjs` only.
+
 **T241 (2026-11-15): the student chooses how to pay on the customer
 iPad**, and can type their own card there (Pete: "a student shouldnt have
 to hand them their card"). See Customer display below.

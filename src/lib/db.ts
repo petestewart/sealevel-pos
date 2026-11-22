@@ -653,6 +653,45 @@ const MIGRATIONS: { version: number; sql: string }[] = [
         ON sale_log (started_at DESC);
     `,
   },
+  {
+    /* T224: one row per Square Terminal attempt. Mindbody has no home for
+     * a Square-payment-to-sale link, so the T29 charter allows it. Ids,
+     * the state, the amount in cents, the cart sha, the brand and last
+     * four; NEVER a card number, expiry, fingerprint or cardholder name,
+     * and no Mindbody price or line (those are on the sale_log row).
+     * Every move between states is a compare-and-set on `state`, and the
+     * partial unique index allows ONE open collection per Terminal. */
+    version: 21,
+    sql: `
+      CREATE TABLE IF NOT EXISTS reader_payments (
+        id              text PRIMARY KEY,
+        tap_key_sha     text,
+        state           text NOT NULL,
+        mode            text NOT NULL,
+        target          text NOT NULL,
+        site            text,
+        staff_id        text NOT NULL,
+        device_id       text NOT NULL,
+        client_id       text,
+        cart_sha        text NOT NULL,
+        amount_cents    integer NOT NULL,
+        checkout_id     text,
+        payment_id      text,
+        mb_sale_id      text,
+        card_brand      text,
+        last_four       text,
+        failure         text,
+        created_at      timestamptz NOT NULL DEFAULT now(),
+        updated_at      timestamptz NOT NULL DEFAULT now(),
+        authorized_at   timestamptz
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS reader_payments_one_open_idx
+        ON reader_payments (device_id)
+        WHERE state IN ('created', 'collecting');
+      CREATE INDEX IF NOT EXISTS reader_payments_state_idx
+        ON reader_payments (state, updated_at);
+    `,
+  },
 ];
 
 let migrated: Promise<boolean> | null = null;
@@ -2453,6 +2492,202 @@ export async function countSaleLogProblems(
     return Number(res.rows[0]?.n ?? 0);
   } catch (err) {
     logDbError("sale-log-read", err);
+    return null;
+  }
+}
+
+/* --- Reader payments (T224) ------------------------------------------ */
+
+export interface ReaderPaymentRow {
+  id: string;
+  tapKeySha: string | null;
+  state: string;
+  mode: string;
+  target: string;
+  site: string | null;
+  staffId: string;
+  deviceId: string;
+  clientId: string | null;
+  cartSha: string;
+  amountCents: number;
+  checkoutId: string | null;
+  paymentId: string | null;
+  mbSaleId: string | null;
+  cardBrand: string | null;
+  lastFour: string | null;
+  failure: string | null;
+  createdAt: number;
+  updatedAt: number;
+  authorizedAt: number | null;
+}
+
+function readerRowFromDb(r: Record<string, any>): ReaderPaymentRow {
+  const ms = (v: unknown): number | null =>
+    v === null || v === undefined ? null : new Date(v as string).getTime();
+  return {
+    id: String(r.id),
+    tapKeySha: r.tap_key_sha ?? null,
+    state: String(r.state),
+    mode: String(r.mode),
+    target: String(r.target),
+    site: r.site ?? null,
+    staffId: String(r.staff_id),
+    deviceId: String(r.device_id),
+    clientId: r.client_id ?? null,
+    cartSha: String(r.cart_sha),
+    amountCents: Number(r.amount_cents),
+    checkoutId: r.checkout_id ?? null,
+    paymentId: r.payment_id ?? null,
+    mbSaleId: r.mb_sale_id ?? null,
+    cardBrand: r.card_brand ?? null,
+    lastFour: r.last_four ?? null,
+    failure: r.failure ?? null,
+    createdAt: ms(r.created_at) ?? 0,
+    updatedAt: ms(r.updated_at) ?? 0,
+    authorizedAt: ms(r.authorized_at),
+  };
+}
+
+/**
+ * T224: a new attempt, in `created`. Answers the row, "busy" when the
+ * Terminal already has an open collection (the partial unique index),
+ * or null when the store did not answer: a reader sale NEEDS the row to
+ * start, so the caller refuses then.
+ */
+export async function insertReaderPayment(row: {
+  id: string;
+  tapKeySha: string | null;
+  mode: string;
+  target: string;
+  site: string | null;
+  staffId: string;
+  deviceId: string;
+  clientId: string | null;
+  cartSha: string;
+  amountCents: number;
+}): Promise<ReaderPaymentRow | "busy" | null> {
+  try {
+    const p = await ready();
+    if (!p) return null;
+    const res = await p.query(
+      `INSERT INTO reader_payments
+         (id, tap_key_sha, state, mode, target, site, staff_id, device_id,
+          client_id, cart_sha, amount_cents)
+       VALUES ($1, $2, 'created', $3, $4, $5, $6, $7, $8, $9, $10)
+       RETURNING *`,
+      [
+        row.id,
+        row.tapKeySha,
+        row.mode,
+        row.target,
+        row.site,
+        row.staffId,
+        row.deviceId,
+        row.clientId,
+        row.cartSha,
+        row.amountCents,
+      ],
+    );
+    return res.rows[0] ? readerRowFromDb(res.rows[0]) : null;
+  } catch (err) {
+    if ((err as { code?: string })?.code === "23505") return "busy";
+    logDbError("reader-payment-insert", err);
+    return null;
+  }
+}
+
+/** The fields a transition may set besides the state. */
+export interface ReaderPaymentPatch {
+  checkoutId?: string | null;
+  paymentId?: string | null;
+  mbSaleId?: string | null;
+  cardBrand?: string | null;
+  lastFour?: string | null;
+  failure?: string | null;
+  authorizedAt?: number | null;
+}
+
+/**
+ * T224: the ONE way a row changes state: a compare-and-set. It moves only
+ * when the row is in one of `from`, so two iPads, a replay or the sweep
+ * racing a request can never both make the same move. Answers the row
+ * after the move, null when it did not move (wrong state, no row), or
+ * "unavailable" when the store did not answer.
+ */
+export async function transitionReaderPayment(
+  id: string,
+  from: string[],
+  to: string,
+  patch: ReaderPaymentPatch = {},
+): Promise<ReaderPaymentRow | null | "unavailable"> {
+  try {
+    const p = await ready();
+    if (!p) return "unavailable";
+    const sets: string[] = ["state = $3", "updated_at = now()"];
+    const values: unknown[] = [id, from, to];
+    const add = (col: string, v: unknown) => {
+      values.push(v);
+      sets.push(`${col} = $${values.length}`);
+    };
+    if (patch.checkoutId !== undefined) add("checkout_id", patch.checkoutId);
+    if (patch.paymentId !== undefined) add("payment_id", patch.paymentId);
+    if (patch.mbSaleId !== undefined) add("mb_sale_id", patch.mbSaleId);
+    if (patch.cardBrand !== undefined) add("card_brand", patch.cardBrand);
+    if (patch.lastFour !== undefined) add("last_four", patch.lastFour);
+    if (patch.failure !== undefined) add("failure", patch.failure);
+    if (patch.authorizedAt !== undefined) {
+      add(
+        "authorized_at",
+        patch.authorizedAt === null ? null : new Date(patch.authorizedAt),
+      );
+    }
+    const res = await p.query(
+      `UPDATE reader_payments SET ${sets.join(", ")}
+        WHERE id = $1 AND state = ANY($2::text[])
+        RETURNING *`,
+      values,
+    );
+    return res.rows[0] ? readerRowFromDb(res.rows[0]) : null;
+  } catch (err) {
+    logDbError("reader-payment-move", err);
+    return "unavailable";
+  }
+}
+
+export async function findReaderPayment(
+  id: string,
+): Promise<ReaderPaymentRow | null | "unavailable"> {
+  try {
+    const p = await ready();
+    if (!p) return "unavailable";
+    const res = await p.query(`SELECT * FROM reader_payments WHERE id = $1`, [id]);
+    return res.rows[0] ? readerRowFromDb(res.rows[0]) : null;
+  } catch (err) {
+    logDbError("reader-payment-read", err);
+    return "unavailable";
+  }
+}
+
+/** Rows in these states, oldest first, for the sweep and restart
+ *  recovery; null when the store did not answer. `updatedSince` bounds
+ *  how far back a settled state is looked at. */
+export async function readerPaymentsIn(
+  states: string[],
+  updatedSince = 0,
+): Promise<ReaderPaymentRow[] | null> {
+  try {
+    const p = await ready();
+    if (!p) return null;
+    const res = await p.query(
+      `SELECT * FROM reader_payments
+        WHERE state = ANY($1::text[]) AND updated_at >= $2
+        ORDER BY created_at ASC
+        LIMIT 200`,
+      [states, new Date(updatedSince)],
+    );
+    return res.rows.map(readerRowFromDb);
+  } catch (err) {
+    logDbError("reader-payment-read", err);
     return null;
   }
 }

@@ -22,6 +22,7 @@ import {
 import { STUDIO_TAX_RATE, houseClientId } from "@/lib/sale";
 import { staffSessionFrom, staffSessionStorage } from "@/lib/staffsession";
 import { ensureTarget, isTargetAdmin, targetSource } from "@/lib/target";
+import { cardReaderEnabled, readerMode } from "@/lib/cardreader";
 import { buildVersion } from "@/lib/version";
 
 export const dynamic = "force-dynamic";
@@ -112,6 +113,12 @@ export async function GET(request: Request) {
     siteId,
     configError,
     writeClientIds: [...allowedWriteClientIds()],
+    /* T223: the Square card reader's switch and mode, for modeNotice's
+     * TEST line and the drawer. No secret, no device id. */
+    reader: {
+      enabled: (await cardReaderEnabled()).on,
+      mode: readerMode(),
+    },
     banner: await bannerText(),
     /* T29: which store is behind the DB features. "none" is full fallback
      * mode and is normal for local work; the dev drawer's settings tab
