@@ -973,17 +973,45 @@ which needs nothing afterwards.
   the claim, the single-exit complete or cancel, the refused shapes. Done
   when a sandbox sale stands with a completed Square sandbox payment linked
   to it, and a forced Mindbody refusal leaves the payment cancelled.
-- [ ] **T227 The Cart screen.** Tile, hook, panel, done block. **Done when a
+- [x] **T227 The Cart screen.** Built 2026-11-22 and driven in a browser
+  against the fakes: `src/app/useReaderPayment.ts` and
+  `src/app/ReaderWait.tsx` (shared with T229); a "Card reader" tile while
+  the switch is on, greyed with its reason, taking the whole sale (its
+  line's amount cannot be edited); Finalize holds the card first ("Ready
+  for card. $4.97", Cancel), then sells; the done block reads "Paid
+  $4.97 by card reader, Visa ending 4242"; "Connect card reader" in the
+  account modal (the code large, a five minute countdown, New code). The
+  sandbox half ran a full sale through the API against Square's real
+  sandbox (R6). Spec as written: Tile, hook, panel, done block. **Done when a
   teacher sells a drop-in in the sandbox on Square's sandbox Terminal, end
   to end, with no hardware.**
-- [ ] **T228 The failure windows.** Ambiguous resolution, the sweep,
+- [x] **T228 The failure windows.** Built 2026-11-22: on no answer the
+  checkout looks for the sale for about 25 seconds (same client, paid the
+  hold's exact amount, made after the card was approved, not linked to
+  another reader payment) and takes the money if found, else keeps the
+  hold `unresolved`; `/api/reader/attempt/[id]/resolve` (admin) charges
+  only against a sale Mindbody shows (or one an admin names) and
+  releases only when Mindbody answers and shows none; the Sales log lists
+  holds to settle. Restart recovery and the reload are the sweep's (an
+  orphaned `selling` row becomes `unresolved` after five minutes). Driven
+  against the fakes, including a sale Mindbody recorded and answered too
+  late for. Not driven: a second iPad on one hold (the compare-and-set
+  refuses it; T226's double-sell test covers the same claim). Spec as
+  written: Ambiguous resolution, the sweep,
   restart recovery, reload, second iPad. Done when each row of the failure
   table is forced against the fake and ends as written, including a kill
   between `selling` and complete.
-- [ ] **T229 Pay and check in.** The roster dialog through the same hook.
+- [x] **T229 Pay and check in.** Built 2026-11-22 and driven in a
+  browser: "Use the card reader" in the dialog (the overdraft block hides
+  while it is chosen), the same hook and panel, then the existing attach
+  and check-in; an unpaid Drop In was paid on the fake reader and the row
+  went to checked in. Spec as written: The roster dialog through the same hook.
   Done when an unpaid row is paid on the sandbox Terminal and checked in,
   and closing the dialog mid-wait releases the hold.
-- [ ] **T230 Customer display and the approval rule.** The reader line on
+- [ ] **T230 Customer display and the approval rule.** Half built
+  2026-11-22: the customer screen says "Paying by Card reader" and "Tap,
+  insert or hold your phone to the card reader." Still waiting on P8: the
+  reader runs through the approval first, as today. Spec as written: The reader line on
   the mirror; P8's answer built. Done when the student's iPad shows the
   prompt, and the approval setting behaves as Pete chose on both screens.
 - [ ] **T231 Reconciliation.** The match on top of T274's check. Done when a

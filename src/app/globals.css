@@ -10139,3 +10139,10 @@ button.display-mark-row {
 .sales-hold p {
   margin: 4px 0;
 }
+
+/* T230: on the customer screen, where the student's card goes. */
+.dticket-tender.dticket-reader {
+  margin-top: 6px;
+  font-size: 20px;
+  font-weight: 400;
+}
