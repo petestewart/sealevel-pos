@@ -613,6 +613,7 @@ function SettingsPanel({
       <ContractSignaturePanel open={open} admin={mode?.targetAdmin === true} />
       <DisplayTypedCardPanel open={open} admin={mode?.targetAdmin === true} />
       <CardReaderPanel open={open} admin={mode?.targetAdmin === true} />
+      <AutoPromoPanel open={open} admin={mode?.targetAdmin === true} />
       <SignupModePanel open={open} admin={mode?.targetAdmin === true} />
       <p className="muted">
         The rest is stored in this browser. Applies immediately, no restart.
@@ -1522,6 +1523,178 @@ function CardReaderPanel({ open, admin }: { open: boolean; admin: boolean }) {
               {info.on ? "Turn off the card reader" : "Turn on the card reader"}
             </button>
           </div>
+        )
+      ) : null}
+    </>
+  );
+}
+
+/* --- Today's promotion code (T298) ------------------------------------
+ *
+ * Pete, 2026-11-23: "add a new feature where we can have a promo code
+ * automatically applied to all carts". A code and its first and last
+ * day; between them the Cart screen and the roster's pay dialog put it
+ * in their code field on every sale, and Mindbody judges it there as a
+ * typed code. Not a rail: it moves no money by itself and every price
+ * is still Mindbody's. Admin-edited and logged, as a studio-wide policy.
+ */
+
+interface AutoPromoInfo {
+  rule: { code: string; from: string; until: string } | null;
+  source: string;
+  today: string;
+  runsToday: boolean;
+  envVar: string;
+  configured: boolean;
+  available: boolean;
+}
+
+function dayWords(d: string): string {
+  const [y, m, day] = d.split("-").map(Number);
+  if (!y || !m || !day) return d;
+  return new Date(Date.UTC(y, m - 1, day, 12)).toLocaleDateString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  });
+}
+
+function AutoPromoPanel({ open, admin }: { open: boolean; admin: boolean }) {
+  const [info, setInfo] = useState<AutoPromoInfo | null>(null);
+  const [code, setCode] = useState("");
+  const [from, setFrom] = useState("");
+  const [until, setUntil] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch("/api/admin/auto-promo");
+      if (!res.ok) return;
+      const body = (await res.json()) as AutoPromoInfo;
+      setInfo(body);
+      setCode(body.rule?.code ?? "");
+      setFrom(body.rule?.from ?? body.today);
+      setUntil(body.rule?.until ?? body.today);
+    } catch {
+      /* Quiet: nothing else depends on it. */
+    }
+  }, []);
+
+  useEffect(() => {
+    if (open) void load();
+  }, [load, open]);
+
+  const save = async (clear: boolean) => {
+    setBusy(true);
+    setError(null);
+    setDone(null);
+    try {
+      const res = await fetch("/api/admin/auto-promo", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(clear ? { clear: true } : { code, from, until }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) {
+        setError(String(body?.error ?? `HTTP ${res.status}`));
+        return;
+      }
+      setDone(
+        clear
+          ? "Cleared. No code is added automatically."
+          : "Saved. Each iPad picks it up within 30 seconds, on its next sale.",
+      );
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (info === null) return null;
+  const r = info.rule;
+  return (
+    <>
+      <div className="dev-label">promotion code on every sale</div>
+      <p className="muted">
+        {r === null
+          ? "None."
+          : `${r.code}, ${dayWords(r.from)} through ${dayWords(r.until)}. ${
+              info.runsToday ? "Running today." : "Not running today."
+            }`}{" "}
+        {r !== null && info.source === "env" ? `From ${info.envVar} in the server environment.` : ""}
+        {" "}Mindbody decides what it takes off each sale.
+      </p>
+      {done ? <p className="dev-changed">{done}</p> : null}
+      {error ? <p className="dev-target-error">{error}</p> : null}
+      {admin ? (
+        !info.configured || !info.available ? (
+          <p className="muted">
+            No database answering, so {info.envVar} in the server environment
+            decides and this cannot be changed here.
+          </p>
+        ) : (
+          <>
+            <label className="dev-setting">
+              <span className="dev-setting-label">code</span>
+              <input
+                type="text"
+                className="dev-text"
+                value={code}
+                maxLength={50}
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="characters"
+                spellCheck={false}
+                onChange={(e) => setCode(e.target.value)}
+                aria-label="Promotion code"
+              />
+            </label>
+            <label className="dev-setting">
+              <span className="dev-setting-label">first day</span>
+              <input
+                type="date"
+                className="dev-text"
+                value={from}
+                onChange={(e) => setFrom(e.target.value)}
+                aria-label="First day"
+              />
+            </label>
+            <label className="dev-setting">
+              <span className="dev-setting-label">last day</span>
+              <input
+                type="date"
+                className="dev-text"
+                value={until}
+                onChange={(e) => setUntil(e.target.value)}
+                aria-label="Last day"
+              />
+            </label>
+            <div className="dev-target-buttons">
+              <button
+                type="button"
+                className="dev-target-btn dev-target-go"
+                disabled={busy || code.trim() === "" || from === "" || until === ""}
+                onClick={() => void save(false)}
+              >
+                {busy ? "Saving" : "Save"}
+              </button>
+              {r !== null && info.source === "setting" ? (
+                <button
+                  type="button"
+                  className="dev-target-btn"
+                  disabled={busy}
+                  onClick={() => void save(true)}
+                >
+                  Stop it now
+                </button>
+              ) : null}
+            </div>
+          </>
         )
       ) : null}
     </>

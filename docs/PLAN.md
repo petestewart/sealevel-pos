@@ -1272,6 +1272,30 @@ which needs nothing afterwards.
   with the card, the reader on credit (sale with 14 x fee, $5.66) and on
   debit (hold lowered, sale without the fee, $5.52). Owed: Pete creates
   the product and sets the id; one live sale.
+- [x] **T298 A promotion code on every sale, for a run of days.** Built
+  2026-11-23 (Pete: "add a new feature where we can have a promo code
+  automatically applied to all carts. starting today i want BLACK26 promo
+  code to be entered for all purchases, thru 11/30"). An admin sets a
+  code and its first and last studio day in the drawer's Settings tab
+  ("promotion code on every sale", `PUT /api/admin/auto-promo`, stored
+  as `app_settings.auto_promo`, logged with the staff id; with no
+  database `POS_AUTO_PROMO=CODE,YYYY-MM-DD,YYYY-MM-DD`;
+  `src/lib/autopromo.ts`). `/api/config` serves today's code as
+  `autoPromoCode`, and the Cart screen and the roster's Pay and check in
+  put it in their code field as if typed, so T220 judges it unchanged:
+  Mindbody prices it, only an applied code is charged, a refusal at the
+  charge refuses the sale. It yields quietly to a discount, an override,
+  a gift card, account credit or a line for someone else and comes back
+  when they go; Remove keeps it off until the ticket is emptied (the
+  dialog: until it closes); a ticket Mindbody does not apply it to says
+  "Today's code BLACK26 does not apply to anything on this ticket." and
+  is not asked again until it changes. **BLACK26 read live (Test
+  pricing, dummy client, 2026-11-23): 15% off every pass and membership
+  tried (Drop In $28 -> $23.80, 10 Class Pack $230 -> $195.50, Annual
+  $1599 -> $1359.15), nothing off retail.** Driven against the fakes:
+  retail alone (the quiet line), a pass added ($210 less $31.50),
+  Remove, a new ticket, a card-on-file charge carrying the code, and the
+  roster dialog filling it. Owed: Pete saves BLACK26 on prod.
 - [ ] **T237 Hardware day.** Buy and pair the Terminal, the production
   token, `POS_READER_LIVE=true`. **Never `POS_WRITE_CLIENT_IDS` while the
   studio is open**: it suppresses every write for every other client,
