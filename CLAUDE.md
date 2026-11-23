@@ -76,6 +76,18 @@ else or at the wrong quantity; on reader debit it lowers the Square hold
 by the fee before the sale. Not on discounted, override, gift card,
 credit or T90 tickets. Driven against the fakes only.
 
+**T298 (2026-11-23): a promotion code on every sale for a run of days**
+(Pete: "starting today i want BLACK26 promo code to be entered for all
+purchases, thru 11/30"). An admin sets the code and its first and last
+day in the drawer's Settings tab (`app_settings.auto_promo`, else
+`POS_AUTO_PROMO`; `src/lib/autopromo.ts`); `/api/config` serves today's
+as `autoPromoCode`, and the Cart screen and the roster's Pay and check
+in fill it in as if typed, so T220's rules judge it unchanged. It yields
+quietly to anything a code cannot sit beside, Remove keeps it off for
+that ticket, and a ticket Mindbody does not apply it to says so in one
+muted line. BLACK26 is 15% off passes and memberships, nothing off
+retail (read live with Test pricing).
+
 **Next (planned 2026-11-15, vendor changed 2026-11-21, not started):
 Phase 4, the studio's own card reader, a Square Terminal** driven through
 Square's Terminal API (Pete: "let's go with square"), so a student can pay

@@ -115,6 +115,8 @@ import OverrideDialog, {
 
 /** Mirrors /api/config's payload, as page.tsx holds it. */
 export interface ModeConfig {
+  /** T298: the promotion code every sale gets today, or null. */
+  autoPromoCode?: string | null;
   dryRun: boolean;
   /** T89: who asked for the dry run, "env" (the server) or "browser"
    *  (this iPad's own, which the banner names). Absent before the config
@@ -11092,6 +11094,16 @@ export default function SaleScreen(props: {
   /** Mindbody's sentence for the last refused code, or ours for one it
    *  took nothing off for. Cleared by the next Apply. */
   const [promoNote, setPromoNote] = useState<string | null>(null);
+  /** T298: the code on the ticket was put there automatically (today's
+   *  code, /api/config `autoPromoCode`); the teacher took it off, so it
+   *  stays off until the ticket is emptied; or Mindbody did not apply it
+   *  to the ticket as it was (its contents key), so it is not tried
+   *  again until the ticket changes. */
+  const [promoAuto, setPromoAuto] = useState(false);
+  const promoAutoRef = useRef(false);
+  promoAutoRef.current = promoAuto;
+  const [autoDismissed, setAutoDismissed] = useState(false);
+  const [autoSkipKey, setAutoSkipKey] = useState<string | null>(null);
   const [priced, setPriced] = useState<PricedResult | null>(null);
   /** True from the moment the cart changes until Mindbody's answer for
    *  THAT cart lands: the debounce window counts, because the total on
@@ -11969,7 +11981,13 @@ export default function SaleScreen(props: {
          * ticket reprices without it, so the sale is never stuck. */
         if (!res.ok && body?.reason === "promotion" && promoCode !== null) {
           setPromoCode(null);
-          setPromoNote(String(body?.error ?? "That code cannot go on this ticket."));
+          if (promoAutoRef.current) {
+            /* T298: today's code yields, quietly, to whatever this
+             * ticket carries that a code cannot sit beside. */
+            setPromoAuto(false);
+          } else {
+            setPromoNote(String(body?.error ?? "That code cannot go on this ticket."));
+          }
           return;
         }
         if (!res.ok) {
@@ -12060,7 +12078,15 @@ export default function SaleScreen(props: {
           promo.code === promoCode
         ) {
           setPromoCode(null);
-          setPromoNote(promo.refusal);
+          if (promoAutoRef.current) {
+            /* T298: Mindbody did not apply today's code to this ticket
+             * (BLACK26 takes nothing off retail, say). Not tried again
+             * until the ticket changes, and said quietly. */
+            setPromoAuto(false);
+            setAutoSkipKey(pricedContentKey);
+          } else {
+            setPromoNote(promo.refusal);
+          }
         }
       } catch (err) {
         if (priceGen.current !== gen) return;
@@ -12154,6 +12180,61 @@ export default function SaleScreen(props: {
       : (feeWant === null && feeAllowed) || (feeWant !== null && feeWant !== feeHave)
         ? "Adding the card fee"
         : null;
+
+  /** Why a code cannot go on this ticket right now, or null. The same
+   *  shapes the routes refuse (src/lib/promocode.ts promotionRefusal),
+   *  said before the tap so Apply is never a refusal waiting to happen. */
+  const promoBlocked: string | null =
+    override?.substitute != null
+      ? "A substituted pass is already discounted, so it cannot take a code."
+      : armedDiscount !== null
+        ? "Take the discount off to use a promotion code."
+        : cart.some((l) => !isGiftCardLine(l) && l.forClient)
+          ? "A code applies to one person's sale. Ring up lines for someone else on their own ticket."
+          : cart.some(isGiftCardLine)
+            ? "A code cannot go on a ticket holding a gift card."
+            : cart.some(isCreditLine)
+              ? "A code cannot go on a ticket holding account credit."
+              : null;
+
+  /* T298: today's automatic promotion code goes on the ticket exactly as
+   * a typed one would (the pricing loop sends it, Mindbody judges it),
+   * once there is something to price and nothing a code cannot sit
+   * beside. It yields to a discount, an override, a gift card, account
+   * credit or a line for someone else, and comes back when they go. The
+   * teacher's Remove keeps it off until the ticket is emptied; a ticket
+   * Mindbody did not apply it to is not asked again until it changes. */
+  const todaysCode = props.config?.autoPromoCode ?? null;
+  const autoContentKey = ticketContentKey(cart);
+  const autoHasLines = cart.some((l) => !isOffCartLine(l));
+  useEffect(() => {
+    if (cart.length > 0) return;
+    setAutoDismissed(false);
+    setAutoSkipKey(null);
+  }, [cart.length]);
+  useEffect(() => {
+    if (charging) return;
+    if (promoAuto && promoCode !== null && (promoBlocked !== null || todaysCode === null)) {
+      setPromoCode(null);
+      setPromoAuto(false);
+      return;
+    }
+    if (todaysCode === null || promoCode !== null || autoDismissed) return;
+    if (!autoHasLines || promoBlocked !== null || autoSkipKey === autoContentKey) return;
+    setPromoNote(null);
+    setPromoCode(todaysCode);
+    setPromoAuto(true);
+  }, [
+    charging,
+    promoAuto,
+    promoCode,
+    promoBlocked,
+    todaysCode,
+    autoDismissed,
+    autoHasLines,
+    autoSkipKey,
+    autoContentKey,
+  ]);
 
   /**
    * T92 (Pete: "when this is attempted, a popup should appear with an
@@ -13907,7 +13988,7 @@ export default function SaleScreen(props: {
             ? "Not beside a line for someone else"
             : armedDiscount !== null
               ? "Take the discount off first"
-              : promoCode !== null
+              : promoCode !== null && !promoAuto
                 ? "Take the promotion code off first"
                 : charging
                   ? "Charging..."
@@ -14305,21 +14386,6 @@ export default function SaleScreen(props: {
     priced.promotion.code === promoCode
       ? promoCode
       : null;
-  /** Why a code cannot go on this ticket right now, or null. The same
-   *  shapes the routes refuse (src/lib/promocode.ts promotionRefusal),
-   *  said before the tap so Apply is never a refusal waiting to happen. */
-  const promoBlocked: string | null =
-    override?.substitute != null
-      ? "A substituted pass is already discounted, so it cannot take a code."
-      : armedDiscount !== null
-        ? "Take the discount off to use a promotion code."
-        : cart.some((l) => !isGiftCardLine(l) && l.forClient)
-          ? "A code applies to one person's sale. Ring up lines for someone else on their own ticket."
-          : cart.some(isGiftCardLine)
-            ? "A code cannot go on a ticket holding a gift card."
-            : cart.some(isCreditLine)
-              ? "A code cannot go on a ticket holding account credit."
-              : null;
   const applyPromo = () => {
     const code = promoDraft.trim();
     if (code === "" || promoBlocked !== null || charging) return;
@@ -14340,7 +14406,7 @@ export default function SaleScreen(props: {
         <div className="promo-applied">
           <span className="promo-applied-text">
             {appliedPromo !== null
-              ? `Code ${promoCode} applied by Mindbody.`
+              ? (promoAuto ? `Code ${promoCode} applied automatically.` : `Code ${promoCode} applied by Mindbody.`)
               : pricing
                 ? `Checking code ${promoCode} with Mindbody...`
                 : `Code ${promoCode}.`}
@@ -14349,6 +14415,8 @@ export default function SaleScreen(props: {
             className="promo-btn"
             disabled={charging}
             onClick={() => {
+              if (promoAuto) setAutoDismissed(true);
+              setPromoAuto(false);
               setPromoCode(null);
               setPromoNote(null);
             }}
@@ -14392,6 +14460,10 @@ export default function SaleScreen(props: {
         </p>
       ) : promoCode === null && promoBlocked !== null && promoDraft.trim() !== "" ? (
         <p className="promo-note muted-note">{promoBlocked}</p>
+      ) : todaysCode !== null && promoCode === null && autoSkipKey === autoContentKey ? (
+        <p className="promo-note muted-note">
+          {`Today's code ${todaysCode} does not apply to anything on this ticket.`}
+        </p>
       ) : null}
     </div>
   );
@@ -14955,6 +15027,7 @@ export default function SaleScreen(props: {
               setPromoCode(null);
               setPromoDraft("");
               setPromoNote(null);
+              setPromoAuto(false);
               /* T51: the walk-in declaration was for the sale just made. */
               setWalkIn(false);
               /* T53: so was the gate's answer; the next sale asks again. */
@@ -14976,6 +15049,13 @@ export default function SaleScreen(props: {
             promotionCode={appliedPromo}
             onPromotionRefused={(sentence) => {
               setPromoCode(null);
+              if (promoAutoRef.current) {
+                /* T298: refused at the charge (it priced, then the
+                 * rehearsal said no). The ticket reprices without it
+                 * and it is not tried again on this ticket. */
+                setPromoAuto(false);
+                setAutoSkipKey(ticketContentKey(cart));
+              }
               setPromoNote(sentence);
             }}
             receipt={receipt}

@@ -24,6 +24,7 @@ import { staffSessionFrom, staffSessionStorage } from "@/lib/staffsession";
 import { ensureTarget, isTargetAdmin, targetSource } from "@/lib/target";
 import { cardReaderEnabled, readerMode } from "@/lib/cardreader";
 import { buildVersion } from "@/lib/version";
+import { activeAutoPromoCode } from "@/lib/autopromo";
 
 export const dynamic = "force-dynamic";
 
@@ -164,6 +165,10 @@ export async function GET(request: Request) {
      * copy is for the UI only: /api/checkout reads the setting itself on
      * every charge, so a browser that lies about it is refused. On the
      * authenticated answer only, like the display above. */
+    /* T298: the promotion code every ticket gets today, or null. The
+     * screens put it in their code field; Mindbody judges it on each
+     * ticket's own pricing, exactly as a typed code. */
+    autoPromoCode: await activeAutoPromoCode(),
     ...(await (async () => {
       const confirm = await customerConfirmsSale();
       return {

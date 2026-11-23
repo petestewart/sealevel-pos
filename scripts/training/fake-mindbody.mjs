@@ -90,11 +90,18 @@ const clientRefusals = PROMO
       "10107:1004": "Only new clients qualify for this intro series.",
     }
   : {};
-const promoCodes = { "WB-GOOD": { off: 28, item: "581", used: false }, "WB-OLD": { off: 28, item: "581", expired: true } };
+const promoCodes = {
+  "WB-GOOD": { off: 28, item: "581", used: false },
+  "WB-OLD": { off: 28, item: "581", expired: true },
+  /* T298: BLACK26 as site 471 answered it on 2026-11-23: 15% off passes,
+   * nothing off retail (a 200 with no discount, not a refusal), reusable. */
+  BLACK26: { pct: 15 },
+};
 /** The refusal for a code on this cart, or null when it applies. */
 function promoRefusal(code, lines) {
   const c = promoCodes[code];
   if (!c) return "Invalid promotion code.";
+  if (c.pct) return null;
   if (c.expired) return "This promotion code has expired.";
   if (c.used) return "This promotion code has reached its maximum number of uses.";
   if (!lines.some((l) => String(l.found?.ProductId) === c.item)) return "The promotion code does not apply to any item in the cart.";
@@ -438,11 +445,16 @@ function priceCart(body) {
   /* T220: a promotion code's discount, on the line it is for. */
   if (typeof body.PromotionCode === "string" && promoCodes[body.PromotionCode]) {
     const c = promoCodes[body.PromotionCode];
-    const hit = lines.find((l) => String(l.found?.ProductId) === c.item);
-    if (hit) disc += Math.min(c.off, hit.found.Price * hit.qty);
+    if (c.pct) {
+      for (const l of lines) if (l.type === "Service") disc += ((l.found?.Price ?? 0) * l.qty * c.pct) / 100;
+    } else {
+      const hit = lines.find((l) => String(l.found?.ProductId) === c.item);
+      if (hit) disc += Math.min(c.off, hit.found.Price * hit.qty);
+    }
   }
-  /* Tax on the discounted amount, proportionally. */
-  if (sub > 0 && disc > 0) tax = tax * ((sub - disc) / sub);
+  /* Tax on the discounted amount, proportionally (passes carry none). */
+  const pctCode = typeof body.PromotionCode === "string" && promoCodes[body.PromotionCode]?.pct;
+  if (sub > 0 && disc > 0 && !pctCode) tax = tax * ((sub - disc) / sub);
   const r = (n) => Math.round(n * 100) / 100;
   return { sub: r(sub), tax: r(tax), disc: r(disc), total: r(sub - disc + tax), lines };
 }
@@ -915,7 +927,7 @@ function handle(method, path, q, body, res) {
       if (typeof body.PromotionCode === "string") {
         const why = promoRefusal(body.PromotionCode, p.lines);
         if (why) return send(res, 400, { Error: { Message: why, Code: "InvalidParameter" } });
-        if (body.Test !== true) promoCodes[body.PromotionCode].used = true;
+        if (body.Test !== true && !promoCodes[body.PromotionCode].pct) promoCodes[body.PromotionCode].used = true;
       }
       const purchased = p.lines.map((l) => ({
         Id: l.found?.ProductId ?? l.id,

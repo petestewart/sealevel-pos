@@ -1428,6 +1428,13 @@ function FrontDesk({
   } | null>(null);
   const [payPromoDraft, setPayPromoDraft] = useState("");
   const [payPromoNote, setPayPromoNote] = useState<string | null>(null);
+  /** T298: the code on this dialog was put there automatically (today's
+   *  code from /api/config), the teacher took it off (so it stays off for
+   *  this dialog), or Mindbody did not apply it to this pass (so it is
+   *  not tried again until another pass is chosen). */
+  const [payPromoAuto, setPayPromoAuto] = useState(false);
+  const [payAutoDismissed, setPayAutoDismissed] = useState(false);
+  const [payAutoSkip, setPayAutoSkip] = useState<string | number | null>(null);
   /** T238: the teacher chose the card on file over a balance that
    *  covers the total. Credit is this dialog's default, never its rule,
    *  so the card is one tap away beside it. Reset per open. */
@@ -4156,6 +4163,9 @@ function FrontDesk({
       setPayPromoCode(null);
       setPayPromoDraft("");
       setPayPromoNote(null);
+      setPayPromoAuto(false);
+      setPayAutoDismissed(false);
+      setPayAutoSkip(null);
       setPayUseCard(false);
       setPayUseReader(false);
       /* T250: an overdraft authorized for another ticket is not this one's. */
@@ -4365,6 +4375,9 @@ function FrontDesk({
     setPayPromoCode(null);
     setPayPromoDraft("");
     setPayPromoNote(null);
+    setPayPromoAuto(false);
+    setPayAutoDismissed(false);
+    setPayAutoSkip(null);
     setPayUseCard(false);
     setPayUseReader(false);
     /* T250: and the overdraft its PIN authorized, which was for this
@@ -4640,7 +4653,13 @@ function FrontDesk({
         if (payPriceGen.current !== gen) return;
         if (!res.ok && body?.reason === "promotion" && payPromoCode !== null) {
           setPayPromoCode(null);
-          setPayPromoNote(String(body?.error ?? "That code cannot go on this sale."));
+          if (payPromoAutoRef.current) {
+            /* T298: today's code yields quietly. */
+            setPayPromoAuto(false);
+            setPayAutoSkip(sel.id);
+          } else {
+            setPayPromoNote(String(body?.error ?? "That code cannot go on this sale."));
+          }
           return;
         }
         if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
@@ -4655,7 +4674,15 @@ function FrontDesk({
           promo.code === payPromoCode
         ) {
           setPayPromoCode(null);
-          setPayPromoNote(promo.refusal);
+          if (payPromoAutoRef.current) {
+            /* T298: today's code did not apply to this pass. It is not
+             * tried again until another pass is chosen, and it says so
+             * quietly rather than as a refusal nobody asked for. */
+            setPayPromoAuto(false);
+            setPayAutoSkip(sel.id);
+          } else {
+            setPayPromoNote(promo.refusal);
+          }
         }
       } catch (err) {
         if (payPriceGen.current !== gen) return;
@@ -4667,6 +4694,22 @@ function FrontDesk({
     }, 350);
     return () => clearTimeout(timer);
   }, [payDialog, paySelectedId, payCatalog.passes, payPromoCode]);
+
+  /* T298: today's automatic code goes on the dialog's sale exactly as a
+   * typed code would, once a pass is chosen, unless the teacher took it
+   * off or Mindbody did not apply it to this pass. Never while a stage
+   * of the gesture is in flight. */
+  const payPromoAutoRef = useRef(false);
+  payPromoAutoRef.current = payPromoAuto;
+  const todaysCode = config?.autoPromoCode ?? null;
+  useEffect(() => {
+    if (todaysCode === null || payDialog === null || paySelectedId === null) return;
+    if (payPromoCode !== null || payAutoDismissed || payAutoSkip === paySelectedId) return;
+    if (payStage !== null) return;
+    setPayPromoNote(null);
+    setPayPromoCode(todaysCode);
+    setPayPromoAuto(true);
+  }, [todaysCode, payDialog, paySelectedId, payPromoCode, payAutoDismissed, payAutoSkip, payStage]);
 
   /** Escape closes the pay dialog like its Cancel does -- never while a
    *  stage of the gesture is in flight: money may be moving, and the
@@ -12270,7 +12313,7 @@ function FrontDesk({
                     <span className="promo-applied-text">
                       {payAppliedPromo !== null &&
                       typeof payPriced?.discountTotal === "number"
-                        ? `Code ${payPromoCode}: ${money(payPriced.discountTotal)} off, by Mindbody.`
+                        ? `Code ${payPromoCode}: ${money(payPriced.discountTotal)} off, by Mindbody.${payPromoAuto ? " Applied automatically." : ""}`
                         : payPricing
                           ? `Checking code ${payPromoCode} with Mindbody...`
                           : `Code ${payPromoCode}.`}
@@ -12279,6 +12322,8 @@ function FrontDesk({
                       className="promo-btn"
                       disabled={payStage !== null}
                       onClick={() => {
+                        if (payPromoAuto) setPayAutoDismissed(true);
+                        setPayPromoAuto(false);
                         setPayPromoCode(null);
                         setPayPromoNote(null);
                       }}
@@ -12317,6 +12362,10 @@ function FrontDesk({
                 {payPromoNote !== null ? (
                   <p className="promo-note bad" role="status">
                     {`${payPromoNote} The code was not applied.`}
+                  </p>
+                ) : todaysCode !== null && payPromoCode === null && payAutoSkip === paySelectedId ? (
+                  <p className="promo-note muted-note">
+                    {`Today's code ${todaysCode} does not apply to this pass.`}
                   </p>
                 ) : null}
               </div>
