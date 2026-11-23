@@ -104,6 +104,9 @@ import { stripSignatures } from "@/lib/notesig";
 import { IDEMPOTENCY_HEADER, newIdempotencyKey } from "@/lib/idemkey";
 import { isFirstClass, type FirstClassFact } from "@/lib/firstclass";
 
+/** T291: the customer screen offers the student no way to pay. */
+const STUDENT_CHOOSES_TENDER = false;
+
 /**
  * The counter screen. One class selector, one roster, one search box.
  *
@@ -7226,7 +7229,11 @@ function FrontDesk({
   const payCanSwitchMethod = payCreditReady && payCardLive;
   /* T241: and so does the customer screen, on the approval: the one
    * other method, with the balance beside the account (Pete: "yes"). */
+  /* T291: the student chooses no way to pay on the customer screen
+   * (Pete: "let's do away with the customer choosing the payment
+   * method"), so the roster dialog's approval offers none either. */
   payChoicesRef.current =
+    !STUDENT_CHOOSES_TENDER ||
     !payCanSwitchMethod || payMethod === null || payMethod === "reader"
       ? []
       : payMethod === "credit"

@@ -4741,7 +4741,14 @@ function PaymentPanel(props: {
     totalCents === null ||
     totalCents <= 0;
   const currentSource = lines.length === 1 ? lines[0]?.source : undefined;
-  const displayChoices: TenderOffer[] | null = choicesFrozen
+  /* T291 (Pete, 2026-11-23: "let's do away with the customer choosing
+   * the payment method"). The student is offered no way to pay on the
+   * customer screen: no Change, no "How would you like to pay?", and so
+   * no "A different card" either. T241's machinery stays, so turning it
+   * back on is this one constant; with no offer stored, the server
+   * refuses any pick (`/api/display/choose`, `/api/display/card`). */
+  const STUDENT_CHOOSES_TENDER = false;
+  const displayChoices: TenderOffer[] | null = !STUDENT_CHOOSES_TENDER || choicesFrozen
     ? null
     : TENDER_CHOICES.flatMap((choice): TenderOffer[] => {
         /* T241 review: a different card stays on offer while a typed

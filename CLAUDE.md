@@ -128,7 +128,12 @@ tickets, gift cards and refunds.
 
 **T241 (2026-11-15): the student chooses how to pay on the customer
 iPad**, and can type their own card there (Pete: "a student shouldnt have
-to hand them their card"). See Customer display below.
+to hand them their card"). See Customer display below. **Switched OFF by
+T291 (2026-11-23, Pete: "let's do away with the customer choosing the
+payment method")**: `STUDENT_CHOOSES_TENDER = false` in `SaleScreen.tsx`
+and `page.tsx` builds no offer, so the customer screen shows no Change
+and no student-typed card; the machinery below is kept for the constant
+to bring back.
 
 **T250 (2026-11-17): the roster's "Pay and check in" can charge the
 account past its balance** (Pete: "if the client has no account balance,

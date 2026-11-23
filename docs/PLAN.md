@@ -1169,6 +1169,16 @@ which needs nothing afterwards.
   sends both (`other`), and `src/app/display/layout.tsx` repeats it and
   names the icon "Customer Screen". Checked in the built HTML of `/` and
   `/display`. Not yet seen on that iPad: re-add the icon after deploy.
+- [x] **T291 The student no longer chooses how to pay.** Built
+  2026-11-23 (Pete, after asking why the customer iPad offered "A
+  different card": "let's do away with the customer choosing the payment
+  method"). `STUDENT_CHOOSES_TENDER = false` in `SaleScreen.tsx` and
+  `page.tsx`: no offer is built on the Cart screen or the roster dialog's
+  approval, so the customer screen shows no Change and no "How would you
+  like to pay?", and with no offer stored the server refuses any pick or
+  student-typed card. T241's machinery is kept; the constant brings it
+  back. "Your passes" (T242) is untouched. Seen against the fakes:
+  reader chosen and declined, no Change.
 - [ ] **T237 Hardware day.** Buy and pair the Terminal, the production
   token, `POS_READER_LIVE=true`. **Never `POS_WRITE_CLIENT_IDS` while the
   studio is open**: it suppresses every write for every other client,
