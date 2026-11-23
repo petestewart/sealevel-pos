@@ -2300,8 +2300,37 @@ export async function startSignup(input: {
       error: "This screen is not paired.",
     };
   }
-  const held = state.current;
+  let held = state.current;
+  /* T293 (Pete, at the counter: the idle screen refused "New here? Sign
+   * up" with "The front desk is using this screen" while no ticket was
+   * open on the front desk). A student can only tap Sign up on the IDLE
+   * screen, so whatever the hub still holds is not on that screen. The
+   * leftovers a present already clears are cleared here too, by the same
+   * rules: a live ticket no tab has re-presented for LIVE_STALE_MS (a tab
+   * closed, slept or relaunched without cancelling it) and an approval
+   * nobody has polled for APPROVAL_ORPHAN_MS. Anything else still holds
+   * the screen, and the refusal names it in the log. */
   if (held !== null && held.status === "pending") {
+    if (
+      isLiveTicket(held.kind, held.payload) &&
+      now - (held.presentedAt ?? held.createdAt) > LIVE_STALE_MS
+    ) {
+      retire(held, now, "live ticket left behind, screen idle for a sign-up");
+      held = null;
+    } else if (
+      isApproveTicket(held.kind, held.payload) &&
+      now - (held.polledAt ?? held.presentedAt ?? held.createdAt) > APPROVAL_ORPHAN_MS
+    ) {
+      retire(held, now, "approval nobody is waiting on, screen idle for a sign-up");
+      held = null;
+    }
+  }
+  if (held !== null && held.status === "pending") {
+    console.warn(
+      `[display] sign-up refused: holding ${held.kind}` +
+        `${typeof held.payload?.mode === "string" ? `/${held.payload.mode}` : ""} ${held.id}, ` +
+        `presented ${Math.round((now - (held.presentedAt ?? held.createdAt)) / 1000)}s ago`,
+    );
     return {
       ok: false,
       status: 409,

@@ -1169,6 +1169,39 @@ which needs nothing afterwards.
   sends both (`other`), and `src/app/display/layout.tsx` repeats it and
   names the icon "Customer Screen". Checked in the built HTML of `/` and
   `/display`. Not yet seen on that iPad: re-add the icon after deploy.
+- [x] **T291 The student no longer chooses how to pay.** Built
+  2026-11-23 (Pete, after asking why the customer iPad offered "A
+  different card": "let's do away with the customer choosing the payment
+  method"). `STUDENT_CHOOSES_TENDER = false` in `SaleScreen.tsx` and
+  `page.tsx`: no offer is built on the Cart screen or the roster dialog's
+  approval, so the customer screen shows no Change and no "How would you
+  like to pay?", and with no offer stored the server refuses any pick or
+  student-typed card. T241's machinery is kept; the constant brings it
+  back. "Your passes" (T242) is untouched. Seen against the fakes:
+  reader chosen and declined, no Change.
+- [x] **T292 A discount on a line of several units.** Fixed 2026-11-23
+  (Pete, at the counter: three Meditation Cushions at $5.00 with $1.00
+  off charged $12.00, "Discount is doing per item instead of total").
+  Probed on 471 with `Test: true` the same day: Mindbody applies
+  `DiscountAmount` to EVERY UNIT of a line while reporting
+  `DiscountTotal` as the figure sent, so T79's check passed; and it taxes
+  a multi-unit discounted line as though the discount came off once. Now
+  a discounted line goes out as one item per unit, each with its whole
+  cents share (`cartItemsPayload`), and the discount is read from the
+  money (SubTotal + TaxTotal - GrandTotal), not from `DiscountTotal`.
+  Priced live through `priceCart`: three cushions $1.00 off $14.00, 20%
+  off $12.00, $2.00 off $13.00; three LMNT $1.00 off $4.91 with tax
+  $0.48 (Mindbody's own per-unit, rounded-up rule); all `disagrees=false`.
+  Every sale with a discount on a line of more than one unit before this
+  was charged the per-unit discount.
+- [x] **T293 Sign-up from an idle customer screen clears a left-behind
+  ticket.** Fixed 2026-11-23 (Pete: the idle screen's "New here? Sign up"
+  answered "The front desk is using this screen" with no ticket open).
+  `startSignup` now retires what a present already would: a live ticket
+  not re-presented for two minutes and an approval nobody polled for a
+  minute. Anything else still refuses, and the refusal logs what it
+  holds (`[display] sign-up refused: holding ...`). Cause not proven;
+  the log line is how the next one is read.
 - [ ] **T237 Hardware day.** Buy and pair the Terminal, the production
   token, `POS_READER_LIVE=true`. **Never `POS_WRITE_CLIENT_IDS` while the
   studio is open**: it suppresses every write for every other client,
