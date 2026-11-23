@@ -130,8 +130,8 @@ const products = [
   { Id: "p300", ProductId: 2201, Name: "Yoga Mat Towel", Price: 45, OnlinePrice: 45, TaxRate: TAX, CategoryId: 32 },
   { Id: "p301", ProductId: 2202, Name: "Studio Yoga Mat", Price: 68, OnlinePrice: 68, TaxRate: TAX, CategoryId: 32 },
   /* T297: the card processing fee, $0.01 a unit, tax exempt, in no
-   * counter category: POS_CARD_FEE_PRODUCT_ID=p900. */
-  { Id: "p900", ProductId: 2900, Name: "Card Processing Fee", Price: 0.01, OnlinePrice: 0.01, TaxRate: 0, CategoryId: 99, SecondaryCategoryId: 100000 },
+   * counter category, filed as live 589 is (primary category "sales tax exempt"): POS_CARD_FEE_PRODUCT_ID=p900. */
+  { Id: "p900", ProductId: 2900, Name: "Credit card fee", Price: 0.01, OnlinePrice: 0.01, TaxRate: 0, CategoryId: 100000, SecondaryCategoryId: 0 },
 ];
 const contracts = [
   {

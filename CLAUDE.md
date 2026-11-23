@@ -85,8 +85,12 @@ as `autoPromoCode`, and the Cart screen and the roster's Pay and check
 in fill it in as if typed, so T220's rules judge it unchanged. It yields
 quietly to anything a code cannot sit beside, Remove keeps it off for
 that ticket, and a ticket Mindbody does not apply it to says so in one
-muted line. BLACK26 is 15% off passes and memberships, nothing off
-retail (read live with Test pricing).
+muted line. BLACK26 is 15% off passes, memberships, Clothing and
+Accessories (rentals included), and nothing off Food/Drink or Other
+(read live with Test pricing; tax is recomputed on the discounted
+price). **The card fee's product must sit in a category the code does
+not cover**, or the code would discount the fee's cents and the
+checkout would refuse the fee's quantity.
 
 **Next (planned 2026-11-15, vendor changed 2026-11-21, not started):
 Phase 4, the studio's own card reader, a Square Terminal** driven through
