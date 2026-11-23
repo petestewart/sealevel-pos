@@ -122,60 +122,124 @@ export default function WaiverScene(props: {
     if (ctx) ctx.clearRect(0, 0, PAD_W, PAD_H);
   }, [prepare]);
 
-  const at = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
+  /* T294 (Pete, on the customer iPad, iPadOS 12.5.8: "signing with my
+   * finger doesn't work"). Pointer events reached Safari only in 13, so
+   * that iPad never heard a finger on the pad. The drawing is now three
+   * plain functions of a screen point, fed by pointer events where the
+   * browser has them and by TOUCH events where it does not (one or the
+   * other, never both, so a modern iPad does not draw every stroke
+   * twice). Touch listeners are native and NOT passive, because the
+   * page must not scroll under the finger and Safari 12 has no
+   * `touch-action: none` to stop it. */
+  const toPad = useCallback((clientX: number, clientY: number) => {
     const canvas = canvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
     const box = canvas.getBoundingClientRect();
     return {
-      x: ((e.clientX - box.left) / box.width) * PAD_W,
-      y: ((e.clientY - box.top) / box.height) * PAD_H,
+      x: ((clientX - box.left) / box.width) * PAD_W,
+      y: ((clientY - box.top) / box.height) * PAD_H,
     };
   }, []);
 
-  const start = useCallback(
-    (e: React.PointerEvent<HTMLCanvasElement>) => {
-      e.preventDefault();
+  const inkStart = useCallback(
+    (clientX: number, clientY: number): boolean => {
       const ctx = prepare();
-      if (!ctx) return;
+      if (!ctx) return false;
       drawing.current = true;
-      last.current = at(e);
+      last.current = toPad(clientX, clientY);
       /* A tap with no drag is still ink: a dot. */
       ctx.beginPath();
       ctx.arc(last.current.x, last.current.y, 1.5, 0, Math.PI * 2);
       ctx.fillStyle = ctx.strokeStyle;
       ctx.fill();
       setInked(true);
-      canvasRef.current?.setPointerCapture(e.pointerId);
+      return true;
     },
-    [at, prepare],
+    [toPad, prepare],
   );
 
-  const move = useCallback(
-    (e: React.PointerEvent<HTMLCanvasElement>) => {
+  const inkMove = useCallback(
+    (clientX: number, clientY: number) => {
       if (!drawing.current) return;
-      e.preventDefault();
       const canvas = canvasRef.current;
       const ctx = canvas?.getContext("2d");
       if (!ctx || !last.current) return;
-      const point = at(e);
+      const point = toPad(clientX, clientY);
       ctx.beginPath();
       ctx.moveTo(last.current.x, last.current.y);
       ctx.lineTo(point.x, point.y);
       ctx.stroke();
       last.current = point;
     },
-    [at],
+    [toPad],
   );
 
-  const end = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
+  const inkEnd = useCallback(() => {
     drawing.current = false;
     last.current = null;
-    try {
-      canvasRef.current?.releasePointerCapture(e.pointerId);
-    } catch {
-      /* Already released; nothing to undo. */
-    }
   }, []);
+
+  const start = useCallback(
+    (e: React.PointerEvent<HTMLCanvasElement>) => {
+      e.preventDefault();
+      if (inkStart(e.clientX, e.clientY)) {
+        canvasRef.current?.setPointerCapture(e.pointerId);
+      }
+    },
+    [inkStart],
+  );
+
+  const move = useCallback(
+    (e: React.PointerEvent<HTMLCanvasElement>) => {
+      if (!drawing.current) return;
+      e.preventDefault();
+      inkMove(e.clientX, e.clientY);
+    },
+    [inkMove],
+  );
+
+  const end = useCallback(
+    (e: React.PointerEvent<HTMLCanvasElement>) => {
+      inkEnd();
+      try {
+        canvasRef.current?.releasePointerCapture(e.pointerId);
+      } catch {
+        /* Already released; nothing to undo. */
+      }
+    },
+    [inkEnd],
+  );
+
+  /* T294: touch, for a browser with no pointer events (Safari 12). */
+  const hasPointer = typeof window !== "undefined" && "PointerEvent" in window;
+  useEffect(() => {
+    if (hasPointer) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const onStart = (e: TouchEvent) => {
+      const t = e.touches[0];
+      if (!t) return;
+      e.preventDefault();
+      inkStart(t.clientX, t.clientY);
+    };
+    const onMove = (e: TouchEvent) => {
+      const t = e.touches[0];
+      if (!t) return;
+      e.preventDefault();
+      inkMove(t.clientX, t.clientY);
+    };
+    const onEnd = () => inkEnd();
+    canvas.addEventListener("touchstart", onStart, { passive: false });
+    canvas.addEventListener("touchmove", onMove, { passive: false });
+    canvas.addEventListener("touchend", onEnd);
+    canvas.addEventListener("touchcancel", onEnd);
+    return () => {
+      canvas.removeEventListener("touchstart", onStart);
+      canvas.removeEventListener("touchmove", onMove);
+      canvas.removeEventListener("touchend", onEnd);
+      canvas.removeEventListener("touchcancel", onEnd);
+    };
+  }, [hasPointer, inkStart, inkMove, inkEnd]);
 
   const clear = useCallback(() => {
     const ctx = prepare();

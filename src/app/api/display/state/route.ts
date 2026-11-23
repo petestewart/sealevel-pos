@@ -2,12 +2,14 @@ import { NextResponse } from "next/server";
 
 import { claimDisplayPollAttempt, recordDisplayPollSuccess } from "@/lib/auth";
 import {
+  displaySceneNow,
   displayState,
   ensureDisplayLoaded,
   isPairedDisplay,
   newPairingCode,
   pairedDisplay,
   pollPairing,
+  touchDisplaySeen,
 } from "@/lib/display";
 import {
   displayCookieDurable,
@@ -41,6 +43,17 @@ export const dynamic = "force-dynamic";
  */
 export async function GET(request: Request) {
   await ensureDisplayLoaded();
+  /* T295: the paired display's own poll, every few seconds: what it
+   * should be showing, and a beat, so the front desk's mark stays
+   * "connected" on a display whose stream never delivers. Kept cheap: no
+   * table read. */
+  if (new URL(request.url).searchParams.get("scene") === "1") {
+    const sceneId = displayIdFrom(request);
+    if (sceneId !== null && isPairedDisplay(sceneId)) {
+      touchDisplaySeen(sceneId);
+      return NextResponse.json({ paired: true, ...displaySceneNow() });
+    }
+  }
   /* Durable means a pairing actually SURVIVES a restart, which needs both
    * halves: a cookie key that can be derived again (POS_SESSION_SECRET)
    * and a row to derive it against (DATABASE_URL). Either missing and the

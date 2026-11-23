@@ -244,7 +244,15 @@ export default function SignupScene(props: {
       <p className="dwaiver-lead">
         The front desk will finish it with you in a moment.
       </p>
-      <div className="dsignup-fields" onPointerDown={touch}>
+      {/* T294: touch and keys too, since Safari 12 has no pointer
+          events and the two minute clock must not run out while a
+          student on that iPad is typing. */}
+      <div
+        className="dsignup-fields"
+        onPointerDown={touch}
+        onTouchStart={touch}
+        onKeyDown={touch}
+      >
         {field("First name", firstName, setFirstName)}
         {field("Last name", lastName, setLastName)}
         {field("Email", email, setEmail, {
