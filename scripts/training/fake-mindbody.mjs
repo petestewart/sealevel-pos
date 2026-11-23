@@ -122,6 +122,9 @@ const products = [
   { Id: "p201", ProductId: 2102, Name: "Sealevel Shorts", Price: 38, OnlinePrice: 38, TaxRate: TAX, CategoryId: 26 },
   { Id: "p300", ProductId: 2201, Name: "Yoga Mat Towel", Price: 45, OnlinePrice: 45, TaxRate: TAX, CategoryId: 32 },
   { Id: "p301", ProductId: 2202, Name: "Studio Yoga Mat", Price: 68, OnlinePrice: 68, TaxRate: TAX, CategoryId: 32 },
+  /* T297: the card processing fee, $0.01 a unit, tax exempt, in no
+   * counter category: POS_CARD_FEE_PRODUCT_ID=p900. */
+  { Id: "p900", ProductId: 2900, Name: "Card Processing Fee", Price: 0.01, OnlinePrice: 0.01, TaxRate: 0, CategoryId: 99, SecondaryCategoryId: 100000 },
 ];
 const contracts = [
   {
@@ -863,7 +866,10 @@ function handle(method, path, q, body, res) {
     }
     case "/sale/products": {
       const cats = all(q, "categoryIds").map(Number);
-      const rows = products.filter((p) => !cats.length || cats.includes(p.CategoryId));
+      const ids = all(q, "productIds");
+      const rows = products.filter(
+        (p) => (!cats.length || cats.includes(p.CategoryId)) && (!ids.length || ids.includes(p.Id)),
+      );
       return send(res, 200, { ...page(rows), Products: rows });
     }
     case "/sale/packages":

@@ -2604,6 +2604,8 @@ export interface ReaderPaymentPatch {
   cardBrand?: string | null;
   lastFour?: string | null;
   failure?: string | null;
+  /** T297: a debit card's hold lowered by the card fee. */
+  amountCents?: number;
   authorizedAt?: number | null;
 }
 
@@ -2634,6 +2636,7 @@ export async function transitionReaderPayment(
     if (patch.mbSaleId !== undefined) add("mb_sale_id", patch.mbSaleId);
     if (patch.cardBrand !== undefined) add("card_brand", patch.cardBrand);
     if (patch.lastFour !== undefined) add("last_four", patch.lastFour);
+    if (patch.amountCents !== undefined) add("amount_cents", patch.amountCents);
     if (patch.failure !== undefined) add("failure", patch.failure);
     if (patch.authorizedAt !== undefined) {
       add(

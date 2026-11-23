@@ -1,3 +1,4 @@
+import { cardFeeEnv } from "./cardfee";
 import { counterCategories } from "./categories";
 import { getSetting } from "./db";
 import { target } from "./mindbody";
@@ -6,6 +7,7 @@ import {
   catalogFor,
   contractsFor,
   pricingOptions,
+  productsByIds,
   sellablePackages,
   type CatalogItem,
   type ContractSummary,
@@ -50,6 +52,10 @@ export interface RawCatalog {
   /** T30: contracts are NOT cart items; they feed the Memberships chip
    *  and its dedicated purchase dialog. */
   contracts: ContractSummary[];
+  /** T297: the card processing fee's product, read by its id when
+   *  POS_CARD_FEE_PRODUCT_ID is set; null when it is not, or the read
+   *  found nothing. Never on the shelf (it is taken out of `products`). */
+  cardFeeItem: CatalogItem | null;
 }
 
 /** Keyed by MINDBODY_TARGET for the same reason the staff-token cache is
@@ -150,15 +156,31 @@ export async function rawCatalog(
     return { data: cache.data, cached: true };
   }
   const categoryIds = counterCategories.flatMap((c) => c.categoryIds);
-  const [products, passes, packages, contracts] = await Promise.all([
+  const feeRule = cardFeeEnv();
+  const [products, passes, packages, contracts, feeItems] = await Promise.all([
     catalogFor(categoryIds),
     pricingOptions(),
     sellablePackages(),
     contractsFor(),
+    /* T297: a fee product the read cannot find, or a read that fails,
+     * turns the fee off for this catalog rather than failing the shelf. */
+    feeRule
+      ? productsByIds([feeRule.productId]).catch((err) => {
+          console.warn(`[card-fee] product ${feeRule.productId} could not be read: ${String(err)}`);
+          return [] as CatalogItem[];
+        })
+      : Promise.resolve([] as CatalogItem[]),
   ]);
+  const cardFeeItem = feeItems[0] ?? null;
+  if (feeRule && cardFeeItem === null) {
+    console.warn(`[card-fee] product ${feeRule.productId} not found; no fee is added`);
+  }
   const data: RawCatalog = {
     categories: counterCategories,
-    products: routeProducts(products),
+    cardFeeItem,
+    products: routeProducts(
+      products.filter((p) => !feeRule || String(p.id) !== feeRule.productId),
+    ),
     passes: routeServices(passes),
     packages,
     contracts,

@@ -30,7 +30,7 @@ path for the phase that carries them.
 | P12 | The statement descriptor | T237 | Ideally matching what Mindbody Payments shows |
 | P13 | Who reconciles, who refunds, and where do they hear about a mismatch off the counter? | T231, T235 | |
 | P14 | ~~S700 or a second WisePOS E?~~ **Moot (2026-11-21): Square Terminal.** | T237 | |
-| P15 | The service charge on card transactions under $10 (Pete, 2026-11-15, T239: "we are eventually going to implement adding a service charge for CC transactions under $10"). **Planned, not built; until it is, a card is charged exactly the sale.** Undecided: the amount; whether it is a Mindbody product line on the cart or a fee outside it; whether it applies to the reader, a typed card and the card on file alike; and how it is shown to the student before the tap | Nothing yet | Not the retired $10 floor: nothing is bought as credit. Square's US card minimum is $0.01, so nothing meets the reader there. Square's "Auto Card Surcharge" (US, Beta) may be one way to build this, if it can be read back into Mindbody |
+| P15 | The card processing fee on card sales under $10. **Decided 2026-11-23 and built as T297** (Pete: "add a feature to automatically add a credit card processing fee of 2.6% to credit card purchases under $10. we already have a sign at the front desk"; all card methods; skip on reader debit) | Pete: create the $0.01 tax-exempt product, set `POS_CARD_FEE_PRODUCT_ID` | See T297 |
 | P16 | Where do incident alerts and diagnoses reach you? Recommended: one private Slack channel, GitHub issues as the record | T263, T264 | Phase 5 |
 | P17 | Which Claude account runs the investigator's sessions, and the monthly ceiling | T264 | Estimated $30 to $80 in a normal month |
 | P18 | Who may tap a one-tap repair: you alone, or anyone in `POS_ADMIN_STAFF_IDS`? | T269 | |
@@ -183,8 +183,8 @@ an old policy! ... change it so any amount can be charged"): every card is
 charged what it pays in ONE checkout, no card sale buys account credit, and
 the roster's pay dialog defaults to a covering balance but offers the card
 beside it (and since T239 the Cart screen starts on it the same way). A
-service charge on card sales under $10 is planned and not built (P15); until
-it is, a card is charged exactly the sale. What follows is the plan as it was
+2.6% card processing fee on card sales under $10 is T297 (P15), off until
+its product id is set. What follows is the plan as it was
 built, kept for the record.
 Not a refinement of 2.2, part of it.
 - Credit covers the total → paid entirely from credit, card not offered
@@ -1240,6 +1240,38 @@ which needs nothing afterwards.
   (`src/app/display/AcceptedPayments.tsx`, Simple Icons paths, CC0,
   in `currentColor`). Seen against the fakes: chosen (ticket only),
   waiting (line and marks), declined.
+- [x] **T297 The card processing fee.** Built 2026-11-23 (Pete: "add a
+  feature to automatically add a credit card processing fee of 2.6% to
+  credit card purchases under $10. we already have a sign at the front
+  desk stating that will happen."; all card methods; "Skip on reader
+  debit"). Mindbody ignores a price on a cart line (probed on 471:
+  Metadata Price, Amount, SalePrice all priced at the catalog's), so the
+  fee is a retail PRODUCT the studio creates at **$0.01, tax exempt**,
+  sold at a quantity of cents (14 cents is 14 x $0.01), named by
+  `POS_CARD_FEE_PRODUCT_ID` (unset: off; `POS_CARD_FEE_RATE` 0.026 and
+  `POS_CARD_FEE_UNDER` 10 are the defaults). `/api/catalog` reads it by
+  id, keeps it off the shelf, and serves it as `cardFee` only when it
+  reads $0.01 and tax exempt. The Cart screen puts the line on while the
+  tender is ONE card (on file, Manual card entry, the reader) and the
+  sale without it is under $10, at round(2.6%), at least a cent, judged
+  against Mindbody's pricing of the ticket on screen; it comes off when
+  the tender, the contents or the total say otherwise, and Finalize
+  waits while it moves. Not on a discounted ticket, an override, a gift
+  card, account credit or a line for someone else (v1), nor in the
+  roster's Pay and check in (passes are all over $10). The row has no
+  controls; the customer screen shows it as one line. `/api/checkout`
+  refuses a fee line on any other ticket or at the wrong quantity, in
+  words, before money moves. **Debit on the reader**: Square reads
+  `card_type` at the tap; on DEBIT the checkout rehearses the sale
+  without the fee and LOWERS the approved hold to it (PUT
+  /v2/payments, probed in Square's sandbox 566 -> 552) before selling
+  without the line; a Square answer nobody can read releases the hold,
+  any other doubt keeps the fee. Card on file and typed cards cannot be
+  told apart before the charge, so they always carry it. Driven against
+  the fakes: card on file ($5.00 + tax + $0.14 = $5.66), the fee off
+  with the card, the reader on credit (sale with 14 x fee, $5.66) and on
+  debit (hold lowered, sale without the fee, $5.52). Owed: Pete creates
+  the product and sets the id; one live sale.
 - [ ] **T237 Hardware day.** Buy and pair the Terminal, the production
   token, `POS_READER_LIVE=true`. **Never `POS_WRITE_CLIENT_IDS` while the
   studio is open**: it suppresses every write for every other client,
