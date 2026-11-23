@@ -1292,7 +1292,15 @@ which needs nothing afterwards.
   is not asked again until it changes. **BLACK26 read live (Test
   pricing, dummy client, 2026-11-23): 15% off every pass and membership
   tried (Drop In $28 -> $23.80, 10 Class Pack $230 -> $195.50, Annual
-  $1599 -> $1359.15), nothing off retail.** Driven against the fakes:
+  $1599 -> $1359.15). Retail (corrected the same day, Pete: "It should
+  be working on accessories and clothing"): 15% off Clothing (Cobra
+  Hoodie $58 -> $54.50 with tax, tax recomputed on the lower price) and
+  Accessories, rentals included (Mat Rental $2.99 -> $2.54); nothing off
+  Food/Drink (LMNT, Boxed Water, Vita Coco) or Other (Parking Pass, Miir
+  cups and bottles).** The first read priced only a drink and wrongly
+  said "nothing off retail". The card fee's product (T297) must sit in a
+  category BLACK26 does not cover, or the code discounts the fee.
+  Driven against the fakes:
   retail alone (the quiet line), a pass added ($210 less $31.50),
   Remove, a new ticket, a card-on-file charge carrying the code, and the
   roster dialog filling it. Owed: Pete saves BLACK26 on prod.
