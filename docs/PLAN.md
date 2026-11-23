@@ -1227,6 +1227,19 @@ which needs nothing afterwards.
   and a ticket with its total, all through the poll; and the reader
   ticket and decline with a live stream as before. Not yet seen on the
   iPadOS 12 iPad itself. Safari 12 is otherwise untested ground.
+- [x] **T296 The tap line waits for Finalize, with the accepted marks.**
+  Built 2026-11-23 (Pete: the customer iPad showed "Tap, insert or hold
+  your phone to the card reader." as soon as the Card reader tile was
+  tapped, "this should not show until the teacher clicks Finalize
+  Sale", and "it should show credit card icon/logos, apple pay and
+  google pay as accepted forms of payment"). `readerNote` gains
+  `"waiting"`, set when the Cart screen asks the Terminal for the card
+  and cleared on its answer; with the reader chosen and no ask yet the
+  customer screen shows the ticket alone. Under the tap line, Visa,
+  Mastercard, American Express, Discover, Apple Pay and Google Pay
+  (`src/app/display/AcceptedPayments.tsx`, Simple Icons paths, CC0,
+  in `currentColor`). Seen against the fakes: chosen (ticket only),
+  waiting (line and marks), declined.
 - [ ] **T237 Hardware day.** Buy and pair the Terminal, the production
   token, `POS_READER_LIVE=true`. **Never `POS_WRITE_CLIENT_IDS` while the
   studio is open**: it suppresses every write for every other client,

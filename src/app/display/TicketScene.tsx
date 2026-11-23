@@ -1,5 +1,6 @@
 "use client";
 
+import AcceptedPayments from "./AcceptedPayments";
 import { useCallback, useEffect, useState } from "react";
 
 import { plainText } from "@/lib/richtext";
@@ -372,16 +373,24 @@ export default function TicketScene(props: {
           {/* T289 (Pete: "'Paying by Card reader' seems unneccessary"): on
               the reader, the instruction says it, and a decline replaces
               it. Every other way to pay is still named. */}
+          {/* T296 (Pete: the tap line "should not show until the teacher
+              clicks Finalize Sale"): with the card reader chosen and
+              nothing asked of the Terminal yet, the student sees the
+              ticket alone. The instruction and the accepted marks come
+              with the Terminal's own ask. */}
           {paying === "Card reader" ? (
             t.readerNote === "declined" ? (
               <p className="dticket-tender dticket-declined" role="alert">
                 Card declined. Please try another card.
               </p>
-            ) : (
-              <p className="dticket-tender dticket-reader">
-                Tap, insert or hold your phone to the card reader.
-              </p>
-            )
+            ) : t.readerNote === "waiting" ? (
+              <>
+                <p className="dticket-tender dticket-reader">
+                  Tap, insert or hold your phone to the card reader.
+                </p>
+                <AcceptedPayments />
+              </>
+            ) : null
           ) : (
             <p className="dticket-tender">
               {noCharge ? "No charge" : `Paying by ${paying}`}

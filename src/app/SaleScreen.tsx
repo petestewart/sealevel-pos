@@ -1279,8 +1279,8 @@ function displayTicketPayload(input: {
   /** T241: the other ways to pay the student may pick on the display,
    *  or null for none (the server drops an offer that cannot apply). */
   choices?: readonly TenderOffer[] | null;
-  /** T289: the card reader declined the card. */
-  readerNote?: "declined" | null;
+  /** T289: the card reader declined the card. T296: or is asking for it. */
+  readerNote?: "waiting" | "declined" | null;
 }): TicketPayload {
   const saleLines = input.cart.filter((line) => !isOffCartLine(line));
   /* T256: account credit is untaxed and priced by the amount typed, so it
@@ -1295,8 +1295,8 @@ function displayTicketPayload(input: {
     (usable ? (priced.discountTotal ?? 0) : 0) + input.giftDiscountOff,
   );
   return {
-    ...(input.mode === "live" && input.readerNote === "declined"
-      ? { readerNote: "declined" as const }
+    ...(input.mode === "live" && input.readerNote
+      ? { readerNote: input.readerNote }
       : {}),
     mode: input.mode,
     clientFirstName: displayFirstName(input.clientName),
@@ -2469,7 +2469,7 @@ function PaymentPanel(props: {
   onTenderChange: (tenders: TicketTender[] | null) => void;
   /** T289: the card reader declined the card (or null again), reported
    *  up for the live mirror, as the tender is. */
-  onReaderNote: (note: "declined" | null) => void;
+  onReaderNote: (note: "waiting" | "declined" | null) => void;
   /** T241: the ways to pay the student may switch to on the display,
    *  reported up for the live mirror. Null for none. */
   onChoicesChange: (choices: TenderOffer[] | null) => void;
@@ -5245,12 +5245,15 @@ function PaymentPanel(props: {
       setCharging(true);
       onBusyChange(true);
       setResult(null);
-      onReaderNote(null);
+      /* T296: the Terminal is asked for the card from here, so this is
+       * when the customer screen says to tap. */
+      onReaderNote("waiting");
       const held = await reader.hold(requestBody, newIdempotencyKey());
+      /* Approved, declined or ended: the tap line goes either way. */
+      onReaderNote(held.ok ? null : held.declined === true ? "declined" : null);
       if (!held.ok) {
         /* T289: a decline stays on the customer screen until the tender
-         * changes or the next attempt starts. */
-        if (held.declined === true) onReaderNote("declined");
+         * changes or the next attempt starts (set just above). */
         inFlight.current = false;
         setCharging(false);
         onBusyChange(false);
@@ -12968,7 +12971,7 @@ export default function SaleScreen(props: {
   /** T241: and the ways to pay the student may switch to. */
   const [liveChoices, setLiveChoices] = useState<TenderOffer[] | null>(null);
   /** T289: the card reader declined the card, for the live mirror. */
-  const [liveReaderNote, setLiveReaderNote] = useState<"declined" | null>(null);
+  const [liveReaderNote, setLiveReaderNote] = useState<"waiting" | "declined" | null>(null);
   const livePayload =
     /* T259: a credit given at no charge presents nothing on the customer
        screen, like "Check in free (comp)": nothing is charged to them. */
