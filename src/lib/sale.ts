@@ -849,20 +849,45 @@ function assertCartLines(items: readonly CartLine[], caller: string): void {
  *  it is sent per LINE (the extended price's share), and the strict
  *  DiscountTotal check in priceCart is what catches the other reading
  *  as a stop rather than a wrong charge. */
-function cartItemsPayload(
+/*
+ * T292 (Pete, at the counter 2026-11-23, three cushions at $5.00 with a
+ * $1.00 discount charged $12.00: "Discount is doing per item instead of
+ * total"). Probed on 471 with `Test: true` the same day:
+ *  - Mindbody applies DiscountAmount to EVERY UNIT of a line (3 x $1.00
+ *    off, GrandTotal $12.00) while reporting DiscountTotal as the figure
+ *    sent ($1.00), which is why T79's check did not see it;
+ *  - it TAXES a multi-unit line as though the discount came off once
+ *    (three LMNT at $1.81 split 2 x $0.33 + 1 x $0.34 off: tax $0.51),
+ *    while single units are taxed per unit, rounded up, as an undiscounted
+ *    line is (3 x $0.19 = $0.57; three single units at $0.33/$0.33/$0.34
+ *    off: tax $0.48).
+ * So a line that carries a discount goes out as ONE ITEM PER UNIT, each
+ * with its own whole-cents share (the line's cents spread as evenly as
+ * they go, the odd cents on the last units). The total discount is then
+ * exactly the spread's, and the tax follows Mindbody's ordinary rule. A
+ * line with no discount goes out as before, one item with its quantity.
+ * The basket check sums a product's quantities across sale lines, so the
+ * split is invisible to it.
+ */
+export function cartItemsPayload(
   items: readonly CartLine[],
   discount?: readonly number[],
 ): unknown[] {
-  return items.map((line, i) => {
+  return items.flatMap((line, i) => {
     const off = discount?.[i] ?? 0;
-    return {
-      Item: {
-        Type: line.type,
-        Metadata: { Id: line.metadataId },
-      },
-      Quantity: line.quantity,
-      ...(off > 0 ? { DiscountAmount: off / 100 } : {}),
-    };
+    const item = { Type: line.type, Metadata: { Id: line.metadataId } };
+    if (off <= 0) return [{ Item: item, Quantity: line.quantity }];
+    const qty = line.quantity;
+    const per = Math.floor(off / qty);
+    const extra = off - per * qty;
+    return Array.from({ length: qty }, (_, u) => {
+      const cents = per + (u >= qty - extra ? 1 : 0);
+      return {
+        Item: item,
+        Quantity: 1,
+        ...(cents > 0 ? { DiscountAmount: cents / 100 } : {}),
+      };
+    });
   });
 }
 
@@ -1002,12 +1027,23 @@ export async function priceCart(
     packagePricing || theirSubtotal === null
       ? false
       : totalsDisagree(expectedSub, theirSubtotal);
-  const discountTotal = num(cart?.DiscountTotal);
-  /* T79: with a discount sent, Mindbody's DiscountTotal must be our
-   * spread's sum to the cent (a missing DiscountTotal reads as 0, so a
-   * discount Mindbody dropped is a stop, never a full-price charge that
-   * the screen said was discounted). The same strictness as the
-   * subtotal: never a tolerance. No discount sent, nothing asserted. */
+  /* T292: Mindbody's DiscountTotal is the SUM OF THE FIGURES SENT, not
+   * what came off (it said $1.00 for a cart it took $3.00 off, and $0.67
+   * for one it took $1.00 off). What came off is read from the money:
+   * SubTotal + TaxTotal - GrandTotal, the discount that leaves exactly
+   * this total. With any of the three missing it falls back to the
+   * reported figure, which the check below then holds to the cent. This
+   * is also what the screen shows as the discount line. */
+  const reportedDiscount = num(cart?.DiscountTotal);
+  const discountTotal =
+    subTotal !== null && taxTotal !== null
+      ? roundToCents(subTotal + taxTotal - grandTotal)
+      : reportedDiscount;
+  /* T79: with a discount sent, what Mindbody took off must be our
+   * spread's sum to the cent (a missing figure reads as 0, so a discount
+   * Mindbody dropped is a stop, never a full-price charge that the screen
+   * said was discounted). The same strictness as the subtotal: never a
+   * tolerance. No discount sent, nothing asserted. */
   const discountDisagrees =
     discount !== undefined && discount !== null
       ? totalsDisagree(expectedDisc, discountTotal ?? 0)
