@@ -545,6 +545,18 @@ function emit(
   }
 }
 
+/** T295: what the display should be showing right now, and the newest
+ *  display event id, for a display that asks rather than listens (its
+ *  stream silent: Safari 12 on the studio's older iPad, a network that
+ *  cuts long connections). The same student-safe scene the stream
+ *  replays on connect, so nothing more reaches the screen this way. */
+export function displaySceneNow(now = Date.now()): {
+  scene: { event: string; data: Record<string, unknown> };
+  seq: number;
+} {
+  return { scene: sceneFor(currentRequest(now)), seq: state.nextEventId - 1 };
+}
+
 /** Events after `lastEventId` still in the buffer, for a reconnect. */
 export function eventsSince(
   channel: "display" | "teacher",

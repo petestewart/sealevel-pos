@@ -1202,6 +1202,31 @@ which needs nothing afterwards.
   minute. Anything else still refuses, and the refusal logs what it
   holds (`[display] sign-up refused: holding ...`). Cause not proven;
   the log line is how the next one is read.
+- [x] **T294 Signing with a finger on Safari 12.** Fixed 2026-11-23
+  (Pete, the studio's customer iPad on iPadOS 12.5.8: "signing with my
+  finger doesn't work"). Pointer events reached Safari in 13; the
+  signature pad now draws from TOUCH events (native, not passive) where
+  the browser has no pointer events, and from pointer events otherwise,
+  never both. The sign-up form's two-minute clock counts touches and
+  keys too. Seen with pointer events removed and real CDP touch input:
+  the stroke inked and the pad said "Thank you".
+- [x] **T295 The customer screen asks as well as listens.** Built
+  2026-11-23 (same iPad: frozen on its welcome page, "Not now" did
+  nothing, the front desk said "Customer display is not responding",
+  and Sign up met "The front desk is using this screen"). Its live
+  stream did not deliver. A paired screen now asks `GET
+  /api/display/state?scene=1` every 3 seconds: the server answers with
+  the student-safe scene it should show (`displaySceneNow`, the same
+  `sceneFor` the stream replays) and the newest display event id, and
+  counts the ask as a beat (`touchDisplaySeen`), so the front desk's
+  mark stays honest. The screen applies an answer only when it is not
+  older than the last stream event it took and differs from what is up,
+  so a working stream sees no change; a stream error no longer wipes
+  the scene. Seen against the fakes with the stream stubbed DEAD and no
+  pointer events: "connected" on the front desk, Sign up then Not now,
+  and a ticket with its total, all through the poll; and the reader
+  ticket and decline with a live stream as before. Not yet seen on the
+  iPadOS 12 iPad itself. Safari 12 is otherwise untested ground.
 - [ ] **T237 Hardware day.** Buy and pair the Terminal, the production
   token, `POS_READER_LIVE=true`. **Never `POS_WRITE_CLIENT_IDS` while the
   studio is open**: it suppresses every write for every other client,

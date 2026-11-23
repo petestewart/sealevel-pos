@@ -28,6 +28,9 @@ import type { SignupPayload } from "@/lib/displaysignup";
 import type { TicketPayload } from "@/lib/displayticket";
 import type { WaiverPayload } from "@/lib/displaywaiver";
 
+/** T295: how often a paired screen asks the server what to show. */
+const POLL_SCENE_MS = 3_000;
+
 /**
  * The idle screen and the pairing exchange (T200).
  *
@@ -433,7 +436,10 @@ export default function DisplayScreen() {
     };
     const onError = () => {
       setLive(false);
-      setScene(null);
+      /* T295: the scene is NOT wiped on a stream error any more. On the
+       * studio's Safari 12 iPad the stream drops and reconnects, and each
+       * drop took a half-typed sign-up with it; the poll below keeps the
+       * screen honest instead, from the server's own answer. */
       /* A 401 means this cookie names nobody any more. Ask the server
        * what it thinks: it will hand back a fresh pairing code. */
       void fetch("/api/display/state")
@@ -465,22 +471,89 @@ export default function DisplayScreen() {
       }
     };
     const onReload = () => setReloadAsked(true);
+
+    /* T295 (Pete, the studio's older iPad on iPadOS 12.5.8: the screen
+     * froze on its welcome page, "Not now" did nothing, and the front desk
+     * said "Customer display is not responding"). Its stream does not
+     * deliver, so the screen also ASKS, every POLL_SCENE_MS: the server
+     * answers with the scene it should be showing and the newest event
+     * id, and counts the ask as the display being there. The answer is
+     * applied only when it is not older than the last stream event this
+     * screen took (`lastSeq`) and differs from what is up (`lastKey`), so
+     * on a working stream it changes nothing. */
+    let lastSeq = 0;
+    let lastKey = "";
+    const keyOf = (event: string, raw: string): string => {
+      if (event === "idle" || event === "cancel") return "idle";
+      try {
+        return `present:${JSON.stringify(JSON.parse(raw))}`;
+      } catch {
+        return `present:${raw}`;
+      }
+    };
+    const heard =
+      (event: string, handler: (ev: MessageEvent) => void) =>
+      (ev: MessageEvent) => {
+        const id = Number(ev.lastEventId);
+        if (Number.isFinite(id) && id > lastSeq) lastSeq = id;
+        lastKey = keyOf(event, typeof ev.data === "string" ? ev.data : "");
+        handler(ev);
+      };
+    const onIdleHeard = heard("idle", onIdle);
+    const onPresentHeard = heard("present", onPresent);
+    const onCancelHeard = heard("cancel", onCancel);
+    const poll = async () => {
+      try {
+        const res = await fetch("/api/display/state?scene=1", { cache: "no-store" });
+        const body = await res.json().catch(() => null);
+        if (stopped || !body) return;
+        if (body.paired === false) {
+          if (typeof body.code === "string") {
+            setPairing({
+              state: "unpaired",
+              code: body.code,
+              secret: String(body.secret ?? ""),
+              error: null,
+            });
+          }
+          return;
+        }
+        if (body.paired !== true || !body.scene) return;
+        setLive(true);
+        const seq = Number(body.seq);
+        if (Number.isFinite(seq) && seq < lastSeq) return;
+        const event = String(body.scene.event ?? "idle");
+        const raw = JSON.stringify(body.scene.data ?? {});
+        const key = keyOf(event, raw);
+        if (key === lastKey) return;
+        lastKey = key;
+        if (Number.isFinite(seq)) lastSeq = Math.max(lastSeq, seq);
+        const asEvent = { data: raw, lastEventId: "" } as unknown as MessageEvent;
+        if (event === "present") onPresent(asEvent);
+        else onIdle();
+      } catch {
+        /* The next ask, or the stream, will do. */
+      }
+    };
+    const pollTimer = setInterval(() => void poll(), POLL_SCENE_MS);
+
     source.addEventListener("version", onVersion);
     source.addEventListener("reload", onReload);
     source.addEventListener("open", onOpen);
     source.addEventListener("error", onError);
-    source.addEventListener("idle", onIdle);
-    source.addEventListener("present", onPresent);
-    source.addEventListener("cancel", onCancel);
+    source.addEventListener("idle", onIdleHeard);
+    source.addEventListener("present", onPresentHeard);
+    source.addEventListener("cancel", onCancelHeard);
     return () => {
       stopped = true;
+      clearInterval(pollTimer);
       source?.removeEventListener("version", onVersion);
       source?.removeEventListener("reload", onReload);
       source?.removeEventListener("open", onOpen);
       source?.removeEventListener("error", onError);
-      source?.removeEventListener("idle", onIdle);
-      source?.removeEventListener("present", onPresent);
-      source?.removeEventListener("cancel", onCancel);
+      source?.removeEventListener("idle", onIdleHeard);
+      source?.removeEventListener("present", onPresentHeard);
+      source?.removeEventListener("cancel", onCancelHeard);
       source?.close();
     };
   }, [pairing.state]);
