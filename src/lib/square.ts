@@ -154,7 +154,12 @@ export interface SquarePayment {
    *  (seen in the sandbox, 2026-11-22). */
   terminal_checkout_id?: string;
   created_at?: string;
-  card_details?: { card?: { card_brand?: string; last_4?: string }; entry_method?: string };
+  card_details?: {
+    /** T297: `card_type` is CREDIT, DEBIT or UNKNOWN_CARD_TYPE, set once
+     *  the card is read (seen on an APPROVED sandbox payment). */
+    card?: { card_brand?: string; last_4?: string; card_type?: string; prepaid_type?: string };
+    entry_method?: string;
+  };
 }
 
 export interface SquareDeviceCode {

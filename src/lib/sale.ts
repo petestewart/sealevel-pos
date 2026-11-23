@@ -184,6 +184,26 @@ export async function catalogFor(
     `&request.locationId=${STUDIO_LOCATION_ID}` +
     `&request.limit=200`;
   const body = await mindbody(`/sale/products?${query}`);
+  return parseProducts(body);
+}
+
+/**
+ * T297: products by barcode id, whatever category they are in. Used for
+ * the card processing fee's product, which the studio may file anywhere
+ * and which never belongs on the shelf. Read-only.
+ */
+export async function productsByIds(
+  ids: readonly string[],
+): Promise<CatalogItem[]> {
+  if (ids.length === 0) return [];
+  const query =
+    ids.map((id) => `request.productIds=${encodeURIComponent(id)}`).join("&") +
+    `&request.locationId=${STUDIO_LOCATION_ID}&request.limit=20`;
+  const body = await mindbody(`/sale/products?${query}`);
+  return parseProducts(body).filter((p) => ids.includes(String(p.id)));
+}
+
+function parseProducts(body: any): CatalogItem[] {
   /* The first live sandbox run returned the same product twice (a product
    * can live in more than one of the queried categories), which duplicated
    * shelf rows and React keys. De-duplicate by id, keeping the FIRST row:

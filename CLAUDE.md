@@ -64,9 +64,17 @@ Manual card entry (T93's typed card, always its own tile since T283), Gift
 card, and Account last.
 `purchaseCredit` is kept, unreached, for Phase 4's gift card (PLAN
 T232). The design doc's "$10 card minimum" section is reasoning of record
-only. **A service charge on card transactions under $10 is planned, not
-built** (Pete, 2026-11-15; PLAN P15): until it is, a card is charged
-exactly the sale.
+only. **T297 (2026-11-23): a 2.6% card processing fee on card sales under
+$10** (Pete: "we already have a sign at the front desk stating that will
+happen"), on the card on file, Manual card entry and the reader alike,
+and NOT on a reader card Square reads as DEBIT. Mindbody takes no price
+on a cart line, so the fee is a retail product the studio creates at
+$0.01, tax exempt, sold at a quantity of cents (`POS_CARD_FEE_PRODUCT_ID`;
+unset, there is no fee; `src/lib/cardfee.ts`). The Cart screen adds and
+removes the line with the tender; `/api/checkout` refuses it anywhere
+else or at the wrong quantity; on reader debit it lowers the Square hold
+by the fee before the sale. Not on discounted, override, gift card,
+credit or T90 tickets. Driven against the fakes only.
 
 **Next (planned 2026-11-15, vendor changed 2026-11-21, not started):
 Phase 4, the studio's own card reader, a Square Terminal** driven through

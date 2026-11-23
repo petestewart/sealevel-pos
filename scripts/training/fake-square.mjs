@@ -13,11 +13,12 @@
  *   GET  /v2/payments/:id
  *   POST /v2/payments/:id/complete         APPROVED only
  *   POST /v2/payments/:id/cancel           APPROVED only
+ *   PUT  /v2/payments/:id                  lower amount_money, APPROVED only
  *   GET  /v2/locations/:id
  *
  * The test's hands, not part of any Square API:
  *   POST /__fake/pair?code=ABCDEF          the code typed on the Terminal
- *   POST /__fake/tap?checkout=<id>&outcome=approve|decline|buyer-cancel|complete
+ *   POST /__fake/tap?checkout=<id>&outcome=approve|decline|buyer-cancel|complete[&card=debit]
  *        approve leaves an APPROVED payment when autocomplete is false
  *        (the checkout reads COMPLETED, as Square's does); complete takes
  *        the money at the tap, which this app must treat as a problem
@@ -59,7 +60,7 @@ function failFor(path) {
   return fails[i].status;
 }
 
-function approve(c, completeAtTap = false) {
+function approve(c, completeAtTap = false, cardType = "CREDIT") {
   const pid = `pay_${randomUUID().slice(0, 12)}`;
   const auto = c.payment_options?.autocomplete !== false;
   payments.set(pid, {
@@ -70,7 +71,7 @@ function approve(c, completeAtTap = false) {
     reference_id: c.reference_id,
     terminal_checkout_id: c.id,
     note: c.note,
-    card_details: { status: "AUTHORIZED", card: { card_brand: "VISA", last_4: "4242" } },
+    card_details: { status: "AUTHORIZED", card: { card_brand: "VISA", last_4: "4242", card_type: cardType } },
     created_at: now(),
   });
   c.status = "COMPLETED";
@@ -107,7 +108,8 @@ const server = createServer(async (req, res) => {
       const c = checkouts.get(q.get("checkout") ?? "");
       if (!c) return send(res, 404, { error: "no such checkout" });
       const outcome = q.get("outcome") ?? "approve";
-      if (outcome === "approve") return send(res, 200, { payment_id: approve(c) });
+      const cardType = q.get("card") === "debit" ? "DEBIT" : "CREDIT";
+      if (outcome === "approve") return send(res, 200, { payment_id: approve(c, false, cardType) });
       if (outcome === "complete") return send(res, 200, { payment_id: approve(c, true) });
       if (outcome === "buyer-cancel") {
         c.status = "CANCELED";
@@ -215,6 +217,18 @@ const server = createServer(async (req, res) => {
   if (req.method === "GET" && (m = path.match(/^\/v2\/payments\/([^/]+)$/))) {
     const p = payments.get(m[1]);
     if (!p) return err(res, 404, "NOT_FOUND", "Payment not found");
+    return send(res, 200, { payment: p });
+  }
+  if (req.method === "PUT" && (m = path.match(/^\/v2\/payments\/([^/]+)$/))) {
+    /* T297: UpdatePayment, the amount LOWERED before completion. */
+    const p = payments.get(m[1]);
+    if (!p) return err(res, 404, "NOT_FOUND", "Payment not found");
+    if (p.status !== "APPROVED") return err(res, 400, "BAD_REQUEST", `Payment is ${p.status}`);
+    const amt = body?.payment?.amount_money?.amount;
+    if (typeof amt !== "number" || amt <= 0 || amt > p.amount_money.amount) {
+      return err(res, 400, "BAD_REQUEST", "amount_money may only be lowered");
+    }
+    p.amount_money = { ...p.amount_money, amount: amt };
     return send(res, 200, { payment: p });
   }
   if (req.method === "POST" && (m = path.match(/^\/v2\/payments\/([^/]+)\/(complete|cancel)$/))) {

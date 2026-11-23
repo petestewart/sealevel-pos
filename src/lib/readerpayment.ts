@@ -591,7 +591,13 @@ async function completePayment(env: ReaderEnv, id: string): Promise<SquarePaymen
 }
 
 export type ClaimResult =
-  | { ok: true; row: ReaderPaymentRow; mindbodyPaymentId: string }
+  | {
+      ok: true;
+      row: ReaderPaymentRow;
+      mindbodyPaymentId: string;
+      /** T297: what Square read the card as (CREDIT, DEBIT, ...), or null. */
+      cardType: string | null;
+    }
   | { ok: false; error: string };
 
 /**
@@ -673,7 +679,62 @@ export async function claimHold(input: {
     return { ok: false, error: "This card reader hold was taken by another request. Nothing was charged." };
   }
   console.log(`[reader] ${moved.id} selling payment=${moved.paymentId} amount=${moved.amountCents}`);
-  return { ok: true, row: moved, mindbodyPaymentId: env.mindbodyPaymentId };
+  return {
+    ok: true,
+    row: moved,
+    mindbodyPaymentId: env.mindbodyPaymentId,
+    cardType: payment.card_details?.card?.card_type ?? null,
+  };
+}
+
+/**
+ * T297: take the card fee off a debit card's hold. Square lets an
+ * APPROVED payment's amount be LOWERED before it is completed (PUT
+ * /v2/payments/{id}, probed in the sandbox 2026-11-23: 566 -> 552), so
+ * the student is charged the sale without the fee and nothing is
+ * refunded later. Only ever down, only from `selling` (this checkout's
+ * own claim), and the row is moved to the new amount so the sale lookup
+ * and the Sales log match it.
+ *
+ * Answers `lowered` (Square holds the new amount), `kept` (Square still
+ * holds the old one: sell WITH the fee, as the sign says) or `unknown`
+ * (Square's answer could not be read either way: the caller releases the
+ * hold rather than sell against an amount nobody knows).
+ */
+export async function lowerHold(
+  row: ReaderPaymentRow,
+  newCents: number,
+): Promise<{ kind: "lowered"; row: ReaderPaymentRow } | { kind: "kept" | "unknown"; why: string }> {
+  const env = readerEnv();
+  if ("missing" in env || !row.paymentId) return { kind: "kept", why: "no payment to lower" };
+  if (!(newCents > 0 && newCents < row.amountCents)) return { kind: "kept", why: "not lower" };
+  let amount: number | undefined;
+  try {
+    const r = await square<{ payment: SquarePayment }>(
+      `/v2/payments/${encodeURIComponent(row.paymentId)}`,
+      {
+        method: "PUT",
+        body: {
+          idempotency_key: squareKey(row.id, "fee", String(newCents)),
+          payment: { amount_money: { amount: newCents, currency: "USD" } },
+        },
+      },
+      env,
+    );
+    amount = r.payment?.amount_money?.amount;
+  } catch (err) {
+    try {
+      amount = (await getPayment(env, row.paymentId)).amount_money?.amount;
+    } catch {
+      return { kind: "unknown", why: `Square did not answer: ${String(err)}` };
+    }
+  }
+  if (amount === row.amountCents) return { kind: "kept", why: "Square kept the amount" };
+  if (amount !== newCents) return { kind: "unknown", why: `Square reads ${amount ?? "nothing"}` };
+  const moved = await transitionReaderPayment(row.id, ["selling"], "selling", { amountCents: newCents });
+  const next = moved === null || moved === "unavailable" ? { ...row, amountCents: newCents } : moved;
+  console.log(`[reader] ${row.id} debit card: fee taken off, ${row.amountCents} -> ${newCents}`);
+  return { kind: "lowered", row: next };
 }
 
 /**

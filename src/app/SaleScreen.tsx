@@ -23,6 +23,7 @@ import ReaderWait from "./ReaderWait";
 import { useReaderPayment } from "./useReaderPayment";
 import { useTenderPick, type TenderPick } from "./useTenderPick";
 import { cancelOnDisplay, presenterId } from "./presenter";
+import { cardFeeCents, cardFeeWords, type CardFeeRule } from "@/lib/cardfee";
 import type { TypedCard } from "@/lib/typedcard";
 import {
   TENDER_CHOICES,
@@ -344,6 +345,36 @@ interface ShelfItem {
   /** T74: a pass's sub-category label (the shelf config's group), null
    *  when ungrouped. Absent on products and packages. */
   group?: string | null;
+  /** T297: this is the card processing fee's product, sold at a quantity
+   *  of cents. Set only on the item /api/catalog serves as `cardFee`. */
+  cardFee?: true;
+}
+
+/** T297: the card fee as /api/catalog serves it, or null when it is off. */
+interface CardFeeOffer {
+  item: ShelfItem;
+  rule: CardFeeRule;
+}
+
+/** T297: is this line the card processing fee? It is put on and taken
+ *  off by the Cart screen, never by a tap, and it is never counted as an
+ *  item. */
+function isCardFeeLine(line: CartEntry): boolean {
+  return (line.item as ShelfItem).cardFee === true;
+}
+
+/** T297: the ticket's lines that are not the card fee, as a string, so an
+ *  effect about the ticket's CONTENTS does not fire when the fee moves. */
+function ticketContentKey(cart: readonly CartEntry[]): string {
+  return cart
+    .filter((l) => !isCardFeeLine(l))
+    .map((l) => `${l.key}*${l.quantity}@${l.item.price}#${String(l.item.id)}`)
+    .join("|");
+}
+
+/** T297: how many ITEMS a ticket holds: the fee is not one. */
+function itemCountOf(cart: readonly CartEntry[]): number {
+  return cart.reduce((n, l) => (isCardFeeLine(l) ? n : n + l.quantity), 0);
 }
 
 /**
@@ -425,6 +456,8 @@ interface CatalogState {
   categories: ShelfCategory[];
   bundles: ShelfBundle[];
   products: ShelfItem[];
+  /** T297: the card processing fee, or null when it is off. */
+  cardFee: CardFeeOffer | null;
   passes: ShelfItem[];
   /** T30: packages ride the cart like any shelf item. */
   packages: ShelfItem[];
@@ -537,6 +570,23 @@ function readFavPairs(parsed: unknown): FavPair[] {
     : [];
 }
 
+/** T297: /api/catalog's `cardFee`, or null when it is off or malformed. */
+function readCardFee(raw: any): CardFeeOffer | null {
+  const item = raw?.item;
+  if (
+    !item ||
+    (typeof item.id !== "string" && typeof item.id !== "number") ||
+    typeof raw?.rate !== "number" ||
+    typeof raw?.underCents !== "number"
+  ) {
+    return null;
+  }
+  return {
+    item: { ...(item as ShelfItem), type: "Product", cardFee: true },
+    rule: { productId: String(item.id), rate: raw.rate, underCents: raw.underCents },
+  };
+}
+
 /** Same key shape the cart uses, so an item is one identity everywhere. */
 function itemKey(type: string, id: string | number): string {
   return `${type}-${id}`;
@@ -549,6 +599,7 @@ function parseCatalog(body: any): CatalogState {
     categories: body?.categories ?? [],
     bundles: body?.bundles ?? [],
     products: body?.products ?? [],
+    cardFee: readCardFee(body?.cardFee),
     passes: body?.passes ?? [],
     packages: body?.packages ?? [],
     contracts: body?.contracts ?? [],
@@ -1242,7 +1293,16 @@ function lineSubName(line: CartEntry): string | null {
  * besides.
  */
 function displayTicketLines(cart: readonly CartEntry[]): TicketLine[] {
-  return cart.map((line) => ({
+  return cart.map((line) =>
+    /* T297: the fee is one line of its amount, never "23 x $0.01". */
+    isCardFeeLine(line)
+      ? {
+          name: line.item.name,
+          quantity: 1,
+          unitPrice: roundToCents(line.item.price * line.quantity),
+          linePrice: roundToCents(line.item.price * line.quantity),
+        }
+      : {
     name: lineNameOnly(line),
     quantity: line.quantity,
     unitPrice: line.item.price,
@@ -1250,7 +1310,7 @@ function displayTicketLines(cart: readonly CartEntry[]): TicketLine[] {
      * derives it from the catalog's unit price. Every TOTAL below is
      * Mindbody's own. */
     linePrice: roundToCents(line.item.price * line.quantity),
-  }));
+  });
 }
 
 /**
@@ -1362,6 +1422,12 @@ interface PricedResult {
    *  before the tap. Never a browser estimate: a cart Mindbody could not
    *  price carries a null grandTotal and the sentence says so. */
   carts?: { forClientId: string | null; grandTotal: number | null }[];
+  /** T297: set by the Cart screen, not the route: the card fee's quantity
+   *  (cents) on the cart this answer priced, and that cart's contents
+   *  without the fee, so the fee is only ever judged against the pricing
+   *  of the ticket on screen. */
+  feeCents?: number;
+  contentKey?: string;
   /** T220: what became of the promotion code this pricing carried
    *  (src/lib/promocode.ts PromotionOutcome). Applied means the totals
    *  above are the coded cart's, Mindbody's own; not applied means they
@@ -2470,6 +2536,13 @@ function PaymentPanel(props: {
   /** T289: the card reader declined the card (or null again), reported
    *  up for the live mirror, as the tender is. */
   onReaderNote: (note: "waiting" | "declined" | null) => void;
+  /** T297: whether the tender is ONE card (on file, typed, the reader),
+   *  so SaleScreen puts the card fee on the ticket; "frozen" while a
+   *  charge or an approval holds the ticket still, so nothing moves. */
+  onFeeTender: (state: "card" | "none" | "frozen") => void;
+  /** T297: why Finalize must wait for the card fee (it is being put on,
+   *  taken off or priced), or null when the fee is settled. */
+  cardFeeWait: string | null;
   /** T241: the ways to pay the student may switch to on the display,
    *  reported up for the live mirror. Null for none. */
   onChoicesChange: (choices: TenderOffer[] | null) => void;
@@ -3304,6 +3377,9 @@ function PaymentPanel(props: {
    * the new one would let the Charge button fire on numbers nobody chose.
    * Comp survives, as it always has: it is a gesture about the whole sale,
    * and the button restates whatever the fresh total turns out to be. */
+  /* T297: keyed on the ticket's CONTENTS: the card fee coming and going
+   * follows the tender, and must not clear the tender that put it there. */
+  const contentKey = ticketContentKey(cart);
   useEffect(() => {
     if (cart.length === 0) return;
     setResult((r) => (r?.kind === "paid" ? null : r));
@@ -3324,7 +3400,8 @@ function PaymentPanel(props: {
     approvalAbandon(
       "The ticket changed. Charge again to ask the customer.",
     );
-  }, [cart, dismissPad, approvalAbandon]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contentKey, dismissPad, approvalAbandon]);
 
   /* T220: a promotion code arriving or leaving changes what Mindbody
    * charges, so it is a ticket edit like any other: the customer's
@@ -3676,6 +3753,21 @@ function PaymentPanel(props: {
       return [{ ...only, cents: target }];
     });
   }, [totalCents, balanceCents, giftCard, wholeFrozen]);
+
+  /* T297: one card line is what carries the card fee. Frozen exactly
+   * when the whole line is, since that tender is the one being charged. */
+  const feeTender: "card" | "none" | "frozen" = wholeFrozen
+    ? "frozen"
+    : lines.length === 1 &&
+        (lines[0]?.source === "storedcard" ||
+          lines[0]?.source === "typedcard" ||
+          lines[0]?.source === "reader")
+      ? "card"
+      : "none";
+  const { onFeeTender } = props;
+  useEffect(() => {
+    onFeeTender(feeTender);
+  }, [feeTender, onFeeTender]);
 
   /* T94: an authorized overdraft belongs to a LINE and to an AMOUNT.
    * Whatever removed that line or changed that figure -- its x, Cancel,
@@ -4112,6 +4204,8 @@ function PaymentPanel(props: {
 
   const chargeable =
     cart.length > 0 &&
+    /* T297: never while the card fee is being put on or priced. */
+    props.cardFeeWait === null &&
     /* T95 review: never again on a ticket that was partly sold. */
     partialLock === null &&
     !pricing &&
@@ -5105,7 +5199,7 @@ function PaymentPanel(props: {
         : { ...tender, ...overdraftField };
     const isSplit = "split" in payment;
     /* For the done block (T39.7); the cart is gone by the time it renders. */
-    const itemCount = cart.reduce((n, l) => n + l.quantity, 0);
+    const itemCount = itemCountOf(cart);
     const changeAtTap = changeCents;
     /* T53: the address the receipt was asked for, captured at the tap
      * like the count: the lookup may refetch before the done block
@@ -5589,6 +5683,11 @@ function PaymentPanel(props: {
             /* T227: a reader sale whose money-taking had not answered yet,
                or that Square refused, says so where the teacher looks. */
             typeof body?.reader?.warning === "string" ? body.reader.warning : null,
+            /* T297: the reader read a debit card, so the card fee came
+               off before the sale. */
+            typeof body?.cardFeeWaived === "number"
+              ? `Debit card: no card fee (${money(body.cardFeeWaived)} taken off).`
+              : null,
             /* T90: a ticket that became more than one Mindbody sale
                lists every one of them, with whose it was; a single-sale
                ticket reads exactly as it always did. */
@@ -11289,7 +11388,7 @@ export default function SaleScreen(props: {
     setOverrideAsk(null);
     /* From nobody: keep silently, per the rule above. */
     if (prev === null) return;
-    const count = cartRef.current.reduce((n, l) => n + l.quantity, 0);
+    const count = itemCountOf(cartRef.current);
     if (count === 0) return;
     setCartPrompt({ count, toName: client?.name ?? null });
   }, [client]);
@@ -11828,6 +11927,9 @@ export default function SaleScreen(props: {
      * cart may be priced with. The cards' share is not Mindbody's to
      * price: it comes off each card's own payment at checkout. */
     const cartShare = ticketDiscountParts(cart, discount).cartShare;
+    /* T297: which ticket, and which fee, this answer is about. */
+    const pricedContentKey = ticketContentKey(cart);
+    const pricedFeeCents = cart.find(isCardFeeLine)?.quantity ?? 0;
     const timer = setTimeout(async () => {
       try {
         const res = await fetch("/api/price-cart", {
@@ -11942,7 +12044,11 @@ export default function SaleScreen(props: {
           }
           throw new Error(body?.error ?? `HTTP ${res.status}`);
         }
-        setPriced(body as PricedResult);
+        setPriced({
+          ...(body as PricedResult),
+          feeCents: pricedFeeCents,
+          contentKey: pricedContentKey,
+        });
         /* T220: a code Mindbody refused, or took nothing off for. The
          * totals just set are already the ticket WITHOUT it (or equal to
          * it); the code leaves, with Mindbody's own sentence. */
@@ -11989,6 +12095,65 @@ export default function SaleScreen(props: {
     );
     if (!held) setOverride(null);
   }, [cart, override]);
+
+  /* T297: the card processing fee. It is on the ticket exactly while the
+   * tender is ONE card and the sale without it is under the floor, at the
+   * rule's cents, judged against Mindbody's own pricing of THIS ticket
+   * (never a stale answer: `contentKey`), and taken off the moment the
+   * tender, the contents or the total say otherwise. Not on a discounted
+   * ticket, an override, a gift card, account credit or a line for
+   * someone else, which /api/checkout refuses in the same words. While a
+   * charge or an approval holds the ticket the fee does not move. */
+  const [feeTender, setFeeTender] = useState<"card" | "none" | "frozen">("none");
+  const feeOffer = catalog?.cardFee ?? null;
+  const feeHave = cart.find(isCardFeeLine)?.quantity ?? 0;
+  const feeContentKey = ticketContentKey(cart);
+  const feeOthers = cart.filter((l) => !isCardFeeLine(l));
+  const feeAllowed =
+    feeOffer !== null &&
+    feeTender === "card" &&
+    feeOthers.length > 0 &&
+    armedDiscount === null &&
+    override === null &&
+    !feeOthers.some((l) => isOffCartLine(l) || (l.forClient ?? null) !== null);
+  const feeWant: number | null = !feeAllowed
+    ? 0
+    : priced === null ||
+        priced.contentKey !== feeContentKey ||
+        priced.feeCents === undefined ||
+        priced.needsClient === true ||
+        priced.disagrees
+      ? null
+      : (() => {
+          const totalNow = priced.suppressed ? priced.expectedTotal : priced.grandTotal;
+          if (totalNow === null) return null;
+          return cardFeeCents(
+            Math.round(totalNow * 100) - (priced.feeCents ?? 0),
+            (feeOffer as CardFeeOffer).rule,
+          );
+        })();
+  useEffect(() => {
+    if (feeTender === "frozen") return;
+    if (feeWant === null || feeWant === feeHave) return;
+    setCart((c) => {
+      const without = c.filter((l) => !isCardFeeLine(l));
+      if (feeWant === 0 || feeOffer === null) return without;
+      return [
+        ...without,
+        {
+          key: cartKey(feeOffer.item, null),
+          item: feeOffer.item,
+          quantity: feeWant,
+        },
+      ];
+    });
+  }, [feeTender, feeWant, feeHave, feeOffer]);
+  const cardFeeWait =
+    feeTender === "frozen"
+      ? null
+      : (feeWant === null && feeAllowed) || (feeWant !== null && feeWant !== feeHave)
+        ? "Adding the card fee"
+        : null;
 
   /**
    * T92 (Pete: "when this is attempted, a popup should appear with an
@@ -12859,7 +13024,7 @@ export default function SaleScreen(props: {
     };
   }, [cart, open, measureLines]);
 
-  const cartCount = cart.reduce((n, l) => n + l.quantity, 0);
+  const cartCount = itemCountOf(cart);
   /**
    * T39.5: the shelf's Pay, the cart column's foot since T85. Since T82
    * the button's face is the word alone and the amount is in its title,
@@ -14755,6 +14920,8 @@ export default function SaleScreen(props: {
             onDisplaySummary={onDisplaySummary}
             onTenderChange={setLiveTenders}
             onReaderNote={setLiveReaderNote}
+            onFeeTender={setFeeTender}
+            cardFeeWait={cardFeeWait}
             onChoicesChange={setLiveChoices}
             pickInbox={pickInbox}
             mirrorRequestId={mirror.requestId}
@@ -15026,7 +15193,26 @@ export default function SaleScreen(props: {
                   className={hiddenBelow > 0 ? "t-lines-wrap more" : "t-lines-wrap"}
                 >
                 <div className="t-lines" ref={linesRef} onScroll={measureLines}>
-                {cart.map((line) => (
+                {cart.map((line) => isCardFeeLine(line) ? (
+                  /* T297: the card fee is put on by the tender, not by a
+                     tap, so its row has no controls, no swipe and no
+                     quantity: one line with its amount and the rule. */
+                  <div className="t-row t-row-fee" key={line.key}>
+                    <div className="t-row-main">
+                      <div className="t-line">
+                        <span className="t-name">{line.item.name}</span>
+                        <span className="amt">
+                          {money(line.item.price * line.quantity)}
+                        </span>
+                      </div>
+                      {catalog?.cardFee ? (
+                        <div className="t-sub-line t-sub-name">
+                          {cardFeeWords(catalog.cardFee.rule)}
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : (
                   /* T82: every line carries its controls. The row is not
                      a tap target at all any more (it was a div with the
                      button role, because a <button> may not contain the

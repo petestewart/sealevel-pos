@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 
+import { CARD_FEE_METHODS, cardFeeCents, cardFeeEnv } from "@/lib/cardfee";
+
 import {
   actorFields,
   type ActorFallback,
@@ -38,7 +40,7 @@ import {
 } from "@/lib/approval";
 import { cartSha256 } from "@/lib/cartsha";
 import { READER_OFF_SENTENCE, cardReaderEnabled } from "@/lib/cardreader";
-import { cancelAttempt, captureHold, claimHold, findSaleForHold, markUnresolved, releaseHold } from "@/lib/readerpayment";
+import { cancelAttempt, captureHold, claimHold, findSaleForHold, lowerHold, markUnresolved, releaseHold } from "@/lib/readerpayment";
 import { findReaderPayment } from "@/lib/db";
 import { currentShelfConfig } from "@/lib/catalog";
 import {
@@ -1554,6 +1556,45 @@ async function runCheckout(
       },
       { status: 409 },
     );
+  }
+  /* T297: a card processing fee line is the card fee and nothing else.
+   * It is sold only on a plain one-cart ticket paid by ONE card (on file,
+   * typed, or the reader), with no discount, override, gift card, account
+   * credit or line for someone else, and only when the server's own rule
+   * is on and the line is $0.01 tax exempt. Refused here, before any
+   * Mindbody call, in words; the quantity is checked against Mindbody's
+   * own total after the rehearsal. */
+  const feeRule = cardFeeEnv();
+  const feeLines = items.filter(
+    (l) => l.type === "Product" && feeRule !== null && String(l.metadataId) === feeRule.productId,
+  );
+  if (feeLines.length > 0) {
+    const feeWhy =
+      feeLines.length > 1
+        ? "the fee is on the ticket twice"
+        : feeLines.some((l) => Math.round(l.price * 100) !== 1 || !l.taxExempt)
+          ? "the fee product is not $0.01 and tax exempt"
+          : split !== null
+            ? "a split payment does not carry the fee"
+            : typeof method !== "string" || !(CARD_FEE_METHODS as readonly string[]).includes(method)
+              ? "only a card payment carries the fee"
+              : discount !== null || override !== null
+                ? "a discounted ticket does not carry the fee"
+                : giftLines.length > 0 || creditAsk
+                  ? "a gift card or account credit ticket does not carry the fee"
+                  : items.some((l) => l.forClientId)
+                    ? "a ticket with a line for someone else does not carry the fee"
+                    : null;
+    if (feeWhy !== null) {
+      return NextResponse.json(
+        {
+          error: `The card processing fee cannot go on this sale: ${feeWhy}. Take the fee off and charge again. Nothing was charged.`,
+          stage: "method",
+          reason: "cardfee",
+        },
+        { status: 409 },
+      );
+    }
   }
   /* T102: `full` is the CART's 100% case, the one that sends method comp
    * and no tender. A gift card ticket never reaches it: method comp is
@@ -4663,6 +4704,32 @@ async function runCheckout(
     );
   }
   const total = priced.grandTotal;
+  /* T297: the fee line's quantity must be the fee on what the sale costs
+   * WITHOUT it, by the same rule the ticket used. The line is $0.01 tax
+   * exempt (checked above), so the sale without it is the total less its
+   * quantity in cents. A ticket priced before the total moved is refused
+   * rather than charged a fee nobody saw. */
+  const feeLine = feeLines[0];
+  if (feeLine !== undefined && feeRule !== null) {
+    const totalCentsNow = Math.round(total * 100);
+    const want = cardFeeCents(totalCentsNow - feeLine.quantity, feeRule);
+    if (want !== feeLine.quantity) {
+      console.warn(
+        `[card-fee] refused: line ${feeLine.quantity}c, rule ${want}c on ${(totalCentsNow - feeLine.quantity) / 100}`,
+      );
+      return NextResponse.json(
+        {
+          error:
+            want === 0
+              ? "This sale is not under the card fee's floor, so it carries no fee. Take the fee off and charge again. Nothing was charged."
+              : `The card processing fee on this sale is $${(want / 100).toFixed(2)}, not $${(feeLine.quantity / 100).toFixed(2)}. Nothing was charged; charge again.`,
+          stage: "rehearsal",
+          reason: "cardfee",
+        },
+        { status: 409 },
+      );
+    }
+  }
 
   /* T49: the ids a real sale is answered with. `cartId` is
    * ShoppingCart.Id, the GUID every path has always answered as
@@ -5516,6 +5583,60 @@ async function runCheckout(
         );
       }
       const attemptId = claim.row.id;
+      /* T297: Pete, "Skip on reader debit". Square read the card at the
+       * tap; a DEBIT card pays no card fee. The fee comes off the ticket
+       * here, the sale without it is rehearsed again (Mindbody's figure,
+       * never ours), and the hold is LOWERED to that figure before the
+       * sale, so nothing is refunded later. Any doubt keeps the fee, as
+       * the sign says, except a Square answer nobody can read, which
+       * releases the hold rather than sell against an unknown amount. */
+      let saleItems = items;
+      let saleTotal = total;
+      let holdRow = claim.row;
+      let feeWaivedCents = 0;
+      if (feeLine !== undefined && claim.cardType === "DEBIT") {
+        const without = items.filter((l) => l !== feeLine);
+        let plain: Awaited<ReturnType<typeof rehearseCheckout>> | null = null;
+        try {
+          plain =
+            promotionCode !== null
+              ? await priceCartWithPromotion(without, saleClientId, null, promotionCode).then(
+                  (j) => (j.promotion.applied ? j.priced : null),
+                )
+              : await rehearseCheckout(without, saleClientId, null);
+        } catch (err) {
+          console.warn(`[card-fee] ${claim.row.id} debit: the rehearsal without the fee failed, fee kept: ${errMessage(err)}`);
+        }
+        const plainCents =
+          plain && !plain.suppressed && !plain.disagrees && plain.grandTotal !== null
+            ? Math.round(plain.grandTotal * 100)
+            : null;
+        if (plainCents !== null && plainCents === Math.round(total * 100) - feeLine.quantity) {
+          const lowered = await lowerHold(claim.row, plainCents);
+          if (lowered.kind === "lowered") {
+            saleItems = without;
+            saleTotal = plainCents / 100;
+            holdRow = lowered.row;
+            feeWaivedCents = feeLine.quantity;
+          } else if (lowered.kind === "unknown") {
+            console.warn(`[card-fee] ${claim.row.id} debit: ${lowered.why}; hold released`);
+            await releaseHold(claim.row.id, "Square did not confirm the amount without the card fee. The card was not charged.");
+            return NextResponse.json(
+              {
+                error: "Square did not confirm the amount for a debit card. The card was not charged. Run it again.",
+                stage: "reader",
+                reason: "reader",
+                readerReleased: true,
+              },
+              { status: 409 },
+            );
+          } else {
+            console.warn(`[card-fee] ${claim.row.id} debit: ${lowered.why}; fee kept`);
+          }
+        } else if (plainCents !== null) {
+          console.warn(`[card-fee] ${claim.row.id} debit: without the fee Mindbody priced ${plainCents}c, not ${Math.round(total * 100) - feeLine.quantity}c; fee kept`);
+        }
+      }
       const cardTail = {
         reader: {
           attemptId,
@@ -5527,9 +5648,9 @@ async function runCheckout(
       try {
         run = await runAsActor(session, "/api/checkout", (actor) =>
           checkoutCart(
-            items,
+            saleItems,
             saleClientId,
-            { type: "Custom", amount: total, id: claim.mindbodyPaymentId },
+            { type: "Custom", amount: saleTotal, id: claim.mindbodyPaymentId },
             actor,
             sendEmail,
             discount,
@@ -5543,7 +5664,7 @@ async function runCheckout(
            * and the money is taken exactly as for a sale that answered. */
           for (let tries = 0; tries < 5; tries++) {
             await new Promise((r) => setTimeout(r, 5000));
-            const found = await findSaleForHold(claim.row);
+            const found = await findSaleForHold(holdRow);
             if (found.saleId !== null) {
               const captured = await captureHold(attemptId, found.saleId);
               const state = captured?.state ?? "sold";
@@ -5553,7 +5674,7 @@ async function runCheckout(
                 saleId: found.saleId,
                 cartId: null,
                 suppressed: false,
-                paid: total,
+                paid: saleTotal,
                 shape: "lines",
                 onStudio: discounted,
               });
@@ -5563,7 +5684,9 @@ async function runCheckout(
               return NextResponse.json({
                 ok: true,
                 method: m,
-                total,
+                total: saleTotal,
+                /* T297: a debit card on the reader paid no card fee. */
+                ...(feeWaivedCents > 0 ? { cardFeeWaived: feeWaivedCents / 100 } : {}),
                 saleId: found.saleId,
                 cartId: null,
                 receiptRequested: sendEmail,
@@ -5614,7 +5737,7 @@ async function runCheckout(
           saleId: null,
           cartId: null,
           suppressed: true,
-          paid: total,
+          paid: saleTotal,
           shape: "lines",
           onStudio: discounted,
         });
@@ -5628,7 +5751,7 @@ async function runCheckout(
         });
       }
       const ids = await saleIds(outcome.saleId);
-      const verdict = basketVerdict(items, outcome, ids.purchasedItems, ids.saleId);
+      const verdict = basketVerdict(saleItems, outcome, ids.purchasedItems, ids.saleId);
       if (verdict !== null && !verdict.ok) {
         /* T103 on the reader: the sale holds none of the ticket. Unlike
          * every other tender the money has NOT moved, so the hold is
@@ -5658,14 +5781,16 @@ async function runCheckout(
       const rec = await recordDiscount({
         ...ids,
         suppressed: false,
-        paid: total,
+        paid: saleTotal,
         shape: "lines",
         onStudio: discounted,
       });
       return NextResponse.json({
         ok: true,
         method: m,
-        total,
+        total: saleTotal,
+        /* T297: a debit card on the reader paid no card fee. */
+        ...(feeWaivedCents > 0 ? { cardFeeWaived: feeWaivedCents / 100 } : {}),
         saleId: ids.saleId,
         cartId: ids.cartId,
         receiptRequested: sendEmail,
