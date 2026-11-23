@@ -83,7 +83,7 @@ export interface TicketPayload {
   /** T289 (Pete: "A line like 'Card declined, please try another card'
    *  would help." "yeah add that"): the card reader declined the card.
    *  Live only, and a key, never words: the display says it in its own. */
-  readerNote?: "declined";
+  readerNote?: "waiting" | "declined";
   /** Summary only: what was charged, and whether a receipt was
    *  CONFIRMED emailed (null when none was asked for). */
   charged?: number;
@@ -373,8 +373,10 @@ export function readTicketPayload(
     if (typeof choices === "string") return { ok: false, error: choices };
     if (choices.length > 0) out.choices = choices;
   }
-  if (mode === "live" && raw.readerNote === "declined") {
-    out.readerNote = "declined";
+  /* T296: "waiting" is the Terminal asking for the card, which starts
+   * only at the teacher's Finalize Sale. */
+  if (mode === "live" && (raw.readerNote === "declined" || raw.readerNote === "waiting")) {
+    out.readerNote = raw.readerNote;
   }
   if (mode === "summary") {
     const charged = money(raw.charged);

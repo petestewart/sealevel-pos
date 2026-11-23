@@ -10203,3 +10203,19 @@ button.display-mark-row {
 .pay-tile.off .pay-tile-mark {
   opacity: 0.5;
 }
+
+/* T296: the accepted marks under the reader's tap line on the customer
+ * screen, one colour (the text's), as every glyph here is. */
+.dticket-accepted {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-top: 12px;
+}
+
+.dticket-mark {
+  width: 48px;
+  height: 48px;
+  margin: 0 20px 8px 0;
+  color: var(--ink);
+}
