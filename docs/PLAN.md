@@ -1128,6 +1128,47 @@ which needs nothing afterwards.
   reader's own time-out cancels the same way. Seen against the fakes:
   a tap then Cancel, and a Cancel that loses the race to a tap; both
   ended with the payment CANCELED in Square and those words on screen.
+- [x] **T288 The Sales log settles what it can.** Built 2026-11-22
+  (Pete, with the Sales log showing a red "Square took $1.00 ... that no
+  sale on this counter knows about" and a 10:14 AM "May have gone
+  through": "how do we avoid/fix this"). The $1.00 was his own charge in
+  Square's Dashboard for its fee-free offer, and the 10:14 tap was his
+  $2.99 walk-in Mat Rental test, which Mindbody shows no sale for (read
+  live: no Mat Rental after 7:47 AM). (1) A Square payment that is not
+  this app's (no attempt-id `reference_id`, no `terminal_checkout_id`,
+  both seen on a sandbox Terminal payment) is kind `outside` and said
+  quietly, never as a problem. (2) The check (daily and "Check now")
+  looks up an `ambiguous` or no-answer tap in Mindbody 15 minutes after
+  it, READS ONLY: a sale for someone on the ticket (or the walk-in
+  client), from two minutes before to fifteen after, holding every line,
+  paid the total when known, and not claimed by another row, is `found`
+  ("Went through"); none is `not-sold` ("Checked: no sale in
+  Mindbody"). Either settles the row off "Only problems". Gift cards and
+  credit are not looked up ("check Mindbody"). Seen against the fakes:
+  an outside $1.00, a found tap and a not-sold tap.
+- [x] **T289 The customer screen on the card reader.** Built 2026-11-22
+  (Pete, on screenshots of it: "'Paying by Card reader' seems
+  unneccessary", and of a decline line, "yeah add that"). With the
+  reader as the tender the live ticket shows only "Tap, insert or hold
+  your phone to the card reader." (every other way to pay is still
+  named, T240), and a card the reader declined replaces it with "Card
+  declined. Please try another card." until the tender changes or the
+  next attempt starts. The payload carries a KEY, `readerNote:
+  "declined"`, live only, rebuilt by `readTicketPayload`; the words are
+  the display's own. The attempt view says `declined` when the row was
+  cancelled for a declined card, not for a teacher's Cancel. Answered
+  the same day: the student's Change list is dynamic (the tiles' own
+  `addReason(source, true)`), so no card on file means no "Card on
+  file" there. Not built, offered: Card reader in that list. Seen
+  against the fakes: chosen, waiting, declined.
+- [x] **T290 The customer screen opens full screen on an older iPad.**
+  Built 2026-11-23 (Pete: the studio's customer iPad, "old iPad", opened
+  its Home Screen icon with Safari's address bar). Next 15.5 writes only
+  `mobile-web-app-capable` for `appleWebApp.capable`; older iPadOS reads
+  only Apple's `apple-mobile-web-app-capable`, so the root layout now
+  sends both (`other`), and `src/app/display/layout.tsx` repeats it and
+  names the icon "Customer Screen". Checked in the built HTML of `/` and
+  `/display`. Not yet seen on that iPad: re-add the icon after deploy.
 - [ ] **T237 Hardware day.** Buy and pair the Terminal, the production
   token, `POS_READER_LIVE=true`. **Never `POS_WRITE_CLIENT_IDS` while the
   studio is open**: it suppresses every write for every other client,

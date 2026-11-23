@@ -41,7 +41,7 @@ export interface ReaderView {
 
 export type HoldResult =
   | { ok: true; attemptId: string; cardBrand: string | null; lastFour: string | null }
-  | { ok: false; message: string; unknown: boolean };
+  | { ok: false; message: string; unknown: boolean; declined?: boolean };
 
 const POLL_MS = 1000;
 /** A little over the server's own 90 second wait for a card, so the
@@ -200,6 +200,7 @@ export function useReaderPayment() {
                   ? `Cancelled. Square confirmed nothing was charged.${tapped}`
                   : String(a.words),
               unknown: false,
+              declined: a.declined === true && !cancelled.current,
             };
           } else if (a.state === "unresolved") {
             setView(null);

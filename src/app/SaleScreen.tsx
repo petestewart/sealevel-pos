@@ -1279,6 +1279,8 @@ function displayTicketPayload(input: {
   /** T241: the other ways to pay the student may pick on the display,
    *  or null for none (the server drops an offer that cannot apply). */
   choices?: readonly TenderOffer[] | null;
+  /** T289: the card reader declined the card. */
+  readerNote?: "declined" | null;
 }): TicketPayload {
   const saleLines = input.cart.filter((line) => !isOffCartLine(line));
   /* T256: account credit is untaxed and priced by the amount typed, so it
@@ -1293,6 +1295,9 @@ function displayTicketPayload(input: {
     (usable ? (priced.discountTotal ?? 0) : 0) + input.giftDiscountOff,
   );
   return {
+    ...(input.mode === "live" && input.readerNote === "declined"
+      ? { readerNote: "declined" as const }
+      : {}),
     mode: input.mode,
     clientFirstName: displayFirstName(input.clientName),
     lines: displayTicketLines(input.cart),
@@ -2462,6 +2467,9 @@ function PaymentPanel(props: {
    *  changes, so the live mirror (SaleScreen's) can name it. Null with
    *  no tender on the ticket. */
   onTenderChange: (tenders: TicketTender[] | null) => void;
+  /** T289: the card reader declined the card (or null again), reported
+   *  up for the live mirror, as the tender is. */
+  onReaderNote: (note: "declined" | null) => void;
   /** T241: the ways to pay the student may switch to on the display,
    *  reported up for the live mirror. Null for none. */
   onChoicesChange: (choices: TenderOffer[] | null) => void;
@@ -4667,7 +4675,7 @@ function PaymentPanel(props: {
    * its text so a re-render with the same tender sends nothing. */
   const displayTendersKey =
     displayTenders === null ? "" : JSON.stringify(displayTenders);
-  const { onTenderChange } = props;
+  const { onTenderChange, onReaderNote } = props;
   useEffect(() => {
     onTenderChange(
       displayTendersKey === ""
@@ -4675,6 +4683,10 @@ function PaymentPanel(props: {
         : (JSON.parse(displayTendersKey) as TicketTender[]),
     );
   }, [displayTendersKey, onTenderChange]);
+  /* T289: a new tender (or none) takes a decline off the customer screen. */
+  useEffect(() => {
+    onReaderNote(null);
+  }, [displayTendersKey, onReaderNote]);
   /* T240: the tender moving under an outstanding approval ends it, the
    * way a cart edit does: the student is reading a payment method that
    * is no longer the one that would be charged. The controls are locked
@@ -5226,8 +5238,12 @@ function PaymentPanel(props: {
       setCharging(true);
       onBusyChange(true);
       setResult(null);
+      onReaderNote(null);
       const held = await reader.hold(requestBody, newIdempotencyKey());
       if (!held.ok) {
+        /* T289: a decline stays on the customer screen until the tender
+         * changes or the next attempt starts. */
+        if (held.declined === true) onReaderNote("declined");
         inFlight.current = false;
         setCharging(false);
         onBusyChange(false);
@@ -12944,6 +12960,8 @@ export default function SaleScreen(props: {
   );
   /** T241: and the ways to pay the student may switch to. */
   const [liveChoices, setLiveChoices] = useState<TenderOffer[] | null>(null);
+  /** T289: the card reader declined the card, for the live mirror. */
+  const [liveReaderNote, setLiveReaderNote] = useState<"declined" | null>(null);
   const livePayload =
     /* T259: a credit given at no charge presents nothing on the customer
        screen, like "Check in free (comp)": nothing is charged to them. */
@@ -12959,6 +12977,7 @@ export default function SaleScreen(props: {
           giftDiscountOff,
           tenders: liveTenders,
           choices: liveChoices,
+          readerNote: liveReaderNote,
         });
   const liveKey = livePayload === null ? "" : JSON.stringify(livePayload);
   const liveClientId = client?.id ?? "";
@@ -14725,6 +14744,7 @@ export default function SaleScreen(props: {
             customerConfirmsSale={confirmsSale}
             onDisplaySummary={onDisplaySummary}
             onTenderChange={setLiveTenders}
+            onReaderNote={setLiveReaderNote}
             onChoicesChange={setLiveChoices}
             pickInbox={pickInbox}
             mirrorRequestId={mirror.requestId}

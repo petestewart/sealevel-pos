@@ -23,13 +23,30 @@ import { houseClientId } from "./sale";
  *               looked for after MISSING_GRACE_MS
  *   unverified  nothing to compare (no sale id: a membership, say), or
  *               the read failed; recorded so the sheet says so
+ *   found       T288: an uncertain tap that Mindbody shows a sale for
+ *   not-sold    T288: an uncertain tap Mindbody shows no sale for, looked
+ *               for after MISSING_GRACE_MS (Pete, a $2.99 test left on
+ *               the log as "May have gone through" with no way to close)
  * A sale not found inside the grace is left unchecked and asked again.
  */
 
 const MISSING_GRACE_MS = 15 * 60 * 1000;
 const MAX_PER_RUN = 60;
 
-export type CheckState = "ok" | "differs" | "missing" | "unverified";
+export type CheckState =
+  | "ok"
+  | "differs"
+  | "missing"
+  | "unverified"
+  /** T288: an UNCERTAIN tap (ambiguous, or no answer recorded) that
+   *  Mindbody shows a sale for: it went through. */
+  | "found"
+  /** T288: an uncertain tap with no matching sale in Mindbody, looked
+   *  for after MISSING_GRACE_MS: nothing went through. */
+  | "not-sold";
+
+/** T288: outcomes where the counter could not say whether it sold. */
+const UNCERTAIN = new Set(["ambiguous", "started"]);
 
 interface SaleRead {
   id: string;
@@ -214,6 +231,130 @@ export async function checkRow(
   };
 }
 
+/** T288: one sale from a day's list, with both readings of its time. */
+interface ListedSale {
+  id: string;
+  at: number[];
+  clientId: string | null;
+  items: SaleRead["items"];
+  payments: SaleRead["payments"];
+}
+
+/** T288: every sale Mindbody lists from the day before `near` to the day
+ *  after, one metered read. `SaleDateTime` has been seen as true UTC on
+ *  this endpoint (sale 429494, 10:19 at the studio, "18:19:28Z"), and
+ *  other endpoints put wall-clock digits behind a "Z", so both readings
+ *  are kept and either may match. */
+async function listSalesAround(near: number): Promise<ListedSale[] | string> {
+  const DAY = 86_400_000;
+  const from = `${studioWall(new Date(near - DAY)).slice(0, 10)}T00:00:00`;
+  const to = `${studioWall(new Date(near + 2 * DAY)).slice(0, 10)}T00:00:00`;
+  try {
+    const out: ListedSale[] = [];
+    for (let page = 0; page < 10; page++) {
+      const body: any = await mindbody(
+        `/sale/sales?request.startSaleDateTime=${encodeURIComponent(from)}` +
+          `&request.endSaleDateTime=${encodeURIComponent(to)}` +
+          `&request.limit=200&request.offset=${page * 200}`,
+      );
+      const sales: any[] = Array.isArray(body?.Sales) ? body.Sales : [];
+      for (const sale of sales) {
+        const raw = String(sale?.SaleDateTime ?? "");
+        const naive = raw.replace(/Z$|[+-]\d\d:\d\d$/, "");
+        const at = [Date.parse(raw.endsWith("Z") ? raw : `${raw}Z`)];
+        const wall = studioMidnight(naive.slice(0, 10)) + (Date.parse(`1970-01-01T${naive.slice(11, 19) || "00:00:00"}Z`) || 0);
+        if (Number.isFinite(wall)) at.push(wall);
+        out.push({
+          id: String(sale?.Id ?? ""),
+          at: at.filter((t) => Number.isFinite(t)),
+          clientId: sale?.ClientId == null ? null : String(sale.ClientId),
+          items: (Array.isArray(sale?.PurchasedItems) ? sale.PurchasedItems : []).map((i: any) => ({
+            id: String(i?.Id ?? ""),
+            barcodeId: typeof i?.BarcodeId === "string" ? i.BarcodeId : null,
+            isService: typeof i?.IsService === "boolean" ? i.IsService : null,
+            quantity: n(i?.Quantity),
+            description: typeof i?.Description === "string" ? i.Description.slice(0, 80) : null,
+            total: n(i?.TotalAmount),
+          })),
+          payments: (Array.isArray(sale?.Payments) ? sale.Payments : []).map((p: any) => ({
+            type: String(p?.Type ?? ""),
+            amount: n(p?.Amount),
+          })),
+        });
+      }
+      const total = n(body?.PaginationResponse?.TotalResults);
+      if (sales.length < 200 || (total !== null && (page + 1) * 200 >= total)) break;
+    }
+    return out;
+  } catch (err) {
+    return err instanceof Error ? err.message.slice(0, 200) : String(err);
+  }
+}
+
+/**
+ * T288: whether an uncertain tap sold. A sale counts when it is for
+ * someone on the ticket (or the walk-in client), was made from two
+ * minutes before the tap to fifteen after it, holds every line the
+ * ticket asked for, was paid the total the counter showed when one is
+ * known, and is not already claimed by another row's answer. READS ONLY.
+ */
+export async function lookUpUncertain(
+  row: SaleLogRow,
+  claimed: ReadonlySet<string>,
+  listed: ListedSale[] | string,
+  now = Date.now(),
+): Promise<{ state: CheckState; detail: Record<string, unknown> } | null> {
+  if (now - row.startedAt < MISSING_GRACE_MS) return null;
+  const req = (row.request ?? {}) as Record<string, any>;
+  const items: any[] = Array.isArray(req.items) ? req.items : [];
+  if (items.length === 0 || Array.isArray(req.giftCards) || req.accountCredit !== undefined) {
+    return {
+      state: "unverified",
+      detail: { problems: ["This kind of sale cannot be looked up automatically. Check Mindbody for it."] },
+    };
+  }
+  if (typeof listed === "string") {
+    return { state: "unverified", detail: { problems: [`Mindbody's sales could not be read: ${listed}`] } };
+  }
+  const house = houseClientId();
+  const allowed = new Set([...row.clientIds, ...(house ? [house] : [])]);
+  const lo = row.startedAt - 2 * 60_000;
+  const hi = row.startedAt + MISSING_GRACE_MS;
+  const hits = listed.filter((sale) => {
+    if (claimed.has(sale.id)) return false;
+    if (!sale.at.some((t) => t >= lo && t <= hi)) return false;
+    if (sale.clientId !== null && allowed.size > 0 && !allowed.has(sale.clientId)) return false;
+    if (!items.every((want) => sale.items.some((g) => lineMatches(want, g)))) return false;
+    if (row.total !== null) {
+      const paid = sale.payments
+        .filter((p) => !/^comp/i.test(p.type))
+        .reduce((a, p) => a + (p.amount ?? 0), 0);
+      if (Math.abs(paid - row.total) > 0.01) return false;
+    }
+    return true;
+  });
+  if (hits.length === 0) {
+    return {
+      state: "not-sold",
+      detail: {
+        problems: [],
+        note: "Mindbody shows no sale for this tap, so nothing went through.",
+      },
+    };
+  }
+  return {
+    state: "found",
+    detail: {
+      problems: [],
+      foundSaleIds: hits.map((h) => h.id),
+      note:
+        hits.length === 1
+          ? `Mindbody shows sale ${hits[0]!.id} for this tap: it went through.`
+          : `Mindbody shows ${hits.length} sales that could be this tap (${hits.map((h) => h.id).join(", ")}). Check which one it was.`,
+    },
+  };
+}
+
 /**
  * Checks the stood rows started in [from, to) that have no verdict yet
  * (and re-asks `missing` ones, which may simply have been slow). Bounded
@@ -228,19 +369,44 @@ export async function runSaleCheck(
   if (rows === null) return null;
   const due = rows.filter(
     (r) =>
-      r.outcome === "stood" &&
-      (r.checkState === null || r.checkState === "missing"),
+      (r.outcome === "stood" &&
+        (r.checkState === null || r.checkState === "missing")) ||
+      (UNCERTAIN.has(r.outcome) && r.checkState === null),
   );
+  /* T288: sale ids some row already accounts for, so an uncertain tap is
+   * never matched to a sale a later tap (a retry, say) made. */
+  const claimed = new Set<string>(rows.flatMap((r) => r.saleIds));
+  for (const r of rows) {
+    const found = (r.checkDetail as { foundSaleIds?: unknown } | null)?.foundSaleIds;
+    if (Array.isArray(found)) for (const id of found) claimed.add(String(id));
+  }
+  const lists = new Map<string, Promise<ListedSale[] | string>>();
+  const listFor = (near: number) => {
+    const key = studioWall(new Date(near)).slice(0, 10);
+    let p = lists.get(key);
+    if (p === undefined) {
+      p = listSalesAround(near);
+      lists.set(key, p);
+    }
+    return p;
+  };
   let checked = 0;
   let waiting = 0;
   for (const row of due.slice(0, MAX_PER_RUN)) {
-    const verdict = await checkRow(row, now);
+    const verdict = UNCERTAIN.has(row.outcome)
+      ? now - row.startedAt < MISSING_GRACE_MS
+        ? null
+        : await lookUpUncertain(row, claimed, await listFor(row.startedAt), now)
+      : await checkRow(row, now);
+    if (verdict?.state === "found") {
+      for (const id of (verdict.detail["foundSaleIds"] as string[]) ?? []) claimed.add(id);
+    }
     if (verdict === null) {
       waiting += 1;
       continue;
     }
     await setSaleLogCheck(row.id, verdict.state, verdict.detail);
-    if (verdict.state !== "ok") {
+    if (verdict.state !== "ok" && verdict.state !== "not-sold") {
       console.warn(
         `[sale-check] ${row.id} ${verdict.state}: ${JSON.stringify(verdict.detail["problems"] ?? [])}`,
       );

@@ -17,6 +17,11 @@ export const metadata: Metadata = {
   title: "Sealevel Front Desk",
   // Add to Home Screen makes this full-screen on the counter iPad.
   appleWebApp: { capable: true, statusBarStyle: "default", title: "Front Desk" },
+  /* T290 (Pete: the customer iPad, an older one, opened the Home Screen
+   * icon with Safari's address bar). Next 15 writes only the standard
+   * `mobile-web-app-capable` for `appleWebApp.capable`, which older iPadOS
+   * ignores; Apple's original name is what those read, so both go out. */
+  other: { "apple-mobile-web-app-capable": "yes" },
 };
 
 export const viewport: Viewport = {

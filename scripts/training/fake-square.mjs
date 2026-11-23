@@ -21,6 +21,7 @@
  *        approve leaves an APPROVED payment when autocomplete is false
  *        (the checkout reads COMPLETED, as Square's does); complete takes
  *        the money at the tap, which this app must treat as a problem
+ *   POST /__fake/outside?amount=100        a payment taken in Square's Dashboard
  *   POST /__fake/race?n=1                  the next N cancels LOSE to a tap:
  *        the checkout ends COMPLETED with an APPROVED payment
  *   POST /__fake/fail?path=/v2/terminals/checkouts&n=1&status=500
@@ -67,6 +68,7 @@ function approve(c, completeAtTap = false) {
     amount_money: { ...c.amount_money },
     location_id: LOCATION,
     reference_id: c.reference_id,
+    terminal_checkout_id: c.id,
     note: c.note,
     card_details: { status: "AUTHORIZED", card: { card_brand: "VISA", last_4: "4242" } },
     created_at: now(),
@@ -120,6 +122,12 @@ const server = createServer(async (req, res) => {
         return send(res, 200, c);
       }
       return send(res, 400, { error: "outcome?" });
+    }
+    if (path === "/__fake/outside") {
+      /* T288: a payment taken in Square's Dashboard, not by this app. */
+      const pid = `pay_${randomUUID().slice(0, 12)}`;
+      payments.set(pid, { id: pid, status: "COMPLETED", amount_money: { amount: Number(q.get("amount") ?? 100), currency: "USD" }, location_id: LOCATION, card_details: { status: "CAPTURED", entry_method: "KEYED", card: { card_brand: "VISA", last_4: "1111" } }, created_at: now() });
+      return send(res, 200, { payment_id: pid });
     }
     if (path === "/__fake/race") {
       races = Number(q.get("n") ?? 1) || 0;

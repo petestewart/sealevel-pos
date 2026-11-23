@@ -80,6 +80,10 @@ export interface TicketPayload {
    * refuse anything not on the list the SERVER stored.
    */
   choices?: TenderOffer[];
+  /** T289 (Pete: "A line like 'Card declined, please try another card'
+   *  would help." "yeah add that"): the card reader declined the card.
+   *  Live only, and a key, never words: the display says it in its own. */
+  readerNote?: "declined";
   /** Summary only: what was charged, and whether a receipt was
    *  CONFIRMED emailed (null when none was asked for). */
   charged?: number;
@@ -368,6 +372,9 @@ export function readTicketPayload(
     const choices = readChoices(raw.choices, out.total);
     if (typeof choices === "string") return { ok: false, error: choices };
     if (choices.length > 0) out.choices = choices;
+  }
+  if (mode === "live" && raw.readerNote === "declined") {
+    out.readerNote = "declined";
   }
   if (mode === "summary") {
     const charged = money(raw.charged);
