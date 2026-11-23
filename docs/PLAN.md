@@ -1161,6 +1161,14 @@ which needs nothing afterwards.
   `addReason(source, true)`), so no card on file means no "Card on
   file" there. Not built, offered: Card reader in that list. Seen
   against the fakes: chosen, waiting, declined.
+- [x] **T290 The customer screen opens full screen on an older iPad.**
+  Built 2026-11-23 (Pete: the studio's customer iPad, "old iPad", opened
+  its Home Screen icon with Safari's address bar). Next 15.5 writes only
+  `mobile-web-app-capable` for `appleWebApp.capable`; older iPadOS reads
+  only Apple's `apple-mobile-web-app-capable`, so the root layout now
+  sends both (`other`), and `src/app/display/layout.tsx` repeats it and
+  names the icon "Customer Screen". Checked in the built HTML of `/` and
+  `/display`. Not yet seen on that iPad: re-add the icon after deploy.
 - [ ] **T237 Hardware day.** Buy and pair the Terminal, the production
   token, `POS_READER_LIVE=true`. **Never `POS_WRITE_CLIENT_IDS` while the
   studio is open**: it suppresses every write for every other client,
