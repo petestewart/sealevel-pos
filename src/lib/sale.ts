@@ -233,7 +233,14 @@ function parseProducts(body: any): CatalogItem[] {
         taxRate: num(p?.TaxRate),
         categoryId: num(p?.CategoryId),
         secondaryCategoryId: secondary,
-        taxExempt: secondary === TAX_EXEMPT_SECONDARY_CATEGORY_ID,
+        /* T297: the "sales tax exempt" category exempts a product as its
+         * PRIMARY category too: product 589, the card fee, was filed
+         * there (CategoryId 100000, SecondaryCategoryId 0) and Mindbody
+         * prices it with no tax (read live, 2026-11-23: 14 x $0.01 =
+         * $0.14, tax $0.00). */
+        taxExempt:
+          secondary === TAX_EXEMPT_SECONDARY_CATEGORY_ID ||
+          num(p?.CategoryId) === TAX_EXEMPT_SECONDARY_CATEGORY_ID,
         type: "Product",
         count: null,
         serviceType: null,

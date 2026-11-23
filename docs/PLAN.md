@@ -1270,8 +1270,14 @@ which needs nothing afterwards.
   told apart before the charge, so they always carry it. Driven against
   the fakes: card on file ($5.00 + tax + $0.14 = $5.66), the fee off
   with the card, the reader on credit (sale with 14 x fee, $5.66) and on
-  debit (hold lowered, sale without the fee, $5.52). Owed: Pete creates
-  the product and sets the id; one live sale.
+  debit (hold lowered, sale without the fee, $5.52). **Product created
+  2026-11-23**: "Credit card fee", ProductId 589, barcode Id
+  `9692472471` (the value `POS_CARD_FEE_PRODUCT_ID` takes, since a cart
+  line names a product by its barcode), $0.01, filed with "sales tax
+  exempt" (100000) as its PRIMARY category, so it is on no counter shelf
+  and the app now reads a primary 100000 as tax exempt too. Read live:
+  14 units price $0.14, tax $0.00, and BLACK26 takes nothing off it.
+  Owed: the Railway variable; one live sale.
 - [x] **T298 A promotion code on every sale, for a run of days.** Built
   2026-11-23 (Pete: "add a new feature where we can have a promo code
   automatically applied to all carts. starting today i want BLACK26 promo
