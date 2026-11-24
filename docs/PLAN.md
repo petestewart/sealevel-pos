@@ -1357,6 +1357,16 @@ which needs nothing afterwards.
   (`/client/clientcontracts` `UpcomingAutopayEvents`): the four contracts
   on site 471 all bill `OnSaleDate`, and whether a `today` start then
   bills on the 1st or on the sale's day of the month is unseen.
+- [x] **T301 The contract dialog clears its own charge hold.** Built
+  2026-11-24 (Pete's membership sale at 7:32 PM answered during a
+  deploy, T253 held him as "may or may not have gone through", and the
+  contract dialog said "tap Understood" with no Understood to tap). The
+  dialog now reads `GET /api/charge-holds` for its client when it opens,
+  and on a 409 `held` from `/api/purchase-contract` shows the holds in
+  place of the charge (time, kind, sale id) with 64px Check again and
+  Understood (`POST /api/charge-holds/acknowledge`; a pending hold only
+  Check again). While one stands, the charge and "Sign on the customer
+  screen" are off. Type-checked; not yet driven in a browser.
 - [ ] **T237 Hardware day.** Buy and pair the Terminal, the production
   token, `POS_READER_LIVE=true`. **Never `POS_WRITE_CLIENT_IDS` while the
   studio is open**: it suppresses every write for every other client,
