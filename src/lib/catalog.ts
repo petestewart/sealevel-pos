@@ -4,11 +4,12 @@ import { getSetting } from "./db";
 import { target } from "./mindbody";
 import { ensureTarget } from "./target";
 import {
+  cardFeeFamily,
   catalogFor,
   contractsFor,
   pricingOptions,
-  productsByIds,
   sellablePackages,
+  type CardFeeFamily,
   type CatalogItem,
   type ContractSummary,
 } from "./sale";
@@ -52,10 +53,11 @@ export interface RawCatalog {
   /** T30: contracts are NOT cart items; they feed the Memberships chip
    *  and its dedicated purchase dialog. */
   contracts: ContractSummary[];
-  /** T297: the card processing fee's product, read by its id when
-   *  POS_CARD_FEE_PRODUCT_ID is set; null when it is not, or the read
-   *  found nothing. Never on the shelf (it is taken out of `products`). */
-  cardFeeItem: CatalogItem | null;
+  /** T297/T302: the card processing fee's products (src/lib/sale.ts
+   *  cardFeeFamily), one per amount, when POS_CARD_FEE_PRODUCT_ID is set;
+   *  null when it is not, or the read failed or found nothing. Never on
+   *  the shelf (every one is taken out of `products`). */
+  cardFeeFamily: CardFeeFamily | null;
 }
 
 /** Keyed by MINDBODY_TARGET for the same reason the staff-token cache is
@@ -157,30 +159,35 @@ export async function rawCatalog(
   }
   const categoryIds = counterCategories.flatMap((c) => c.categoryIds);
   const feeRule = cardFeeEnv();
-  const [products, passes, packages, contracts, feeItems] = await Promise.all([
+  const [products, passes, packages, contracts, cardFeeFamilyRead] = await Promise.all([
     catalogFor(categoryIds),
     pricingOptions(),
     sellablePackages(),
     contractsFor(),
-    /* T297: a fee product the read cannot find, or a read that fails,
-     * turns the fee off for this catalog rather than failing the shelf. */
+    /* T297/T302: a fee family the read cannot find, or a read that
+     * fails, turns the fee off for this catalog rather than failing the
+     * shelf. */
     feeRule
-      ? productsByIds([feeRule.productId]).catch((err) => {
-          console.warn(`[card-fee] product ${feeRule.productId} could not be read: ${String(err)}`);
-          return [] as CatalogItem[];
+      ? cardFeeFamily().catch((err) => {
+          console.warn(`[card-fee] fee products could not be read: ${String(err)}`);
+          return null;
         })
-      : Promise.resolve([] as CatalogItem[]),
+      : Promise.resolve(null),
   ]);
-  const cardFeeItem = feeItems[0] ?? null;
-  if (feeRule && cardFeeItem === null) {
-    console.warn(`[card-fee] product ${feeRule.productId} not found; no fee is added`);
-  }
+  const feeIds = new Set<string>(
+    cardFeeFamilyRead
+      ? [
+          String(cardFeeFamilyRead.anchor.id),
+          ...[...cardFeeFamilyRead.byCents.values()].map((p) => String(p.id)),
+        ]
+      : feeRule
+        ? [feeRule.productId]
+        : [],
+  );
   const data: RawCatalog = {
     categories: counterCategories,
-    cardFeeItem,
-    products: routeProducts(
-      products.filter((p) => !feeRule || String(p.id) !== feeRule.productId),
-    ),
+    cardFeeFamily: cardFeeFamilyRead,
+    products: routeProducts(products.filter((p) => !feeIds.has(String(p.id)))),
     passes: routeServices(passes),
     packages,
     contracts,

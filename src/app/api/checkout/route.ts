@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { CARD_FEE_METHODS, cardFeeCents, cardFeeEnv } from "@/lib/cardfee";
+import { CARD_FEE_METHODS, cardFeeEnv } from "@/lib/cardfee";
 
 import {
   actorFields,
@@ -125,6 +125,8 @@ import { giveNoChargeCredit } from "@/lib/nochargecreditsale";
 
 import {
   assertBasket,
+  cardFeeFamily,
+  sellableCardFeeCents,
   cardChargeable,
   checkoutCart,
   clientPaymentProfile,
@@ -1561,9 +1563,9 @@ async function runCheckout(
    * It is sold only on a plain one-cart ticket paid by ONE card (on file,
    * typed, or the reader), with no discount, override, gift card, account
    * credit or line for someone else, and only when the server's own rule
-   * is on and the line counts tax-exempt cents (T301: /api/catalog serves
-   * the fee as a $0.01 unit, whatever the product costs, and
-   * src/lib/sale.ts sends Mindbody one discounted unit of it). Refused
+   * is on and the line counts tax-exempt cents (T302: /api/catalog serves
+   * the fee as a $0.01 unit, and src/lib/sale.ts sends Mindbody the one
+   * product priced at exactly that many cents). Refused
    * here, before any Mindbody call, in words; the quantity is checked
    * against Mindbody's own total after the rehearsal. */
   const feeRule = cardFeeEnv();
@@ -4714,7 +4716,10 @@ async function runCheckout(
   const feeLine = feeLines[0];
   if (feeLine !== undefined && feeRule !== null) {
     const totalCentsNow = Math.round(total * 100);
-    const want = cardFeeCents(totalCentsNow - feeLine.quantity, feeRule);
+    /* T302: only an amount the studio has a product for carries a fee
+     * (src/lib/sale.ts cardFeeFamily; the rehearsal just read it). */
+    const family = await cardFeeFamily().catch(() => null);
+    const want = sellableCardFeeCents(totalCentsNow - feeLine.quantity, family);
     if (want !== feeLine.quantity) {
       console.warn(
         `[card-fee] refused: line ${feeLine.quantity}c, rule ${want}c on ${(totalCentsNow - feeLine.quantity) / 100}`,
@@ -4723,7 +4728,7 @@ async function runCheckout(
         {
           error:
             want === 0
-              ? "This sale is not under the card fee's floor, so it carries no fee. Take the fee off and charge again. Nothing was charged."
+              ? "This sale carries no card fee. Take the fee off and charge again. Nothing was charged."
               : `The card processing fee on this sale is $${(want / 100).toFixed(2)}, not $${(feeLine.quantity / 100).toFixed(2)}. Nothing was charged; charge again.`,
           stage: "rehearsal",
           reason: "cardfee",

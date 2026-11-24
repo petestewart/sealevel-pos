@@ -357,6 +357,9 @@ interface ShelfItem {
 interface CardFeeOffer {
   item: ShelfItem;
   rule: CardFeeRule;
+  /** T302: the fee amounts, in cents, the studio has a product for. A
+   *  sale whose fee is not on this list carries no fee. */
+  available: ReadonlySet<number>;
 }
 
 /** T297: is this line the card processing fee? It is put on and taken
@@ -584,9 +587,14 @@ function readCardFee(raw: any): CardFeeOffer | null {
   ) {
     return null;
   }
+  const available: number[] = Array.isArray(raw?.availableCents)
+    ? raw.availableCents.filter((c: unknown): c is number => Number.isInteger(c) && (c as number) > 0)
+    : [];
+  if (available.length === 0) return null;
   return {
     item: { ...(item as ShelfItem), type: "Product", cardFee: true },
     rule: { productId: String(item.id), rate: raw.rate, underCents: raw.underCents },
+    available: new Set(available),
   };
 }
 
@@ -12270,10 +12278,12 @@ export default function SaleScreen(props: {
       : (() => {
           const totalNow = priced.suppressed ? priced.expectedTotal : priced.grandTotal;
           if (totalNow === null) return null;
-          return cardFeeCents(
+          const cents = cardFeeCents(
             Math.round(totalNow * 100) - (priced.feeCents ?? 0),
             (feeOffer as CardFeeOffer).rule,
           );
+          /* T302: no product of that amount, no fee. */
+          return (feeOffer as CardFeeOffer).available.has(cents) ? cents : 0;
         })();
   useEffect(() => {
     if (feeTender === "frozen") return;

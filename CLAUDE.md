@@ -74,19 +74,23 @@ unset, there is no fee; `src/lib/cardfee.ts`). The Cart screen adds and
 removes the line with the tender; `/api/checkout` refuses it anywhere
 else or at the wrong quantity; on reader debit it lowers the Square hold
 by the fee before the sale. Not on discounted, override, gift card,
-credit or T90 tickets. **T301 (2026-11-24): ONE line on the receipt**
-(Pete, on sale 430178's five "$0.01" fee rows: "their receipt is going
-to look very unprofessional"). T297 sold the fee as a quantity of a
-$0.01 product, which Mindbody prints one row per cent. The product is
-now priced at or above the largest fee ($0.26) and Mindbody is sent ONE
-unit with `DiscountAmount` down to the fee (`withCardFeeShape` in
-`src/lib/sale.ts`, inside `priceCart` and `checkoutCart`; probed live
-with `Test: true`, BLACK26 included). Everything above that call still
-counts the fee in cents at $0.01, and `priceCart` takes the fee's own
-discount back out of the subtotal and discount it reports. A product
-still at $0.01 turns the fee OFF rather than selling it the old way.
-Driven against a fake; owed: product 589 at $0.26, one live sale, and
-how the receipt prints the discounted line.
+credit or T90 tickets. **T302 (2026-11-24): ONE plain line on the
+receipt.** T297 sold the fee as a quantity of a $0.01 product (one
+"$0.01" row per cent, sale 430178) and T301 as one $0.26 product
+discounted down ("Discount (80.77%) -$0.21", sale 430291; Pete:
+"reciept sucks"). Now the studio keeps ONE PRODUCT PER AMOUNT, "Credit
+card fee (2.6%: 0.01)" to "(2.6%: 0.26)", in their own "Fees" category
+(100002), and `POS_CARD_FEE_PRODUCT_ID` names any one of them (589's
+barcode, the $0.01 one). `cardFeeFamily` in `src/lib/sale.ts` reads
+that category live: untaxed products only (Mindbody's TaxRate 0), one
+per price. `withCardFeeShape` (inside `priceCart` and `checkoutCart`)
+swaps the browser's cents line for the product of that amount, no
+discount; everything above it still counts the fee in cents at $0.01.
+**An amount with no untaxed product carries NO fee** (`availableCents`
+on `/api/catalog`; `/api/checkout` refuses it). Read live: the $0.07
+product is taxed, so 7 cent fees are off until it is fixed. Do not
+reprice a fee product per sale (`updateproductprice`): it needs a lock
+on every fee sale and was turned down. Owed: one live sale's receipt.
 
 **T298 (2026-11-23): a promotion code on every sale for a run of days**
 (Pete: "starting today i want BLACK26 promo code to be entered for all
@@ -100,9 +104,10 @@ that ticket, and a ticket Mindbody does not apply it to says so in one
 muted line. BLACK26 is 15% off passes, memberships, Clothing and
 Accessories (rentals included), and nothing off Food/Drink or Other
 (read live with Test pricing; tax is recomputed on the discounted
-price). **The card fee's product must sit in a category the code does
-not cover**, or the code would discount the fee's cents and the
-checkout would refuse the fee's quantity.
+price). **The card fee's products must sit in a category the code does
+not cover**, or the code would discount the fee and the counter would
+charge less than the fee it showed. Their "Fees" category (100002) is
+not covered (read live, 2026-11-24).
 
 **Next (planned 2026-11-15, vendor changed 2026-11-21, not started):
 Phase 4, the studio's own card reader, a Square Terminal** driven through

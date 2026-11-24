@@ -38,7 +38,12 @@ import {
   spreadDiscount,
   type Discount,
 } from "./comp";
-import { cardFeeEnv, isCardFeeProduct, maxCardFeeCents } from "./cardfee";
+import {
+  cardFeeCents,
+  cardFeeEnv,
+  isCardFeeProduct,
+  maxCardFeeCents,
+} from "./cardfee";
 import {
   DEFAULT_CONTRACT_BILLING,
   type ContractBilling,
@@ -208,40 +213,128 @@ export async function productsByIds(
   return parseProducts(body).filter((p) => ids.includes(String(p.id)));
 }
 
-/** T301: the fee product as last read, per target, for two minutes (the
- *  catalog's own cache length), so pricing a ticket with the fee costs
- *  one extra read every two minutes at most. A failed read is not kept. */
-let feeProductCache: { key: string; at: number; item: CatalogItem | null } | null = null;
-const FEE_PRODUCT_TTL_MS = 2 * 60 * 1000;
+/**
+ * T302: the card fee's products, one per amount. T301 sold ONE product
+ * at $0.26 discounted down to the fee, and Mindbody's receipt printed
+ * "Credit card fee $0.26, Discount (80.77%) -$0.21" (Pete, sale 430291:
+ * "reciept sucks"). Mindbody honours no price sent on a cart line (T301:
+ * 31 shapes), so the only clean receipt line is a product priced at the
+ * fee itself. The studio made one per cent amount, $0.01 to $0.26
+ * (2026-11-24), in their own category ("Fees", 100002).
+ *
+ * The FAMILY is every product in the category of the product
+ * `POS_CARD_FEE_PRODUCT_ID` names, priced in whole cents from 1 to the
+ * rule's largest fee, that Mindbody reports at TaxRate 0 (read live:
+ * a product the studio left taxed reports 0.1055 and priced $0.07 + $0.01
+ * tax). Two products at one price make that amount ambiguous, and it is
+ * dropped. An amount with no product carries NO fee: the iPad is told
+ * which amounts exist and adds the fee only for those.
+ *
+ * Read per target and cached two minutes, as the catalog is. A failed
+ * read is not cached and throws: the catalog turns the fee off for that
+ * read, and a ticket already carrying the fee is refused before any
+ * charge.
+ */
+export interface CardFeeFamily {
+  /** The product POS_CARD_FEE_PRODUCT_ID names: the id the browser's
+   *  cents line carries. */
+  anchor: CatalogItem;
+  /** Fee in cents -> the product priced at exactly that. */
+  byCents: Map<number, CatalogItem>;
+}
 
-async function cardFeeProduct(productId: string): Promise<CatalogItem | null> {
-  const key = `${target()}:${productId}`;
+let feeFamilyCache: { key: string; at: number; family: CardFeeFamily | null } | null = null;
+const FEE_FAMILY_TTL_MS = 2 * 60 * 1000;
+/** Every fee product's barcode this process has seen, lower case: what a
+ *  sale read back may hold for a fee line still counted in cents. */
+const knownFeeBarcodes = new Set<string>();
+
+export async function cardFeeFamily(): Promise<CardFeeFamily | null> {
+  const rule = cardFeeEnv();
+  if (rule === null) return null;
+  const key = `${target()}:${rule.productId}:${rule.rate}:${rule.underCents}`;
   if (
-    feeProductCache !== null &&
-    feeProductCache.key === key &&
-    Date.now() - feeProductCache.at < FEE_PRODUCT_TTL_MS
+    feeFamilyCache !== null &&
+    feeFamilyCache.key === key &&
+    Date.now() - feeFamilyCache.at < FEE_FAMILY_TTL_MS
   ) {
-    return feeProductCache.item;
+    return feeFamilyCache.family;
   }
-  const item = (await productsByIds([productId]))[0] ?? null;
-  feeProductCache = { key, at: Date.now(), item };
-  return item;
+  const anchor = (await productsByIds([rule.productId]))[0] ?? null;
+  let family: CardFeeFamily | null = null;
+  if (anchor === null) {
+    console.warn(`[card-fee] product ${rule.productId} not found; no fee is added`);
+  } else {
+    const members =
+      anchor.categoryId === null ? [anchor] : await catalogFor([anchor.categoryId]);
+    if (!members.some((p) => String(p.id) === String(anchor.id))) members.push(anchor);
+    const most = maxCardFeeCents(rule);
+    const seen = new Map<number, CatalogItem[]>();
+    for (const p of members) {
+      const cents = Math.round(p.price * 100);
+      if (Math.abs(p.price * 100 - cents) > 1e-6) continue;
+      if (cents < 1 || cents > most) continue;
+      if (p.taxRate !== 0) {
+        console.warn(
+          `[card-fee] ${p.id} "${p.name}" ($${p.price.toFixed(2)}) is taxed in Mindbody (TaxRate ${p.taxRate}); no fee of that amount is added`,
+        );
+        continue;
+      }
+      seen.set(cents, [...(seen.get(cents) ?? []), p]);
+    }
+    const byCents = new Map<number, CatalogItem>();
+    for (const [cents, ps] of seen) {
+      if (ps.length > 1) {
+        console.warn(
+          `[card-fee] ${ps.length} fee products at $${(cents / 100).toFixed(2)} (${ps.map((p) => p.id).join(", ")}); no fee of that amount is added`,
+        );
+        continue;
+      }
+      byCents.set(cents, ps[0] as CatalogItem);
+    }
+    const missing: number[] = [];
+    for (let c = 1; c <= most; c++) if (!byCents.has(c)) missing.push(c);
+    if (missing.length > 0) {
+      console.warn(`[card-fee] no fee product for ${missing.map((c) => `${c}c`).join(", ")}; those amounts carry no fee`);
+    }
+    knownFeeBarcodes.add(String(anchor.id).toLowerCase());
+    for (const p of byCents.values()) knownFeeBarcodes.add(String(p.id).toLowerCase());
+    family = { anchor, byCents };
+  }
+  feeFamilyCache = { key, at: Date.now(), family };
+  return family;
+}
+
+/** T302: the fee, in cents, the family can actually sell: the rule's fee
+ *  when a product of exactly that price exists, else 0 (no fee). */
+export function sellableCardFeeCents(
+  preFeeCents: number,
+  family: CardFeeFamily | null,
+): number {
+  const rule = cardFeeEnv();
+  if (rule === null || family === null) return 0;
+  const cents = cardFeeCents(preFeeCents, rule);
+  return cents > 0 && family.byCents.has(cents) ? cents : 0;
+}
+
+/** T302: every fee product's barcode this process has read, lower case. */
+export function cardFeeBarcodes(): ReadonlySet<string> {
+  return knownFeeBarcodes;
 }
 
 /**
- * T301: the card fee's line in Mindbody's shape. Every cart reaches
+ * T302: the card fee's line in Mindbody's shape. Every cart reaches
  * Mindbody through priceCart or checkoutCart, and both call this first,
  * so the browser and the routes go on counting the fee as a quantity of
- * cents at $0.01 (src/lib/cardfee.ts) while Mindbody is sent ONE unit of
- * the fee product at its own price, with `DiscountAmount` bringing it
- * down to the fee. T75's subtotal check then compares the product's own
- * price (Mindbody's SubTotal is before discounts), so a product priced
- * differently from what this read said is a refusal, never a wrong
- * charge.
+ * cents of the anchor product (src/lib/cardfee.ts) while Mindbody is sent
+ * ONE unit of the family's product priced at exactly that fee: one plain
+ * line on the receipt, no discount. T75 compares that product's own
+ * price against Mindbody's SubTotal, so a price that moved since this
+ * read is a refusal, never a wrong charge.
  *
- * Refuses, before anything is sent, a fee product it cannot read, one
- * that is not tax exempt, and one priced below the rule's largest fee. A
- * ticket with no fee line comes back unchanged and costs no read.
+ * Refuses, before anything is sent, a family it cannot read and a fee
+ * with no product of its amount. A ticket with no fee line comes back
+ * unchanged and costs no read.
  */
 export async function withCardFeeShape(
   items: readonly CartLine[],
@@ -255,22 +348,10 @@ export async function withCardFeeShape(
   ) {
     return [...items];
   }
-  const product = await cardFeeProduct(rule.productId);
-  if (product === null) {
+  const family = await cardFeeFamily();
+  if (family === null) {
     throw new Error(
-      `The card processing fee's product (${rule.productId}) could not be read from Mindbody. Take the fee off and charge again.`,
-    );
-  }
-  if (!product.taxExempt) {
-    throw new Error(
-      "The card processing fee's product is taxed in Mindbody; it must be tax exempt. Take the fee off and charge again.",
-    );
-  }
-  const unitCents = Math.round(product.price * 100);
-  const most = maxCardFeeCents(rule);
-  if (unitCents < most) {
-    throw new Error(
-      `The card processing fee's product is $${product.price.toFixed(2)} in Mindbody; it must be at least $${(most / 100).toFixed(2)}. Take the fee off and charge again.`,
+      `The card processing fee's products could not be read from Mindbody. Take the fee off and charge again.`,
     );
   }
   return items.map((line) => {
@@ -278,13 +359,15 @@ export async function withCardFeeShape(
       return line;
     }
     const feeCents = Math.round(line.price * 100 * line.quantity);
-    if (feeCents < 1 || feeCents > unitCents) {
+    const product = family.byCents.get(feeCents);
+    if (product === undefined) {
       throw new Error(
-        `A card processing fee of $${(feeCents / 100).toFixed(2)} cannot be sold from a $${product.price.toFixed(2)} product. Take the fee off and charge again.`,
+        `There is no untaxed card processing fee product at $${(feeCents / 100).toFixed(2)} in Mindbody. Take the fee off and charge again.`,
       );
     }
     return {
       ...line,
+      metadataId: product.id,
       quantity: 1,
       price: product.price,
       taxExempt: true,
@@ -292,18 +375,6 @@ export async function withCardFeeShape(
       feeCents,
     };
   });
-}
-
-/** T301: what the fee lines' DiscountAmount takes off, in dollars: the
- *  product's price less the fee. It is how the fee is priced, not a
- *  discount anybody gave, so priceCart takes it back out of the subtotal
- *  and the discount it reports. */
-function feeDiscountOf(items: readonly CartLine[]): number {
-  let cents = 0;
-  for (const l of items) {
-    if (l.feeCents !== undefined) cents += Math.round(l.price * 100) - l.feeCents;
-  }
-  return cents / 100;
 }
 
 function parseProducts(body: any): CatalogItem[] {
@@ -610,10 +681,10 @@ export interface CartLine {
    */
   forClientId?: string | null;
   /**
-   * T301: set ONLY by `withCardFeeShape`, on the card fee's line as it
-   * goes to Mindbody: the fee in cents. The line is then ONE unit at the
-   * fee product's own `price`, discounted by the difference, so the
-   * receipt shows one line. Never set by a browser or a route.
+   * T302: set ONLY by `withCardFeeShape`, on the card fee's line as it
+   * goes to Mindbody: the fee in cents. The line is then ONE unit of the
+   * fee product priced at exactly that, so the receipt shows one plain
+   * line. Never set by a browser or a route.
    */
   feeCents?: number;
 }
@@ -699,12 +770,8 @@ export function expectedTotal(
 ): number {
   let total = 0;
   items.forEach((line, i) => {
-    /* T301: the card fee's line costs the fee, not its product's price. */
-    const gross =
-      line.feeCents !== undefined
-        ? line.feeCents / 100
-        : line.price * line.quantity;
-    const extended = gross - (discount?.[i] ?? 0) / 100;
+    const extended =
+      line.price * line.quantity - (discount?.[i] ?? 0) / 100;
     /* The exempt category still contributes untaxed; otherwise the
      * line's own rate, falling back to Fremont's 10.35% (STUDIO_TAX_RATE)
      * ONLY when the catalog carried no rate for this line. */
@@ -1017,19 +1084,10 @@ export function cartItemsPayload(
   return items.flatMap((line, i) => {
     const off = discount?.[i] ?? 0;
     const item = { Type: line.type, Metadata: { Id: line.metadataId } };
-    /* T301: the card fee, one unit of its product discounted to the fee.
-     * A teacher discount never shares a ticket with the fee (refused by
-     * /api/checkout), so a spread landing here is a bug, said loudly. */
-    if (line.feeCents !== undefined) {
-      if (off > 0) throw new Error("A discount cannot be spread onto the card fee.");
-      const down = Math.round(line.price * 100) - line.feeCents;
-      return [
-        {
-          Item: item,
-          Quantity: 1,
-          ...(down > 0 ? { DiscountAmount: down / 100 } : {}),
-        },
-      ];
+    /* T302: a teacher discount never shares a ticket with the card fee
+     * (refused by /api/checkout), so a spread landing on it is a bug. */
+    if (line.feeCents !== undefined && off > 0) {
+      throw new Error("A discount cannot be spread onto the card fee.");
     }
     if (off <= 0) return [{ Item: item, Quantity: line.quantity }];
     const qty = line.quantity;
@@ -1067,16 +1125,11 @@ export async function priceCart(
   promotionCode?: string | null,
 ): Promise<PricedCart> {
   assertCartLines(itemsIn, "priceCart");
-  /* T301: the card fee as Mindbody is sent it, one discounted unit. */
+  /* T302: the card fee as Mindbody is sent it, the product of its amount. */
   const items = await withCardFeeShape(itemsIn);
-  const feeDisc = feeDiscountOf(items);
   const spread = discount ? spreadDiscount(items, discount) : undefined;
   const expected = expectedTotal(items, spread);
   const expectedSub = expectedSubtotal(items);
-  /* T301: what the screen is told the subtotal is: the fee at its own
-   * amount. T75 compares `expectedSub`, the product's price, against
-   * Mindbody's pre-discount SubTotal. */
-  const expectedSubShown = roundToCents(expectedSub - feeDisc);
   const expectedDisc = discount ? discountCents(items, discount) / 100 : 0;
   /* T30: a package line has no tax basis of its own (see PricedCart
    * .packagePricing), so the strict assertion is skipped for the whole
@@ -1161,7 +1214,7 @@ export async function priceCart(
       taxTotal: null,
       grandTotal: null,
       expectedTotal: expected,
-      expectedSubtotal: expectedSubShown,
+      expectedSubtotal: expectedSub,
       expectedDiscount: expectedDisc,
       discountDisagrees: false,
       disagrees: false,
@@ -1184,8 +1237,7 @@ export async function priceCart(
   /* T75: the pre-tax figure Mindbody priced, SubTotal first, else the
    * grand total less its tax. Neither present, nothing to assert. */
   const theirSubtotal =
-    subTotal ??
-    (taxTotal !== null ? roundToCents(grandTotal - taxTotal + feeDisc) : null);
+    subTotal ?? (taxTotal !== null ? roundToCents(grandTotal - taxTotal) : null);
   const subDisagrees =
     packagePricing || theirSubtotal === null
       ? false
@@ -1198,19 +1250,10 @@ export async function priceCart(
    * reported figure, which the check below then holds to the cent. This
    * is also what the screen shows as the discount line. */
   const reportedDiscount = num(cart?.DiscountTotal);
-  const rawDiscount =
+  const discountTotal =
     subTotal !== null && taxTotal !== null
       ? roundToCents(subTotal + taxTotal - grandTotal)
       : reportedDiscount;
-  /* T301: the card fee's own DiscountAmount is how the fee is priced,
-   * not a discount, so it leaves both the discount and the subtotal the
-   * screen is told: a ticket with a 5 cent fee reads "Card processing fee
-   * $0.05" and no discount, and a promotion code's discount is the
-   * code's alone (priceCartWithPromotion reads this figure). */
-  const discountTotal =
-    rawDiscount === null ? null : roundToCents(rawDiscount - feeDisc);
-  const subTotalShown =
-    subTotal === null ? null : roundToCents(subTotal - feeDisc);
   /* T79: with a discount sent, what Mindbody took off must be our
    * spread's sum to the cent (a missing figure reads as 0, so a discount
    * Mindbody dropped is a stop, never a full-price charge that the screen
@@ -1223,12 +1266,12 @@ export async function priceCart(
   const disagrees = subDisagrees || discountDisagrees;
   return {
     suppressed: false,
-    subTotal: subTotalShown,
+    subTotal,
     discountTotal,
     taxTotal,
     grandTotal,
     expectedTotal: expected,
-    expectedSubtotal: expectedSubShown,
+    expectedSubtotal: expectedSub,
     expectedDiscount: expectedDisc,
     ...(disagrees ? { lineAudit: auditLines(items, cart) } : {}),
     /* The T30 carve-out: a package-bearing cart is excluded from the
@@ -1420,6 +1463,15 @@ function purchasedIds(entry: unknown): string[] {
 function purchasedMatches(entry: unknown, line: CartLine): boolean {
   const id = String(line.metadataId).trim().toLowerCase();
   const e = entry as Record<string, unknown> | null | undefined;
+  /* T302: a fee line still counted in cents names the anchor product,
+   * and the sale holds the family's product of that amount: any fee
+   * product this process has read answers to it. */
+  if (line.feeCents === undefined && isCardFeeProduct(line.type, line.metadataId)) {
+    const barcode = e?.["BarcodeId"];
+    if (typeof barcode !== "string") return false;
+    const b = barcode.trim().toLowerCase();
+    return b === id || cardFeeBarcodes().has(b);
+  }
   /* T254: a retail PRODUCT is matched on its barcode string and nothing
    * else, and its IsService is not read. Live sale 428877 (site 471,
    * 2026-11-17) holds Mat Rental, sent as product "0003", as
@@ -1502,9 +1554,9 @@ export function assertBasket(
       type: line.type,
       metadataId: id,
       name,
-      /* T301: the card fee is sold as ONE unit whatever its cents, so a
-       * fee line still counted in cents (a route's own copy of the
-       * ticket) orders one. */
+      /* T302: the card fee is sold as ONE unit of the product of its
+       * amount, so a fee line still counted in cents (a route's own copy
+       * of the ticket) orders one. */
       orderedQuantity:
         line.feeCents === undefined && isCardFeeProduct(line.type, line.metadataId)
           ? 1
@@ -1816,7 +1868,7 @@ export async function checkoutCart(
   promotionCode?: string | null,
 ): Promise<CheckoutOutcome> {
   assertCartLines(itemsIn, "checkoutCart");
-  /* T301: the card fee as Mindbody is sent it, exactly as the rehearsal
+  /* T302: the card fee as Mindbody is sent it, exactly as the rehearsal
    * priced it (same read, cached two minutes). */
   const items = await withCardFeeShape(itemsIn);
   const spread = discount ? spreadDiscount(items, discount) : undefined;
@@ -2588,7 +2640,7 @@ export async function contractWithRawTerms(
  * instant payment. The rest of the contract will be due on `StartDate`.
  * Pro-rate amount payment on `StartDate` is not supported by this
  * endpoint." So a chosen day sends StartDate (that day) + ProrateDate
- * (today, T301) + FirstPaymentOccurs: StartDate, and the Totals that come back ARE what
+ * (today, T299) + FirstPaymentOccurs: StartDate, and the Totals that come back ARE what
  * the card is charged today. No proration is computed in this codebase.
  * =================================================================== */
 
