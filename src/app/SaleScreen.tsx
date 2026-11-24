@@ -25,6 +25,7 @@ import { useTenderPick, type TenderPick } from "./useTenderPick";
 import { cancelOnDisplay, presenterId } from "./presenter";
 import { cardFeeCents, cardFeeWords, type CardFeeRule } from "@/lib/cardfee";
 import type { TypedCard } from "@/lib/typedcard";
+import type { ContractBilling } from "@/lib/contractbilling";
 import {
   TENDER_CHOICES,
   displayFirstName,
@@ -9304,6 +9305,8 @@ function commitmentText(
   c: ContractInfo,
   firstTotal: number | null,
   startKey: string | null,
+  /** T300: how the later start is billed; ignored for today. */
+  billing: ContractBilling = "prorate",
 ): string {
   const first = firstTotal ?? (startKey === null ? c.firstPaymentTotal : null);
   const firstText =
@@ -9311,12 +9314,21 @@ function commitmentText(
       ? money(first)
       : startKey === null
         ? "the first payment"
-        : "the prorated first payment";
+        : billing === "prorate"
+          ? "the prorated first payment"
+          : "the first payment";
+  /* T300: an unprorated start paid on its start day may owe nothing
+   * today; the rehearsal says so with a zero, and the sentence then
+   * charges nothing rather than "Charge $0.00". */
+  const todayText =
+    startKey !== null && billing === "startday" && first === 0
+      ? "Nothing charged today"
+      : `Charge ${firstText} today`;
   const recurring = c.recurringPaymentTotal;
   if (!c.autopayEnabled || recurring === null || recurring <= 0) {
     return startKey === null
       ? `Charge ${firstText} today. No recurring payments.`
-      : `Charge ${firstText} today, starting ${dayKeyLabel(startKey)}. ` +
+      : `${todayText}, starting ${dayKeyLabel(startKey)}. ` +
         "No recurring payments.";
   }
   if (startKey !== null) {
@@ -9324,11 +9336,17 @@ function commitmentText(
      * marked prorated in a word: the button is the thing a teacher
      * reads out to a customer, and the row above already labels the
      * figure. Saying the date twice pushed the label to a fourth line
-     * and grew the dialog. */
+     * and grew the dialog. T300: a first payment taken today with no
+     * proration does not know its next charge day (Mindbody has not
+     * been seen answering it), so it names the start day only. */
     let deferred =
-      `Charge ${firstText} today${first !== null ? ", prorated" : ""}, ` +
-      `then ${money(recurring)} ${frequencyPhrase(c)} from ` +
-      dayKeyLabel(startKey);
+      billing === "today"
+        ? `${todayText}, then ${money(recurring)} ${frequencyPhrase(c)}, ` +
+          `membership starting ${dayKeyLabel(startKey)}`
+        : `${todayText}${
+            billing === "prorate" && first !== null ? ", prorated" : ""
+          }, then ${money(recurring)} ${frequencyPhrase(c)} from ` +
+          dayKeyLabel(startKey);
     if (c.numberOfAutopays !== null && c.numberOfAutopays > 0) {
       deferred += `, for ${c.numberOfAutopays} payment${c.numberOfAutopays === 1 ? "" : "s"}`;
     } else if (c.autopaySchedule?.frequencyType === "SetNumberOfAutopays") {
@@ -9439,6 +9457,20 @@ function ContractDialog(props: {
    * null sends exactly what T30 sent. */
   const [startKey, setStartKey] = useState<string | null>(null);
   const [startOpen, setStartOpen] = useState(false);
+  /* T300: a later start is prorated from today unless the teacher turns
+   * that off; then its first payment is on the start day unless they
+   * choose today. Both are kept while the day changes, and mean nothing
+   * for a start today, which sends what T30 sent. */
+  const [prorate, setProrate] = useState(true);
+  const [payToday, setPayToday] = useState(false);
+  const billing: ContractBilling | null =
+    startKey === null
+      ? null
+      : prorate
+        ? "prorate"
+        : payToday
+          ? "today"
+          : "startday";
   /* T206: the card form, opened from the no-card notice and closed by
    * itself. It is THE card form (CardModal, T84's "file" mode), not a
    * second one, so one validator and one route cover every card this
@@ -9567,6 +9599,7 @@ function ContractDialog(props: {
         /* T99: the rehearsal is priced for the SAME dates the purchase
          * will send, so the figure on the button is the figure charged. */
         ...(startKey !== null ? { startDate: startKey } : {}),
+        ...(billing !== null ? { billing } : {}),
       }),
     })
       .then(async (r) => {
@@ -9607,14 +9640,19 @@ function ContractDialog(props: {
           error: e instanceof Error ? e.message : String(e),
         });
       });
-  }, [contract.id, clientId, blockReason, startKey, rehearseNonce]);
+  }, [contract.id, clientId, blockReason, startKey, billing, rehearseNonce]);
 
   /* The commitment, restated with the server's first-payment total once
    * the rehearsal lands. Under suppression no server total exists, so
    * the catalog's figure stands with an explicit "as quoted by Mindbody
    * at charge time" note below. */
   const serverTotal = rehearsal?.total ?? null;
-  const commitment = commitmentText(contract, serverTotal, startKey);
+  const commitment = commitmentText(
+    contract,
+    serverTotal,
+    startKey,
+    billing ?? undefined,
+  );
 
   /* T99: with a chosen start day the prorated first payment can ONLY be
    * Mindbody's. The catalog's figure is the un-prorated one, so a
@@ -9667,6 +9705,7 @@ function ContractDialog(props: {
           contractId: contract.id,
           clientId,
           ...(startKey !== null ? { startDate: startKey } : {}),
+          ...(billing !== null ? { billing } : {}),
           ...(shownFirst !== null ? { expectedFirstTotal: shownFirst } : {}),
           ...(auth?.displayRequestId
             ? { displayRequestId: auth.displayRequestId }
@@ -9702,7 +9741,12 @@ function ContractDialog(props: {
           kind: "paid",
           summary:
             `${contract.name} started for ${client?.name ?? "the client"}. ` +
-            commitmentText(contract, paidTotal, startKey).replace(
+            commitmentText(
+              contract,
+              paidTotal,
+              startKey,
+              billing ?? undefined,
+            ).replace(
               /^Charge/,
               "Charged",
             ),
@@ -9770,6 +9814,7 @@ function ContractDialog(props: {
           contractId: contract.id,
           clientId,
           ...(startKey !== null ? { startDate: startKey } : {}),
+          ...(billing !== null ? { billing } : {}),
         }),
       });
       const body = await res.json().catch(() => null);
@@ -9808,7 +9853,7 @@ function ContractDialog(props: {
         why: "The customer screen could not be reached.",
       });
     }
-  }, [clientId, contract.id, startKey]);
+  }, [clientId, contract.id, startKey, billing]);
 
   /* Wait: the present is retried until the screen comes free, and the
    * contract goes up by itself the moment it does. */
@@ -9933,9 +9978,11 @@ function ContractDialog(props: {
         <div className="contract-rows">
           <div className="contract-row">
             <span>
-              {startKey === null
+              {startKey === null || billing === "today"
                 ? "First payment (today)"
-                : "First payment today (prorated)"}
+                : billing === "prorate"
+                  ? "First payment today (prorated)"
+                  : "Due today"}
             </span>
             <span className="amt">
               {rehearsal?.loading ? (
@@ -10015,6 +10062,39 @@ function ContractDialog(props: {
             <ChevronIcon />
           </span>
         </button>
+
+        {/* T300: how a later start is billed. Prorated from today by
+            default (the member is in now, the contract's payments run
+            from the day); off, the membership starts on the day, and
+            its first payment is on that day unless taken today. Each
+            change re-runs the rehearsal, so the figure above is always
+            Mindbody's for the shape on screen. */}
+        {startKey !== null ? (
+          <>
+            <ContractChoice
+              label="Membership starts"
+              disabled={purchasing || outcome?.kind === "paid"}
+              options={[
+                { key: "now", text: "Today, prorated" },
+                { key: "day", text: dayKeyLabel(startKey) },
+              ]}
+              chosen={prorate ? "now" : "day"}
+              onChoose={(k) => setProrate(k === "now")}
+            />
+            {!prorate ? (
+              <ContractChoice
+                label="First payment"
+                disabled={purchasing || outcome?.kind === "paid"}
+                options={[
+                  { key: "day", text: dayKeyLabel(startKey) },
+                  { key: "today", text: "Today" },
+                ]}
+                chosen={payToday ? "today" : "day"}
+                onChoose={(k) => setPayToday(k === "today")}
+              />
+            ) : null}
+          </>
+        ) : null}
 
         {/* T205: the explicit way to put the contract in front of the
             student, when there is a screen to put it on. With the rule
@@ -10347,6 +10427,43 @@ function ContractDialog(props: {
             onClose={() => setStartOpen(false)}
           />
         ) : null}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * T300: one labelled pair of 64px choices in the contract dialog. The
+ * chosen one is drawn in --accent (selected) and says so to a screen
+ * reader with aria-pressed.
+ */
+function ContractChoice(props: {
+  label: string;
+  options: { key: string; text: string }[];
+  chosen: string;
+  disabled: boolean;
+  onChoose: (key: string) => void;
+}) {
+  const { label, options, chosen, disabled, onChoose } = props;
+  return (
+    <div className="contract-choice" role="group" aria-label={label}>
+      <span className="contract-choice-label">{label}</span>
+      <div className="contract-choice-opts">
+        {options.map((o) => (
+          <button
+            key={o.key}
+            className={
+              "contract-choice-opt" + (o.key === chosen ? " chosen" : "")
+            }
+            aria-pressed={o.key === chosen}
+            disabled={disabled}
+            onClick={() => {
+              if (o.key !== chosen) onChoose(o.key);
+            }}
+          >
+            {o.text}
+          </button>
+        ))}
       </div>
     </div>
   );

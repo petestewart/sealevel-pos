@@ -1724,7 +1724,18 @@ while `git clone` works, so clone the repo rather than fetching files.
   sends `StartDate`, `ProrateDate` and `FirstPaymentOccurs` together, as
   studio wall-clock strings, and shows the rehearsal's own Total: no
   proration is ever computed here. Starting today sends none of the
-  three.
+  three. **`ProrateDate` must be BEFORE `StartDate`** (T299, Pete's
+  counter, 2026-11-24: "ProrateDate. Cannot be on or after StartDate."):
+  it is the day the prorated stretch BEGINS, so it is sent as today and
+  `StartDate` as the chosen day. Proration is the DEFAULT for a later
+  start, not the only shape (T300, `src/lib/contractbilling.ts`): the
+  dialog can turn it off, and then the first payment is on the start day
+  (`FirstPaymentOccurs: "StartDate"`, no `ProrateDate`) or today
+  (`"Instant"`). Rehearsed live (2026-11-24, `Test: true`): all three
+  accepted, the start-day shape prices $0.00 today, the today shape the
+  full first payment. Site 471's four contracts all bill `ClientsChargedOn:
+  OnSaleDate`; which day of the month an unprorated start then bills on
+  is unseen.
 - **Mindbody does not enforce class capacity; the caller must.**
   `addclienttoclass`'s own description says so (class.yml:1077: "To
   prevent overbooking a class ... it is necessary to first check the

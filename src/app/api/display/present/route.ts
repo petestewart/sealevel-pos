@@ -17,6 +17,7 @@ import { cartSha256, carriesTender } from "@/lib/cartsha";
 import { readTicketPayload, tendersFromCharge } from "@/lib/displayticket";
 import { readContractPayload } from "@/lib/displaycontract";
 import { buildContractScene } from "@/lib/contractscene";
+import { readContractBilling } from "@/lib/contractbilling";
 import { readWaiverPayload } from "@/lib/displaywaiver";
 import { MAX_PASSES, readPassesPayload } from "@/lib/displaypasses";
 import { readClientFirstName } from "@/lib/clients";
@@ -349,6 +350,11 @@ export async function POST(request: Request) {
         { status: 400 },
       );
     }
+    /* T300: how a later start is billed, read the purchase's way. */
+    const readBilling = readContractBilling(input.billing);
+    if (!readBilling.ok) {
+      return NextResponse.json({ error: readBilling.error }, { status: 400 });
+    }
     const built = await buildContractScene({
       clientId,
       contractId: contractId as number,
@@ -356,6 +362,7 @@ export async function POST(request: Request) {
         typeof rawStart === "string" && rawStart.trim().length > 0
           ? rawStart.trim()
           : null,
+      billing: readBilling.billing,
       clientFirstName: await readClientFirstName(clientId),
     });
     if (!built.ok) {
