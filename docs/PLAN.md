@@ -1323,6 +1323,34 @@ which needs nothing afterwards.
   the dialog already says. The fake refuses the old shape in Mindbody's
   words. Owed: the rehearsal's prorated Total read live for one chosen
   day, and one real deferred sale.
+- [x] **T300 A later start can be billed three ways.** Built 2026-11-24
+  (Pete: "start date defaults to today but can be set in the future. if
+  set to the future, defaults to pro-rate from today (membership starts
+  now even tho contract date begins at the start date) but that can be
+  turned off (membership starts on contract date)", and the first
+  payment of an unprorated start as "a choice in the dialog"). With a
+  later day chosen, the contract dialog shows "Membership starts" (Today,
+  prorated | the day) and, when that is the day, "First payment" (the
+  day | Today), each a pair of 64px choices. `billing` on
+  `/api/purchase-contract` and `/api/display/present` is `prorate`
+  (default: StartDate, ProrateDate today, FirstPaymentOccurs StartDate),
+  `startday` (StartDate, FirstPaymentOccurs StartDate) or `today`
+  (StartDate, FirstPaymentOccurs Instant); `src/lib/contractbilling.ts`.
+  Ignored for a start today, which sends what T30 sent. It rides the
+  rehearsal and the purchase alike, is kept on a customer-screen
+  signature's private half and checked at the purchase like the start
+  day, and is in the `[contract-signature]` line and the sale log. The
+  customer screen words each shape ("Today, billing from ...", "Nothing
+  today"). Every figure is still the rehearsal's; "Nothing charged today"
+  only when Mindbody prices the start-day shape at zero. Driven against
+  the fake (which invents the three figures) in a browser: each choice
+  re-rehearses with the right fields, and a PIN-overridden purchase sent
+  the shape it was priced with. **Owed, live and on the dummy client
+  only while the studio is closed:** what Mindbody's rehearsal answers
+  for `startday` and `today`, and the next payment date of each
+  (`/client/clientcontracts` `UpcomingAutopayEvents`): the four contracts
+  on site 471 all bill `OnSaleDate`, and whether a `today` start then
+  bills on the 1st or on the sale's day of the month is unseen.
 - [ ] **T237 Hardware day.** Buy and pair the Terminal, the production
   token, `POS_READER_LIVE=true`. **Never `POS_WRITE_CLIENT_IDS` while the
   studio is open**: it suppresses every write for every other client,

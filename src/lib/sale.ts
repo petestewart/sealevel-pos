@@ -38,6 +38,10 @@ import {
   spreadDiscount,
   type Discount,
 } from "./comp";
+import {
+  DEFAULT_CONTRACT_BILLING,
+  type ContractBilling,
+} from "./contractbilling";
 import { logSharedId } from "./clientrecord";
 import { mindbody, mindbodyHttpStatus, type Actor } from "./mindbody";
 import { PROMO_TOOK_NOTHING, type PromotionOutcome } from "./promocode";
@@ -2544,7 +2548,9 @@ export interface ContractPurchaseOutcome {
  *   chosen day sends "StartDate" instead, which per the endpoint
  *   description (1866) charges the pro-rate amount plus whatever the
  *   contract requires instantly, and leaves the rest due on the start
- *   date.
+ *   date. T300: a chosen day billed `today` (no proration, first
+ *   payment now) sends "Instant" with the StartDate; see
+ *   src/lib/contractbilling.ts for the three shapes.
  * - ProrateDate (6291): T99, sent only with a chosen start date. Per
  *   1866 its presence is what puts the pro-rate amount into the Totals,
  *   which is the figure the dialog shows. Nothing here computes a
@@ -2612,6 +2618,9 @@ export async function purchaseContract(opts: {
    *  exactly: no StartDate, no ProrateDate, FirstPaymentOccurs
    *  Instant. */
   startDate?: string | null;
+  /** T300: how a LATER start is billed (src/lib/contractbilling.ts).
+   *  Ignored for a start today; absent means prorate. */
+  billing?: ContractBilling | null;
   /** T49: the signed-in teacher, when there is one. */
   actor?: Actor | null;
   /**
@@ -2663,7 +2672,14 @@ export async function purchaseContract(opts: {
    * ("Charge the prorated first payment today, then $X monthly from
    * <day>"). `deferred` means the chosen day is after today, so today is
    * always before it. */
-  const prorateWall = deferred ? `${studioDayKey()}T00:00:00` : null;
+  const billing: ContractBilling = opts.billing ?? DEFAULT_CONTRACT_BILLING;
+  /* T300: only a prorated later start sends a ProrateDate. */
+  const prorateWall =
+    deferred && billing === "prorate" ? `${studioDayKey()}T00:00:00` : null;
+  /* T300: a later start pays on the start day unless the teacher chose
+   * to take the first payment today. */
+  const firstPaymentOccurs =
+    deferred && billing !== "today" ? "StartDate" : "Instant";
   const res = await oneContractCallPerClient(clientId, () => mindbody("/sale/purchasecontract", {
     method: "POST",
     body: {
@@ -2671,10 +2687,9 @@ export async function purchaseContract(opts: {
       ClientId: clientId,
       Test: test,
       LocationId: STUDIO_LOCATION_ID,
-      FirstPaymentOccurs: deferred ? "StartDate" : "Instant",
-      ...(startWall !== null && prorateWall !== null
-        ? { StartDate: startWall, ProrateDate: prorateWall }
-        : {}),
+      FirstPaymentOccurs: firstPaymentOccurs,
+      ...(startWall !== null ? { StartDate: startWall } : {}),
+      ...(prorateWall !== null ? { ProrateDate: prorateWall } : {}),
       StoredCardInfo: { LastFour: lastFour },
       /* T205: the signature, on the REAL purchase only. */
       ...(!test && typeof opts.clientSignature === "string" &&

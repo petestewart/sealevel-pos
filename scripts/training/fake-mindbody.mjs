@@ -989,7 +989,19 @@ function handle(method, path, q, body, res) {
       }
       const c = contracts.find((x) => x.Id === Number(body.ContractId)) ?? contracts[0];
       const tax = 0;
-      const totals = { SubTotal: c.FirstPaymentAmountTotal, Discount: 0, Tax: tax, Total: c.FirstPaymentAmountTotal };
+      /* T300: a later start's first figure follows its shape. The
+       * amounts are INVENTED (live Mindbody has not been seen answering
+       * the unprorated shapes): prorated, a part of a payment; on the
+       * start day, nothing today; taken today, the first payment. */
+      const first = body.StartDate
+        ? body.ProrateDate
+          ? Math.round(c.FirstPaymentAmountTotal * 40) / 100
+          : body.FirstPaymentOccurs === "StartDate"
+            ? 0
+            : c.FirstPaymentAmountTotal
+        : c.FirstPaymentAmountTotal;
+      console.error(`[fake] purchasecontract Test=${body.Test} StartDate=${body.StartDate ?? "-"} ProrateDate=${body.ProrateDate ?? "-"} FirstPaymentOccurs=${body.FirstPaymentOccurs} -> ${first}`);
+      const totals = { SubTotal: first, Discount: 0, Tax: tax, Total: first };
       if (body.Test === true) return send(res, 200, { Totals: totals, ClientContractId: null });
       contractsHeld[body.ClientId] = [{ Id: 7100, ContractName: c.Name, StartDate: (body.StartDate ?? day(0)) + "T00:00:00", EndDate: day(365) + "T00:00:00" }];
       const cl = byId(body.ClientId);
