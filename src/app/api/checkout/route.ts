@@ -1561,7 +1561,7 @@ async function runCheckout(
    * It is sold only on a plain one-cart ticket paid by ONE card (on file,
    * typed, or the reader), with no discount, override, gift card, account
    * credit or line for someone else, and only when the server's own rule
-   * is on and the line counts tax-exempt cents (T299: /api/catalog serves
+   * is on and the line counts tax-exempt cents (T301: /api/catalog serves
    * the fee as a $0.01 unit, whatever the product costs, and
    * src/lib/sale.ts sends Mindbody one discounted unit of it). Refused
    * here, before any Mindbody call, in words; the quantity is checked

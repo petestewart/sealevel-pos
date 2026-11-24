@@ -68,13 +68,13 @@ only. **T297 (2026-11-23): a 2.6% card processing fee on card sales under
 $10** (Pete: "we already have a sign at the front desk stating that will
 happen"), on the card on file, Manual card entry and the reader alike,
 and NOT on a reader card Square reads as DEBIT. Mindbody takes no price
-on a cart line (31 shapes tried by T299, none honoured), so the fee is a
+on a cart line (31 shapes tried by T301, none honoured), so the fee is a
 retail product the studio creates, tax exempt (`POS_CARD_FEE_PRODUCT_ID`;
 unset, there is no fee; `src/lib/cardfee.ts`). The Cart screen adds and
 removes the line with the tender; `/api/checkout` refuses it anywhere
 else or at the wrong quantity; on reader debit it lowers the Square hold
 by the fee before the sale. Not on discounted, override, gift card,
-credit or T90 tickets. **T299 (2026-11-24): ONE line on the receipt**
+credit or T90 tickets. **T301 (2026-11-24): ONE line on the receipt**
 (Pete, on sale 430178's five "$0.01" fee rows: "their receipt is going
 to look very unprofessional"). T297 sold the fee as a quantity of a
 $0.01 product, which Mindbody prints one row per cent. The product is
@@ -1736,7 +1736,18 @@ while `git clone` works, so clone the repo rather than fetching files.
   sends `StartDate`, `ProrateDate` and `FirstPaymentOccurs` together, as
   studio wall-clock strings, and shows the rehearsal's own Total: no
   proration is ever computed here. Starting today sends none of the
-  three.
+  three. **`ProrateDate` must be BEFORE `StartDate`** (T299, Pete's
+  counter, 2026-11-24: "ProrateDate. Cannot be on or after StartDate."):
+  it is the day the prorated stretch BEGINS, so it is sent as today and
+  `StartDate` as the chosen day. Proration is the DEFAULT for a later
+  start, not the only shape (T300, `src/lib/contractbilling.ts`): the
+  dialog can turn it off, and then the first payment is on the start day
+  (`FirstPaymentOccurs: "StartDate"`, no `ProrateDate`) or today
+  (`"Instant"`). Rehearsed live (2026-11-24, `Test: true`): all three
+  accepted, the start-day shape prices $0.00 today, the today shape the
+  full first payment. Site 471's four contracts all bill `ClientsChargedOn:
+  OnSaleDate`; which day of the month an unprorated start then bills on
+  is unseen.
 - **Mindbody does not enforce class capacity; the caller must.**
   `addclienttoclass`'s own description says so (class.yml:1077: "To
   prevent overbooking a class ... it is necessary to first check the

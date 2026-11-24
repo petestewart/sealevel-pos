@@ -49,7 +49,7 @@ async function currentBundles(): Promise<{
 /**
  * T297: the card fee as the Cart screen needs it: the product to put on
  * the ticket and the rule. Off (null) unless POS_CARD_FEE_PRODUCT_ID is
- * set AND the product is tax exempt AND (T299) priced at least the
+ * set AND the product is tax exempt AND (T301) priced at least the
  * largest fee the rule can make, because Mindbody is sent ONE unit of it
  * discounted down to the fee (src/lib/sale.ts withCardFeeShape), and a
  * discount cannot raise a price. A product still at T297's $0.01 is

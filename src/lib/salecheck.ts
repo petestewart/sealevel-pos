@@ -196,7 +196,7 @@ export async function checkRow(
     const sold = reads.flatMap((r) => r.items);
     for (const want of items) {
       const matches = sold.filter((g) => lineMatches(want, g));
-      /* T299: the card fee is logged in cents and sold as ONE unit. */
+      /* T301: the card fee is logged in cents and sold as ONE unit. */
       const wantQty =
         typeof want?.type === "string" &&
         (typeof want?.id === "string" || typeof want?.id === "number") &&

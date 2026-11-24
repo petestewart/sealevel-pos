@@ -39,6 +39,10 @@ import {
   type Discount,
 } from "./comp";
 import { cardFeeEnv, isCardFeeProduct, maxCardFeeCents } from "./cardfee";
+import {
+  DEFAULT_CONTRACT_BILLING,
+  type ContractBilling,
+} from "./contractbilling";
 import { logSharedId } from "./clientrecord";
 import { mindbody, mindbodyHttpStatus, target, type Actor } from "./mindbody";
 import { PROMO_TOOK_NOTHING, type PromotionOutcome } from "./promocode";
@@ -204,7 +208,7 @@ export async function productsByIds(
   return parseProducts(body).filter((p) => ids.includes(String(p.id)));
 }
 
-/** T299: the fee product as last read, per target, for two minutes (the
+/** T301: the fee product as last read, per target, for two minutes (the
  *  catalog's own cache length), so pricing a ticket with the fee costs
  *  one extra read every two minutes at most. A failed read is not kept. */
 let feeProductCache: { key: string; at: number; item: CatalogItem | null } | null = null;
@@ -225,7 +229,7 @@ async function cardFeeProduct(productId: string): Promise<CatalogItem | null> {
 }
 
 /**
- * T299: the card fee's line in Mindbody's shape. Every cart reaches
+ * T301: the card fee's line in Mindbody's shape. Every cart reaches
  * Mindbody through priceCart or checkoutCart, and both call this first,
  * so the browser and the routes go on counting the fee as a quantity of
  * cents at $0.01 (src/lib/cardfee.ts) while Mindbody is sent ONE unit of
@@ -290,7 +294,7 @@ export async function withCardFeeShape(
   });
 }
 
-/** T299: what the fee lines' DiscountAmount takes off, in dollars: the
+/** T301: what the fee lines' DiscountAmount takes off, in dollars: the
  *  product's price less the fee. It is how the fee is priced, not a
  *  discount anybody gave, so priceCart takes it back out of the subtotal
  *  and the discount it reports. */
@@ -606,7 +610,7 @@ export interface CartLine {
    */
   forClientId?: string | null;
   /**
-   * T299: set ONLY by `withCardFeeShape`, on the card fee's line as it
+   * T301: set ONLY by `withCardFeeShape`, on the card fee's line as it
    * goes to Mindbody: the fee in cents. The line is then ONE unit at the
    * fee product's own `price`, discounted by the difference, so the
    * receipt shows one line. Never set by a browser or a route.
@@ -695,7 +699,7 @@ export function expectedTotal(
 ): number {
   let total = 0;
   items.forEach((line, i) => {
-    /* T299: the card fee's line costs the fee, not its product's price. */
+    /* T301: the card fee's line costs the fee, not its product's price. */
     const gross =
       line.feeCents !== undefined
         ? line.feeCents / 100
@@ -1013,7 +1017,7 @@ export function cartItemsPayload(
   return items.flatMap((line, i) => {
     const off = discount?.[i] ?? 0;
     const item = { Type: line.type, Metadata: { Id: line.metadataId } };
-    /* T299: the card fee, one unit of its product discounted to the fee.
+    /* T301: the card fee, one unit of its product discounted to the fee.
      * A teacher discount never shares a ticket with the fee (refused by
      * /api/checkout), so a spread landing here is a bug, said loudly. */
     if (line.feeCents !== undefined) {
@@ -1063,13 +1067,13 @@ export async function priceCart(
   promotionCode?: string | null,
 ): Promise<PricedCart> {
   assertCartLines(itemsIn, "priceCart");
-  /* T299: the card fee as Mindbody is sent it, one discounted unit. */
+  /* T301: the card fee as Mindbody is sent it, one discounted unit. */
   const items = await withCardFeeShape(itemsIn);
   const feeDisc = feeDiscountOf(items);
   const spread = discount ? spreadDiscount(items, discount) : undefined;
   const expected = expectedTotal(items, spread);
   const expectedSub = expectedSubtotal(items);
-  /* T299: what the screen is told the subtotal is: the fee at its own
+  /* T301: what the screen is told the subtotal is: the fee at its own
    * amount. T75 compares `expectedSub`, the product's price, against
    * Mindbody's pre-discount SubTotal. */
   const expectedSubShown = roundToCents(expectedSub - feeDisc);
@@ -1198,7 +1202,7 @@ export async function priceCart(
     subTotal !== null && taxTotal !== null
       ? roundToCents(subTotal + taxTotal - grandTotal)
       : reportedDiscount;
-  /* T299: the card fee's own DiscountAmount is how the fee is priced,
+  /* T301: the card fee's own DiscountAmount is how the fee is priced,
    * not a discount, so it leaves both the discount and the subtotal the
    * screen is told: a ticket with a 5 cent fee reads "Card processing fee
    * $0.05" and no discount, and a promotion code's discount is the
@@ -1498,7 +1502,7 @@ export function assertBasket(
       type: line.type,
       metadataId: id,
       name,
-      /* T299: the card fee is sold as ONE unit whatever its cents, so a
+      /* T301: the card fee is sold as ONE unit whatever its cents, so a
        * fee line still counted in cents (a route's own copy of the
        * ticket) orders one. */
       orderedQuantity:
@@ -1812,7 +1816,7 @@ export async function checkoutCart(
   promotionCode?: string | null,
 ): Promise<CheckoutOutcome> {
   assertCartLines(itemsIn, "checkoutCart");
-  /* T299: the card fee as Mindbody is sent it, exactly as the rehearsal
+  /* T301: the card fee as Mindbody is sent it, exactly as the rehearsal
    * priced it (same read, cached two minutes). */
   const items = await withCardFeeShape(itemsIn);
   const spread = discount ? spreadDiscount(items, discount) : undefined;
@@ -2583,8 +2587,8 @@ export async function contractWithRawTerms(
  * `StartDate` => returns pro-rate amount + contract amount requiring
  * instant payment. The rest of the contract will be due on `StartDate`.
  * Pro-rate amount payment on `StartDate` is not supported by this
- * endpoint." So a chosen day sends StartDate + ProrateDate +
- * FirstPaymentOccurs: StartDate, and the Totals that come back ARE what
+ * endpoint." So a chosen day sends StartDate (that day) + ProrateDate
+ * (today, T301) + FirstPaymentOccurs: StartDate, and the Totals that come back ARE what
  * the card is charged today. No proration is computed in this codebase.
  * =================================================================== */
 
@@ -2694,11 +2698,16 @@ export interface ContractPurchaseOutcome {
  *   chosen day sends "StartDate" instead, which per the endpoint
  *   description (1866) charges the pro-rate amount plus whatever the
  *   contract requires instantly, and leaves the rest due on the start
- *   date.
- * - ProrateDate (6291): T99, sent as the chosen start date and only
- *   then. Per 1866 its presence is what puts the pro-rate amount into
- *   the Totals, which is the figure the dialog shows. Nothing here
- *   computes a proration.
+ *   date. T300: a chosen day billed `today` (no proration, first
+ *   payment now) sends "Instant" with the StartDate; see
+ *   src/lib/contractbilling.ts for the three shapes.
+ * - ProrateDate (6291): T99, sent only with a chosen start date. Per
+ *   1866 its presence is what puts the pro-rate amount into the Totals,
+ *   which is the figure the dialog shows. Nothing here computes a
+ *   proration. It is TODAY (the studio's day), the start of the prorated
+ *   stretch: Mindbody refuses a ProrateDate "on or after StartDate"
+ *   (T299; T99 sent the start date itself and every deferred start was
+ *   refused).
  * - Payment: exactly one of CreditCardInfo (6261, "only required if
  *   StoredCardInfo is not passed and both UseDirectDebit and
  *   UseAccountCredit are false"), StoredCardInfo (6264, the mirror
@@ -2759,6 +2768,9 @@ export async function purchaseContract(opts: {
    *  exactly: no StartDate, no ProrateDate, FirstPaymentOccurs
    *  Instant. */
   startDate?: string | null;
+  /** T300: how a LATER start is billed (src/lib/contractbilling.ts).
+   *  Ignored for a start today; absent means prorate. */
+  billing?: ContractBilling | null;
   /** T49: the signed-in teacher, when there is one. */
   actor?: Actor | null;
   /**
@@ -2800,6 +2812,24 @@ export async function purchaseContract(opts: {
    * as site-local either way, and toISOString() would land this seven
    * hours out (CLAUDE.md, and roster.ts studioWall). */
   const startWall = deferred ? `${start}T00:00:00` : null;
+  /* T299: ProrateDate is the day the PRORATED stretch begins, not the
+   * start day. Mindbody refuses one equal to StartDate ("The following
+   * parameter is invalid: ProrateDate. Cannot be on or after StartDate.",
+   * Pete's counter, 2026-11-24, every chosen day refused). T99 sent the
+   * chosen day as both. The client is a member from TODAY, pays the
+   * stretch from today to the chosen day now, and the monthly payments
+   * run from the chosen day, which is what the dialog has always said
+   * ("Charge the prorated first payment today, then $X monthly from
+   * <day>"). `deferred` means the chosen day is after today, so today is
+   * always before it. */
+  const billing: ContractBilling = opts.billing ?? DEFAULT_CONTRACT_BILLING;
+  /* T300: only a prorated later start sends a ProrateDate. */
+  const prorateWall =
+    deferred && billing === "prorate" ? `${studioDayKey()}T00:00:00` : null;
+  /* T300: a later start pays on the start day unless the teacher chose
+   * to take the first payment today. */
+  const firstPaymentOccurs =
+    deferred && billing !== "today" ? "StartDate" : "Instant";
   const res = await oneContractCallPerClient(clientId, () => mindbody("/sale/purchasecontract", {
     method: "POST",
     body: {
@@ -2807,10 +2837,9 @@ export async function purchaseContract(opts: {
       ClientId: clientId,
       Test: test,
       LocationId: STUDIO_LOCATION_ID,
-      FirstPaymentOccurs: deferred ? "StartDate" : "Instant",
-      ...(startWall !== null
-        ? { StartDate: startWall, ProrateDate: startWall }
-        : {}),
+      FirstPaymentOccurs: firstPaymentOccurs,
+      ...(startWall !== null ? { StartDate: startWall } : {}),
+      ...(prorateWall !== null ? { ProrateDate: prorateWall } : {}),
       StoredCardInfo: { LastFour: lastFour },
       /* T205: the signature, on the REAL purchase only. */
       ...(!test && typeof opts.clientSignature === "string" &&

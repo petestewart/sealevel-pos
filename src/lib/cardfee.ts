@@ -8,7 +8,7 @@
  *
  * Mindbody has no surcharge field and ignores a price sent on a cart
  * line (probed on 471, 2026-11-23: Metadata Price, Amount and SalePrice
- * all priced at the catalog's $1.81; and T299, 2026-11-24: 25 more
+ * all priced at the catalog's $1.81; and T301, 2026-11-24: 25 more
  * shapes on the fee product, twelve Metadata keys, six wrapper keys,
  * string Metadata and a negative DiscountAmount, every one priced at the
  * catalog's $0.01 or refused). T297 first sold the fee as a QUANTITY of
@@ -16,7 +16,7 @@
  * "$0.01" row per cent (Pete, sale 430178: five rows for a 5 cent fee:
  * "their receipt is going to look very unprofessional").
  *
- * T299: the fee is now ONE unit of the fee product, which the studio
+ * T301: the fee is now ONE unit of the fee product, which the studio
  * prices at or above the largest fee the rule can make ($0.26 for 2.6%
  * under $10), discounted down to the fee with the cart line's
  * DiscountAmount, the field the counter's teacher discounts have used
@@ -49,7 +49,7 @@ export interface CardFeeRule {
 }
 
 /** The unit the BROWSER's fee line is counted in, in dollars: its
- *  quantity is the fee in cents. Not the fee product's price (T299). */
+ *  quantity is the fee in cents. Not the fee product's price (T301). */
 export const CARD_FEE_UNIT_PRICE = 0.01;
 
 /** The tenders that carry the fee. The reader's debit exemption is
@@ -79,14 +79,14 @@ export function cardFeeCents(preFeeCents: number, rule: CardFeeRule): number {
   return Math.max(1, Math.round(preFeeCents * rule.rate));
 }
 
-/** T299: the largest fee this rule can make, in cents: the fee on a
+/** T301: the largest fee this rule can make, in cents: the fee on a
  *  sale one cent under the floor. The fee product must cost at least
  *  this, since a discount can only bring a price down. */
 export function maxCardFeeCents(rule: CardFeeRule): number {
   return cardFeeCents(rule.underCents - 1, rule);
 }
 
-/** T299: is this cart line the card fee? Only a Product line whose id is
+/** T301: is this cart line the card fee? Only a Product line whose id is
  *  the rule's product. With the rule off, nothing is. */
 export function isCardFeeProduct(
   type: string,

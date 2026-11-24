@@ -1277,7 +1277,7 @@ which needs nothing afterwards.
   exempt" (100000) as its PRIMARY category, so it is on no counter shelf
   and the app now reads a primary 100000 as tax exempt too. Read live:
   14 units price $0.14, tax $0.00, and BLACK26 takes nothing off it.
-  **Superseded by T299**: the receipt printed one $0.01 row per cent,
+  **Superseded by T301**: the receipt printed one $0.01 row per cent,
   so the fee is now one discounted unit of a product priced $0.26.
 - [x] **T298 A promotion code on every sale, for a run of days.** Built
   2026-11-23 (Pete: "add a new feature where we can have a promo code
@@ -1311,7 +1311,54 @@ which needs nothing afterwards.
   retail alone (the quiet line), a pass added ($210 less $31.50),
   Remove, a new ticket, a card-on-file charge carrying the code, and the
   roster dialog filling it. Owed: Pete saves BLACK26 on prod.
-- [x] **T299 The card fee is ONE line on the receipt.** Built 2026-11-24
+- [x] **T299 A membership started on a later day is no longer refused.**
+  Fixed 2026-11-24 (Pete, the contract dialog with Starts set to Tue
+  Dec 1: "Mindbody refused the rehearsal: The following parameter is
+  invalid: ProrateDate. Cannot be on or after StartDate."). T99 sent the
+  chosen day as both `StartDate` and `ProrateDate`, so every deferred
+  start was refused on the rehearsal and never reached a charge.
+  `ProrateDate` is now TODAY (the studio's day), the start of the
+  prorated stretch, with `StartDate` the chosen day and
+  `FirstPaymentOccurs: "StartDate"`: the client pays the prorated stretch
+  now and the monthly payments run from the chosen day, which is what
+  the dialog already says. The fake refuses the old shape in Mindbody's
+  words. Owed: the rehearsal's prorated Total read live for one chosen
+  day, and one real deferred sale.
+- [x] **T300 A later start can be billed three ways.** Built 2026-11-24
+  (Pete: "start date defaults to today but can be set in the future. if
+  set to the future, defaults to pro-rate from today (membership starts
+  now even tho contract date begins at the start date) but that can be
+  turned off (membership starts on contract date)", and the first
+  payment of an unprorated start as "a choice in the dialog"). With a
+  later day chosen, the contract dialog shows "Membership starts" (Today,
+  prorated | the day) and, when that is the day, "First payment" (the
+  day | Today), each a pair of 64px choices. `billing` on
+  `/api/purchase-contract` and `/api/display/present` is `prorate`
+  (default: StartDate, ProrateDate today, FirstPaymentOccurs StartDate),
+  `startday` (StartDate, FirstPaymentOccurs StartDate) or `today`
+  (StartDate, FirstPaymentOccurs Instant); `src/lib/contractbilling.ts`.
+  Ignored for a start today, which sends what T30 sent. It rides the
+  rehearsal and the purchase alike, is kept on a customer-screen
+  signature's private half and checked at the purchase like the start
+  day, and is in the `[contract-signature]` line and the sale log. The
+  customer screen words each shape ("Today, billing from ...", "Nothing
+  today"). Every figure is still the rehearsal's; "Nothing charged today"
+  only when Mindbody prices the start-day shape at zero. Driven against
+  the fake (which invents the three figures) in a browser: each choice
+  re-rehearses with the right fields, and a PIN-overridden purchase sent
+  the shape it was priced with, and a paired customer screen showed
+  each shape's words. **Rehearsed live on prod (2026-11-24, `Test:
+  true` only, dummy client 100042041 paying by account, contracts 110,
+  105 and 109, start 2026-12-01):** T99's old shape refused in the very
+  sentence Pete saw; `prorate` priced 38.64 / 44.00 / 46.64; `startday`
+  priced 0.00 for all three; `today` priced the full first payment (145 /
+  165 / 175). So all three shapes are accepted and "Nothing charged
+  today" is what the start-day shape will say. **Owed, on the dummy
+  client:** one real sale of each and the next payment date of each
+  (`/client/clientcontracts` `UpcomingAutopayEvents`): the four contracts
+  on site 471 all bill `OnSaleDate`, and whether a `today` start then
+  bills on the 1st or on the sale's day of the month is unseen.
+- [x] **T301 The card fee is ONE line on the receipt.** Built 2026-11-24
   (Pete, on sale 430178, a $2.00 LMNT with five "Credit card fee $0.01"
   rows: "their receipt is going to look very unprofessional", and "we
   can change the price of an item in the mindbody app, you're telling me

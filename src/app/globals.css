@@ -6428,6 +6428,53 @@ textarea.reason-note-field:disabled::placeholder {
   font-weight: 600;
 }
 
+/* T300: a labelled pair of 64px choices under the start row (how a
+ * later start is billed). Drawn with the same 1px --line as that row;
+ * the chosen one takes --accent, which here means "selected". */
+.contract-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 0 16px;
+}
+
+.contract-choice-label {
+  font-size: 17px;
+  color: var(--ink);
+}
+
+.contract-choice-opts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.contract-choice-opt {
+  min-height: 64px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 17px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.contract-choice-opt:active {
+  background: var(--surface-2);
+}
+
+.contract-choice-opt.chosen {
+  border: 2px solid var(--accent);
+  color: var(--accent);
+}
+
+.contract-choice-opt:disabled {
+  color: var(--muted);
+  cursor: default;
+}
+
 /* The chevron in that row points right, like the rail's closed section
  * mark, and never turns: it opens a layer, it does not disclose. */
 .contract-start .cat-chev {
