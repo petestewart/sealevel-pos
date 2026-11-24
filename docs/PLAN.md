@@ -1363,10 +1363,16 @@ which needs nothing afterwards.
   contract dialog said "tap Understood" with no Understood to tap). The
   dialog now reads `GET /api/charge-holds` for its client when it opens,
   and on a 409 `held` from `/api/purchase-contract` shows the holds in
-  place of the charge (time, kind, sale id) with 64px Check again and
-  Understood (`POST /api/charge-holds/acknowledge`; a pending hold only
-  Check again). While one stands, the charge and "Sign on the customer
-  screen" are off. Type-checked; not yet driven in a browser.
+  place of the charge (time, kind, sale id), FIRST in the dialog, with
+  64px Check again and Understood (`POST /api/charge-holds/acknowledge`;
+  a pending hold only Check again), and reads them again after every
+  purchase answer. While one stands, the charge and "Sign on the
+  customer screen" are off. Driven against the fake in a browser
+  (`FAKE_MB_CONTRACT_FAIL=1` answers the first real membership purchase
+  500): the failed sale showed the hold at once; a reopened dialog showed
+  it with the charge off; Understood cleared it and the next sale sold;
+  and a second iPad's dialog, open before the hold was made, was refused
+  409 with nothing sent to Mindbody and showed the hold in place.
 - [ ] **T237 Hardware day.** Buy and pair the Terminal, the production
   token, `POS_READER_LIVE=true`. **Never `POS_WRITE_CLIENT_IDS` while the
   studio is open**: it suppresses every write for every other client,

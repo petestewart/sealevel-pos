@@ -9842,6 +9842,10 @@ function ContractDialog(props: {
       inFlight.current = false;
       setPurchasing(false);
       onBusyChange(false);
+      /* T301: whatever the answer, read the holds again, so one this
+       * purchase left (an answer that may have moved money) is on screen
+       * with its Understood before anyone taps the charge again. */
+      void loadHolds();
     }
   };
 
@@ -10030,6 +10034,50 @@ function ContractDialog(props: {
         onClick={(e) => e.stopPropagation()}
       >
         <p className="modal-title">{contract.name}</p>
+
+        {/* T301: a charge for this client that may have moved money and
+            nobody has acknowledged (T253). FIRST in the dialog, where it
+            cannot be scrolled past, and in place of the charge: the
+            route refuses it from every iPad until this Understood. A
+            charge still running cannot be acknowledged, only looked at
+            again. */}
+        {standingHolds.length > 0 && outcome?.kind !== "paid" ? (
+          <div className="sale-stop modal-note-gap" role="alert">
+            {standingHolds.map((h) => (
+              <p key={h.id} className="pay-split-why">
+                {contractHoldLine(h)}
+                {h.saleId ? ` Sale ${h.saleId}.` : ""}
+              </p>
+            ))}
+            <p className="pay-split-why">
+              {standingHolds.some((h) => h.kind === "pending")
+                ? "Nothing can be started for them until that charge answers."
+                : "Check their account in Mindbody (the sale, and any membership it started). Nothing can be started for them until you tap Understood."}
+            </p>
+            {holdNote !== null ? (
+              <p className="pay-split-why">{holdNote}</p>
+            ) : null}
+            <div className="contract-hold-actions">
+              <button
+                className="class-change pay-dismiss"
+                disabled={holdBusy}
+                onClick={() => void loadHolds()}
+              >
+                Check again
+              </button>
+              {standingHolds.some((h) => h.kind !== "pending") ? (
+                <button
+                  className="class-change pay-dismiss"
+                  disabled={holdBusy}
+                  onClick={() => void acknowledgeHolds()}
+                >
+                  {holdBusy ? "One moment..." : "Understood"}
+                </button>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
+
 
         {/* The terms, from the API's own numbers (Contract model,
             sale.yml:5445): first payment, the recurring amount and
@@ -10236,48 +10284,6 @@ function ContractDialog(props: {
               ? "Dry run: Mindbody did not price the first payment; the amount shown is the catalog's, and the first charge is as quoted by Mindbody at charge time. The purchase itself will be suppressed too."
               : "Write guard: Mindbody did not price the first payment for this client; the purchase itself will be suppressed too."}
           </p>
-        ) : null}
-
-        {/* T301: a charge for this client that may have moved money and
-            nobody has acknowledged (T253). In place of the charge: the
-            route refuses it from every iPad until this Understood. A
-            charge still running cannot be acknowledged, only looked at
-            again. */}
-        {standingHolds.length > 0 && outcome?.kind !== "paid" ? (
-          <div className="sale-stop modal-note-gap" role="alert">
-            {standingHolds.map((h) => (
-              <p key={h.id} className="pay-split-why">
-                {contractHoldLine(h)}
-                {h.saleId ? ` Sale ${h.saleId}.` : ""}
-              </p>
-            ))}
-            <p className="pay-split-why">
-              {standingHolds.some((h) => h.kind === "pending")
-                ? "Nothing can be started for them until that charge answers."
-                : "Check their account in Mindbody (the sale, and any membership it started). Nothing can be started for them until you tap Understood."}
-            </p>
-            {holdNote !== null ? (
-              <p className="pay-split-why">{holdNote}</p>
-            ) : null}
-            <div className="contract-hold-actions">
-              <button
-                className="class-change pay-dismiss"
-                disabled={holdBusy}
-                onClick={() => void loadHolds()}
-              >
-                Check again
-              </button>
-              {standingHolds.some((h) => h.kind !== "pending") ? (
-                <button
-                  className="class-change pay-dismiss"
-                  disabled={holdBusy}
-                  onClick={() => void acknowledgeHolds()}
-                >
-                  {holdBusy ? "One moment..." : "Understood"}
-                </button>
-              ) : null}
-            </div>
-          </div>
         ) : null}
 
         {outcome?.kind === "paid" ? (
