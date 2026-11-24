@@ -38,8 +38,9 @@ import {
   spreadDiscount,
   type Discount,
 } from "./comp";
+import { cardFeeEnv, isCardFeeProduct, maxCardFeeCents } from "./cardfee";
 import { logSharedId } from "./clientrecord";
-import { mindbody, mindbodyHttpStatus, type Actor } from "./mindbody";
+import { mindbody, mindbodyHttpStatus, target, type Actor } from "./mindbody";
 import { PROMO_TOOK_NOTHING, type PromotionOutcome } from "./promocode";
 import { plainText } from "./richtext";
 import { studioWall } from "./roster";
@@ -201,6 +202,104 @@ export async function productsByIds(
     `&request.locationId=${STUDIO_LOCATION_ID}&request.limit=20`;
   const body = await mindbody(`/sale/products?${query}`);
   return parseProducts(body).filter((p) => ids.includes(String(p.id)));
+}
+
+/** T299: the fee product as last read, per target, for two minutes (the
+ *  catalog's own cache length), so pricing a ticket with the fee costs
+ *  one extra read every two minutes at most. A failed read is not kept. */
+let feeProductCache: { key: string; at: number; item: CatalogItem | null } | null = null;
+const FEE_PRODUCT_TTL_MS = 2 * 60 * 1000;
+
+async function cardFeeProduct(productId: string): Promise<CatalogItem | null> {
+  const key = `${target()}:${productId}`;
+  if (
+    feeProductCache !== null &&
+    feeProductCache.key === key &&
+    Date.now() - feeProductCache.at < FEE_PRODUCT_TTL_MS
+  ) {
+    return feeProductCache.item;
+  }
+  const item = (await productsByIds([productId]))[0] ?? null;
+  feeProductCache = { key, at: Date.now(), item };
+  return item;
+}
+
+/**
+ * T299: the card fee's line in Mindbody's shape. Every cart reaches
+ * Mindbody through priceCart or checkoutCart, and both call this first,
+ * so the browser and the routes go on counting the fee as a quantity of
+ * cents at $0.01 (src/lib/cardfee.ts) while Mindbody is sent ONE unit of
+ * the fee product at its own price, with `DiscountAmount` bringing it
+ * down to the fee. T75's subtotal check then compares the product's own
+ * price (Mindbody's SubTotal is before discounts), so a product priced
+ * differently from what this read said is a refusal, never a wrong
+ * charge.
+ *
+ * Refuses, before anything is sent, a fee product it cannot read, one
+ * that is not tax exempt, and one priced below the rule's largest fee. A
+ * ticket with no fee line comes back unchanged and costs no read.
+ */
+export async function withCardFeeShape(
+  items: readonly CartLine[],
+): Promise<CartLine[]> {
+  const rule = cardFeeEnv();
+  if (
+    rule === null ||
+    !items.some(
+      (l) => l.feeCents === undefined && isCardFeeProduct(l.type, l.metadataId, rule),
+    )
+  ) {
+    return [...items];
+  }
+  const product = await cardFeeProduct(rule.productId);
+  if (product === null) {
+    throw new Error(
+      `The card processing fee's product (${rule.productId}) could not be read from Mindbody. Take the fee off and charge again.`,
+    );
+  }
+  if (!product.taxExempt) {
+    throw new Error(
+      "The card processing fee's product is taxed in Mindbody; it must be tax exempt. Take the fee off and charge again.",
+    );
+  }
+  const unitCents = Math.round(product.price * 100);
+  const most = maxCardFeeCents(rule);
+  if (unitCents < most) {
+    throw new Error(
+      `The card processing fee's product is $${product.price.toFixed(2)} in Mindbody; it must be at least $${(most / 100).toFixed(2)}. Take the fee off and charge again.`,
+    );
+  }
+  return items.map((line) => {
+    if (line.feeCents !== undefined || !isCardFeeProduct(line.type, line.metadataId, rule)) {
+      return line;
+    }
+    const feeCents = Math.round(line.price * 100 * line.quantity);
+    if (feeCents < 1 || feeCents > unitCents) {
+      throw new Error(
+        `A card processing fee of $${(feeCents / 100).toFixed(2)} cannot be sold from a $${product.price.toFixed(2)} product. Take the fee off and charge again.`,
+      );
+    }
+    return {
+      ...line,
+      quantity: 1,
+      price: product.price,
+      taxExempt: true,
+      taxRate: 0,
+      feeCents,
+    };
+  });
+}
+
+/** T299: what the fee lines' DiscountAmount takes off, in dollars: the
+ *  product's price less the fee. It is how the fee is priced, not a
+ *  discount anybody gave, so priceCart takes it back out of the subtotal
+ *  and the discount it reports. */
+function feeDiscountOf(items: readonly CartLine[]): number {
+  let cents = 0;
+  for (const l of items) {
+    if (l.feeCents !== undefined) cents += Math.round(l.price * 100) - l.feeCents;
+  }
+  return cents / 100;
 }
 
 function parseProducts(body: any): CatalogItem[] {
@@ -506,6 +605,13 @@ export interface CartLine {
    * or absent means the line is the paying client's own.
    */
   forClientId?: string | null;
+  /**
+   * T299: set ONLY by `withCardFeeShape`, on the card fee's line as it
+   * goes to Mindbody: the fee in cents. The line is then ONE unit at the
+   * fee product's own `price`, discounted by the difference, so the
+   * receipt shows one line. Never set by a browser or a route.
+   */
+  feeCents?: number;
 }
 
 /**
@@ -589,8 +695,12 @@ export function expectedTotal(
 ): number {
   let total = 0;
   items.forEach((line, i) => {
-    const extended =
-      line.price * line.quantity - (discount?.[i] ?? 0) / 100;
+    /* T299: the card fee's line costs the fee, not its product's price. */
+    const gross =
+      line.feeCents !== undefined
+        ? line.feeCents / 100
+        : line.price * line.quantity;
+    const extended = gross - (discount?.[i] ?? 0) / 100;
     /* The exempt category still contributes untaxed; otherwise the
      * line's own rate, falling back to Fremont's 10.35% (STUDIO_TAX_RATE)
      * ONLY when the catalog carried no rate for this line. */
@@ -903,6 +1013,20 @@ export function cartItemsPayload(
   return items.flatMap((line, i) => {
     const off = discount?.[i] ?? 0;
     const item = { Type: line.type, Metadata: { Id: line.metadataId } };
+    /* T299: the card fee, one unit of its product discounted to the fee.
+     * A teacher discount never shares a ticket with the fee (refused by
+     * /api/checkout), so a spread landing here is a bug, said loudly. */
+    if (line.feeCents !== undefined) {
+      if (off > 0) throw new Error("A discount cannot be spread onto the card fee.");
+      const down = Math.round(line.price * 100) - line.feeCents;
+      return [
+        {
+          Item: item,
+          Quantity: 1,
+          ...(down > 0 ? { DiscountAmount: down / 100 } : {}),
+        },
+      ];
+    }
     if (off <= 0) return [{ Item: item, Quantity: line.quantity }];
     const qty = line.quantity;
     const per = Math.floor(off / qty);
@@ -919,7 +1043,7 @@ export function cartItemsPayload(
 }
 
 export async function priceCart(
-  items: readonly CartLine[],
+  itemsIn: readonly CartLine[],
   clientId?: string,
   /** T49: run the Test call as this teacher. Only the sign-in probe
    *  passes one (to prove MakeSales under the teacher's own token); the
@@ -938,10 +1062,17 @@ export async function priceCart(
    *  pre-discount SubTotal assertion runs exactly as before. */
   promotionCode?: string | null,
 ): Promise<PricedCart> {
-  assertCartLines(items, "priceCart");
+  assertCartLines(itemsIn, "priceCart");
+  /* T299: the card fee as Mindbody is sent it, one discounted unit. */
+  const items = await withCardFeeShape(itemsIn);
+  const feeDisc = feeDiscountOf(items);
   const spread = discount ? spreadDiscount(items, discount) : undefined;
   const expected = expectedTotal(items, spread);
   const expectedSub = expectedSubtotal(items);
+  /* T299: what the screen is told the subtotal is: the fee at its own
+   * amount. T75 compares `expectedSub`, the product's price, against
+   * Mindbody's pre-discount SubTotal. */
+  const expectedSubShown = roundToCents(expectedSub - feeDisc);
   const expectedDisc = discount ? discountCents(items, discount) / 100 : 0;
   /* T30: a package line has no tax basis of its own (see PricedCart
    * .packagePricing), so the strict assertion is skipped for the whole
@@ -1026,7 +1157,7 @@ export async function priceCart(
       taxTotal: null,
       grandTotal: null,
       expectedTotal: expected,
-      expectedSubtotal: expectedSub,
+      expectedSubtotal: expectedSubShown,
       expectedDiscount: expectedDisc,
       discountDisagrees: false,
       disagrees: false,
@@ -1049,7 +1180,8 @@ export async function priceCart(
   /* T75: the pre-tax figure Mindbody priced, SubTotal first, else the
    * grand total less its tax. Neither present, nothing to assert. */
   const theirSubtotal =
-    subTotal ?? (taxTotal !== null ? roundToCents(grandTotal - taxTotal) : null);
+    subTotal ??
+    (taxTotal !== null ? roundToCents(grandTotal - taxTotal + feeDisc) : null);
   const subDisagrees =
     packagePricing || theirSubtotal === null
       ? false
@@ -1062,10 +1194,19 @@ export async function priceCart(
    * reported figure, which the check below then holds to the cent. This
    * is also what the screen shows as the discount line. */
   const reportedDiscount = num(cart?.DiscountTotal);
-  const discountTotal =
+  const rawDiscount =
     subTotal !== null && taxTotal !== null
       ? roundToCents(subTotal + taxTotal - grandTotal)
       : reportedDiscount;
+  /* T299: the card fee's own DiscountAmount is how the fee is priced,
+   * not a discount, so it leaves both the discount and the subtotal the
+   * screen is told: a ticket with a 5 cent fee reads "Card processing fee
+   * $0.05" and no discount, and a promotion code's discount is the
+   * code's alone (priceCartWithPromotion reads this figure). */
+  const discountTotal =
+    rawDiscount === null ? null : roundToCents(rawDiscount - feeDisc);
+  const subTotalShown =
+    subTotal === null ? null : roundToCents(subTotal - feeDisc);
   /* T79: with a discount sent, what Mindbody took off must be our
    * spread's sum to the cent (a missing figure reads as 0, so a discount
    * Mindbody dropped is a stop, never a full-price charge that the screen
@@ -1078,12 +1219,12 @@ export async function priceCart(
   const disagrees = subDisagrees || discountDisagrees;
   return {
     suppressed: false,
-    subTotal,
+    subTotal: subTotalShown,
     discountTotal,
     taxTotal,
     grandTotal,
     expectedTotal: expected,
-    expectedSubtotal: expectedSub,
+    expectedSubtotal: expectedSubShown,
     expectedDiscount: expectedDisc,
     ...(disagrees ? { lineAudit: auditLines(items, cart) } : {}),
     /* The T30 carve-out: a package-bearing cart is excluded from the
@@ -1357,7 +1498,13 @@ export function assertBasket(
       type: line.type,
       metadataId: id,
       name,
-      orderedQuantity: line.quantity,
+      /* T299: the card fee is sold as ONE unit whatever its cents, so a
+       * fee line still counted in cents (a route's own copy of the
+       * ticket) orders one. */
+      orderedQuantity:
+        line.feeCents === undefined && isCardFeeProduct(line.type, line.metadataId)
+          ? 1
+          : line.quantity,
       soldQuantity: sold,
       quantityReported: reported,
     };
@@ -1640,7 +1787,7 @@ export interface CheckoutOutcome {
  * when none is configured; this function never invents a client.
  */
 export async function checkoutCart(
-  items: readonly CartLine[],
+  itemsIn: readonly CartLine[],
   clientId: string | undefined,
   payment: CheckoutPayment | readonly CheckoutPayment[],
   /** T49: the signed-in teacher the sale is made as, when there is one.
@@ -1664,7 +1811,10 @@ export async function checkoutCart(
    *  body every sale sent before T220. */
   promotionCode?: string | null,
 ): Promise<CheckoutOutcome> {
-  assertCartLines(items, "checkoutCart");
+  assertCartLines(itemsIn, "checkoutCart");
+  /* T299: the card fee as Mindbody is sent it, exactly as the rehearsal
+   * priced it (same read, cached two minutes). */
+  const items = await withCardFeeShape(itemsIn);
   const spread = discount ? spreadDiscount(items, discount) : undefined;
   const payments: readonly CheckoutPayment[] = Array.isArray(payment)
     ? payment

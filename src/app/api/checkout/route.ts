@@ -1561,9 +1561,11 @@ async function runCheckout(
    * It is sold only on a plain one-cart ticket paid by ONE card (on file,
    * typed, or the reader), with no discount, override, gift card, account
    * credit or line for someone else, and only when the server's own rule
-   * is on and the line is $0.01 tax exempt. Refused here, before any
-   * Mindbody call, in words; the quantity is checked against Mindbody's
-   * own total after the rehearsal. */
+   * is on and the line counts tax-exempt cents (T299: /api/catalog serves
+   * the fee as a $0.01 unit, whatever the product costs, and
+   * src/lib/sale.ts sends Mindbody one discounted unit of it). Refused
+   * here, before any Mindbody call, in words; the quantity is checked
+   * against Mindbody's own total after the rehearsal. */
   const feeRule = cardFeeEnv();
   const feeLines = items.filter(
     (l) => l.type === "Product" && feeRule !== null && String(l.metadataId) === feeRule.productId,
@@ -1573,7 +1575,7 @@ async function runCheckout(
       feeLines.length > 1
         ? "the fee is on the ticket twice"
         : feeLines.some((l) => Math.round(l.price * 100) !== 1 || !l.taxExempt)
-          ? "the fee product is not $0.01 and tax exempt"
+          ? "the fee line is not counted in tax-exempt cents"
           : split !== null
             ? "a split payment does not carry the fee"
             : typeof method !== "string" || !(CARD_FEE_METHODS as readonly string[]).includes(method)

@@ -8,13 +8,31 @@
  *
  * Mindbody has no surcharge field and ignores a price sent on a cart
  * line (probed on 471, 2026-11-23: Metadata Price, Amount and SalePrice
- * all priced at the catalog's $1.81). So the fee is an ordinary retail
- * product the studio creates, priced $0.01 and tax exempt, sold at a
- * QUANTITY of cents: a 23 cent fee is 23 x $0.01. Mindbody prices it,
- * T75 and T103 check it like any line, and the sale report shows it as
- * its own item. Tax exempt matters twice: a fee is not taxed, and
- * Mindbody rounds tax per UNIT upward, so a taxed $0.01 would cost 2
- * cents a unit.
+ * all priced at the catalog's $1.81; and T299, 2026-11-24: 25 more
+ * shapes on the fee product, twelve Metadata keys, six wrapper keys,
+ * string Metadata and a negative DiscountAmount, every one priced at the
+ * catalog's $0.01 or refused). T297 first sold the fee as a QUANTITY of
+ * a $0.01 product, which Mindbody's sale page and receipt print as one
+ * "$0.01" row per cent (Pete, sale 430178: five rows for a 5 cent fee:
+ * "their receipt is going to look very unprofessional").
+ *
+ * T299: the fee is now ONE unit of the fee product, which the studio
+ * prices at or above the largest fee the rule can make ($0.26 for 2.6%
+ * under $10), discounted down to the fee with the cart line's
+ * DiscountAmount, the field the counter's teacher discounts have used
+ * live for months. Probed on 471 with `Test: true` (2026-11-24): LMNT
+ * $1.81 with DiscountAmount $1.76 priced $0.05, and Towel Rental beside
+ * it with BLACK26 took the code's 15% off the towel AND the line
+ * discount, $2.59, the same as the towel with five $0.01 fee units.
+ *
+ * The browser does not know any of this: its fee line is still a
+ * quantity of CENTS at $0.01 (/api/catalog serves the fee as a one-cent
+ * unit whatever the product costs), the screens show "Card processing
+ * fee $0.05" as before, and the routes check the fee in cents.
+ * `src/lib/sale.ts` turns that line into Mindbody's shape at the one
+ * place every cart leaves for Mindbody (`withCardFeeShape`), and reads
+ * it back the same way (the basket and the daily check count the fee as
+ * one unit). Tax exempt still matters: a fee is not taxed.
  *
  * Shared by the browser (to put the line on the ticket) and
  * /api/checkout (to refuse a fee line that does not belong). Pure: no
@@ -30,7 +48,8 @@ export interface CardFeeRule {
   underCents: number;
 }
 
-/** The unit price the fee product must have, in dollars. */
+/** The unit the BROWSER's fee line is counted in, in dollars: its
+ *  quantity is the fee in cents. Not the fee product's price (T299). */
 export const CARD_FEE_UNIT_PRICE = 0.01;
 
 /** The tenders that carry the fee. The reader's debit exemption is
@@ -58,6 +77,23 @@ export function cardFeeCents(preFeeCents: number, rule: CardFeeRule): number {
   if (!Number.isFinite(preFeeCents) || preFeeCents <= 0) return 0;
   if (preFeeCents >= rule.underCents) return 0;
   return Math.max(1, Math.round(preFeeCents * rule.rate));
+}
+
+/** T299: the largest fee this rule can make, in cents: the fee on a
+ *  sale one cent under the floor. The fee product must cost at least
+ *  this, since a discount can only bring a price down. */
+export function maxCardFeeCents(rule: CardFeeRule): number {
+  return cardFeeCents(rule.underCents - 1, rule);
+}
+
+/** T299: is this cart line the card fee? Only a Product line whose id is
+ *  the rule's product. With the rule off, nothing is. */
+export function isCardFeeProduct(
+  type: string,
+  id: string | number,
+  rule: CardFeeRule | null = cardFeeEnv(),
+): boolean {
+  return rule !== null && type === "Product" && String(id) === rule.productId;
 }
 
 /** The words for the rule, for the ticket and the drawer. */

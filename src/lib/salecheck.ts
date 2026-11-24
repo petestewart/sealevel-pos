@@ -1,3 +1,4 @@
+import { isCardFeeProduct } from "./cardfee";
 import { listSaleLog, setSaleLogCheck, type SaleLogRow } from "./db";
 import { mindbody } from "./mindbody";
 import { studioWall } from "./roster";
@@ -195,7 +196,15 @@ export async function checkRow(
     const sold = reads.flatMap((r) => r.items);
     for (const want of items) {
       const matches = sold.filter((g) => lineMatches(want, g));
-      const wantQty = typeof want?.quantity === "number" ? want.quantity : 1;
+      /* T299: the card fee is logged in cents and sold as ONE unit. */
+      const wantQty =
+        typeof want?.type === "string" &&
+        (typeof want?.id === "string" || typeof want?.id === "number") &&
+        isCardFeeProduct(want.type, want.id)
+          ? 1
+          : typeof want?.quantity === "number"
+            ? want.quantity
+            : 1;
       const label = want?.name ? `${want.name} (${want.type} ${want.id})` : `${want?.type} ${want?.id}`;
       if (matches.length === 0) {
         problems.push(`${label} was asked for and is not on the sale.`);
