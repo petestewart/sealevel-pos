@@ -1345,9 +1345,15 @@ which needs nothing afterwards.
   only when Mindbody prices the start-day shape at zero. Driven against
   the fake (which invents the three figures) in a browser: each choice
   re-rehearses with the right fields, and a PIN-overridden purchase sent
-  the shape it was priced with. **Owed, live and on the dummy client
-  only while the studio is closed:** what Mindbody's rehearsal answers
-  for `startday` and `today`, and the next payment date of each
+  the shape it was priced with, and a paired customer screen showed
+  each shape's words. **Rehearsed live on prod (2026-11-24, `Test:
+  true` only, dummy client 100042041 paying by account, contracts 110,
+  105 and 109, start 2026-12-01):** T99's old shape refused in the very
+  sentence Pete saw; `prorate` priced 38.64 / 44.00 / 46.64; `startday`
+  priced 0.00 for all three; `today` priced the full first payment (145 /
+  165 / 175). So all three shapes are accepted and "Nothing charged
+  today" is what the start-day shape will say. **Owed, on the dummy
+  client:** one real sale of each and the next payment date of each
   (`/client/clientcontracts` `UpcomingAutopayEvents`): the four contracts
   on site 471 all bill `OnSaleDate`, and whether a `today` start then
   bills on the 1st or on the sale's day of the month is unseen.

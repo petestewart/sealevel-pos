@@ -1731,7 +1731,9 @@ while `git clone` works, so clone the repo rather than fetching files.
   start, not the only shape (T300, `src/lib/contractbilling.ts`): the
   dialog can turn it off, and then the first payment is on the start day
   (`FirstPaymentOccurs: "StartDate"`, no `ProrateDate`) or today
-  (`"Instant"`). Site 471's four contracts all bill `ClientsChargedOn:
+  (`"Instant"`). Rehearsed live (2026-11-24, `Test: true`): all three
+  accepted, the start-day shape prices $0.00 today, the today shape the
+  full first payment. Site 471's four contracts all bill `ClientsChargedOn:
   OnSaleDate`; which day of the month an unprorated start then bills on
   is unseen.
 - **Mindbody does not enforce class capacity; the caller must.**
