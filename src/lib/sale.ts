@@ -238,9 +238,15 @@ function parseProducts(body: any): CatalogItem[] {
          * there (CategoryId 100000, SecondaryCategoryId 0) and Mindbody
          * prices it with no tax (read live, 2026-11-23: 14 x $0.01 =
          * $0.14, tax $0.00). */
+        /* T297: and a product Mindbody itself rates at 0% here is untaxed
+         * whatever its category. The card fee moved again (2026-11-24, to
+         * "Fees" 100002) with TaxRate 0 and priced with no tax; a rule on
+         * the category alone switched the fee off. For pricing this
+         * changes nothing: a 0% rate already taxed the line at nothing. */
         taxExempt:
           secondary === TAX_EXEMPT_SECONDARY_CATEGORY_ID ||
-          num(p?.CategoryId) === TAX_EXEMPT_SECONDARY_CATEGORY_ID,
+          num(p?.CategoryId) === TAX_EXEMPT_SECONDARY_CATEGORY_ID ||
+          num(p?.TaxRate) === 0,
         type: "Product",
         count: null,
         serviceType: null,

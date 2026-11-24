@@ -1277,7 +1277,13 @@ which needs nothing afterwards.
   exempt" (100000) as its PRIMARY category, so it is on no counter shelf
   and the app now reads a primary 100000 as tax exempt too. Read live:
   14 units price $0.14, tax $0.00, and BLACK26 takes nothing off it.
-  Owed: the Railway variable; one live sale.
+  **Moved 2026-11-24** to a new "Fees" category (100002, renamed
+  "Credit card fee (2.6%: 0.01)", beside $0.02 to $0.26 siblings the app
+  does not use), TaxRate 0 and still priced with no tax, so the app now
+  also reads Mindbody's own 0% rate as untaxed. Same day: a retail
+  "Rentals" category (100001) joins the Rentals shelf, so the towel, mat
+  and combo products can leave Accessories and BLACK26.
+  Owed: one live sale.
 - [x] **T298 A promotion code on every sale, for a run of days.** Built
   2026-11-23 (Pete: "add a new feature where we can have a promo code
   automatically applied to all carts. starting today i want BLACK26 promo

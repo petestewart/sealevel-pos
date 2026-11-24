@@ -102,7 +102,10 @@ export const counterCategories: readonly CounterCategory[] = [
      * The revenue-category and name handles are T41's, unchanged. */
     label: "Rentals",
     section: "Rentals",
-    categoryIds: [-14],
+    /* 100001: the studio's own retail "Rentals" category (Pete,
+     * 2026-11-24), made so BLACK26 can leave rentals alone. The towel,
+     * mat and combo products move there from Accessories (32). */
+    categoryIds: [-14, 100001],
     revenueCategories: ["Towel and Mat"],
     nameMatches: ["rental", "towel"],
   },
