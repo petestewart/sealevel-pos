@@ -9528,6 +9528,31 @@ function ContractDialog(props: {
   const [waitingForScreen, setWaitingForScreen] = useState(false);
 
   const clientId = client?.id ?? null;
+  /* T302: the server's charge holds for this client (T253). The route
+   * refuses a membership for a held client from any iPad, and its
+   * sentence says "tap Understood", so the dialog reads them when it
+   * opens, shows them in place of the charge, and acknowledges them
+   * here rather than sending the teacher to the Cart screen (Pete, after
+   * a charge that answered during a deploy left one standing). Null
+   * until the first read answers. Walk-in notices refuse nothing and are
+   * never shown here: a membership never rides the house client. */
+  const [holds, setHolds] = useState<ServerHold[] | null>(null);
+  const [holdBusy, setHoldBusy] = useState(false);
+  const [holdNote, setHoldNote] = useState<string | null>(null);
+  const loadHolds = useCallback(async () => {
+    if (clientId === null) {
+      setHolds([]);
+      return;
+    }
+    const read = await fetchServerHolds([clientId]);
+    /* A read that did not answer keeps what was known: the route is the
+     * authority either way, and its 409 puts the hold back on screen. */
+    if (read !== null) setHolds(read.filter((h) => h.kind !== "walkin"));
+  }, [clientId]);
+  useEffect(() => {
+    void loadHolds();
+  }, [loadHolds]);
+  const standingHolds = holds ?? [];
   const card = cardLookup?.card ?? null;
 
   /* An unrenderable schedule refuses the sale outright: nothing
@@ -9674,7 +9699,31 @@ function ContractDialog(props: {
     rehearsal !== null &&
     !rehearsal.loading &&
     rehearsal.error === null &&
-    !noProratedFigure;
+    !noProratedFigure &&
+    standingHolds.length === 0;
+
+  /** T302: Understood on every hold standing for this client, then a
+   *  fresh read. A hold the server could not record stays, said so. */
+  const acknowledgeHolds = async () => {
+    if (holdBusy || standingHolds.length === 0) return;
+    setHoldBusy(true);
+    setHoldNote(null);
+    try {
+      let failed = false;
+      for (const h of standingHolds) {
+        if (h.kind === "pending") continue;
+        if (!(await acknowledgeServerHold(h.id))) failed = true;
+      }
+      if (failed) {
+        setHoldNote(
+          "The server could not record the Understood, so the hold stands. Try again in a moment.",
+        );
+      }
+      await loadHolds();
+    } finally {
+      setHoldBusy(false);
+    }
+  };
 
   const doPurchase = async (auth?: {
     /** T205: the signature this membership rides on, or the PIN token
@@ -9770,6 +9819,18 @@ function ContractDialog(props: {
            * so the commitment button restates the CURRENT number. */
           setRehearseNonce((n) => n + 1);
         }
+        if (body?.reason === "held") {
+          /* T302: refused before anything reached Mindbody. The hold
+           * block below says why and carries its own Understood. */
+          const named = serverHoldsFrom(body?.holds).filter(
+            (h) => h.kind !== "walkin",
+          );
+          if (named.length > 0) {
+            setHolds(named);
+            return;
+          }
+          void loadHolds();
+        }
         setOutcome({
           kind: "error",
           message: String(body?.error ?? `HTTP ${res.status}`),
@@ -9781,6 +9842,10 @@ function ContractDialog(props: {
       inFlight.current = false;
       setPurchasing(false);
       onBusyChange(false);
+      /* T302: whatever the answer, read the holds again, so one this
+       * purchase left (an answer that may have moved money) is on screen
+       * with its Understood before anyone taps the charge again. */
+      void loadHolds();
     }
   };
 
@@ -9970,6 +10035,50 @@ function ContractDialog(props: {
       >
         <p className="modal-title">{contract.name}</p>
 
+        {/* T302: a charge for this client that may have moved money and
+            nobody has acknowledged (T253). FIRST in the dialog, where it
+            cannot be scrolled past, and in place of the charge: the
+            route refuses it from every iPad until this Understood. A
+            charge still running cannot be acknowledged, only looked at
+            again. */}
+        {standingHolds.length > 0 && outcome?.kind !== "paid" ? (
+          <div className="sale-stop modal-note-gap" role="alert">
+            {standingHolds.map((h) => (
+              <p key={h.id} className="pay-split-why">
+                {contractHoldLine(h)}
+                {h.saleId ? ` Sale ${h.saleId}.` : ""}
+              </p>
+            ))}
+            <p className="pay-split-why">
+              {standingHolds.some((h) => h.kind === "pending")
+                ? "Nothing can be started for them until that charge answers."
+                : "Check their account in Mindbody (the sale, and any membership it started). Nothing can be started for them until you tap Understood."}
+            </p>
+            {holdNote !== null ? (
+              <p className="pay-split-why">{holdNote}</p>
+            ) : null}
+            <div className="contract-hold-actions">
+              <button
+                className="class-change pay-dismiss"
+                disabled={holdBusy}
+                onClick={() => void loadHolds()}
+              >
+                Check again
+              </button>
+              {standingHolds.some((h) => h.kind !== "pending") ? (
+                <button
+                  className="class-change pay-dismiss"
+                  disabled={holdBusy}
+                  onClick={() => void acknowledgeHolds()}
+                >
+                  {holdBusy ? "One moment..." : "Understood"}
+                </button>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
+
+
         {/* The terms, from the API's own numbers (Contract model,
             sale.yml:5445): first payment, the recurring amount and
             cadence, and the lifespan total where Mindbody computes one.
@@ -10105,7 +10214,9 @@ function ContractDialog(props: {
         {displayConnected && sign === null && outcome?.kind !== "paid" ? (
           <button
             className="contract-start"
-            disabled={purchasing || blockReason !== null}
+            disabled={
+              purchasing || blockReason !== null || standingHolds.length > 0
+            }
             onClick={() => void presentContract()}
           >
             <span>Sign on the customer screen</span>
@@ -10430,6 +10541,26 @@ function ContractDialog(props: {
       </div>
     </div>
   );
+}
+
+/** T302: one charge hold in the contract dialog's words. The time is the
+ *  studio's, as the route's own sentence writes it. */
+function contractHoldLine(h: ServerHold): string {
+  const when = new Date(h.createdAt).toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: "America/Los_Angeles",
+  });
+  if (h.kind === "pending") {
+    return `A charge for this client started at ${when} and has not answered yet.`;
+  }
+  if (h.kind === "sold-nothing") {
+    return `A charge for this client at ${when} took a payment and sold nothing.`;
+  }
+  if (h.kind === "partial") {
+    return `A charge for this client at ${when} was only partly sold.`;
+  }
+  return `A charge for this client at ${when} may or may not have gone through.`;
 }
 
 /**

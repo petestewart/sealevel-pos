@@ -1746,8 +1746,10 @@ while `git clone` works, so clone the repo rather than fetching files.
   (`"Instant"`). Rehearsed live (2026-11-24, `Test: true`): all three
   accepted, the start-day shape prices $0.00 today, the today shape the
   full first payment. Site 471's four contracts all bill `ClientsChargedOn:
-  OnSaleDate`; which day of the month an unprorated start then bills on
-  is unseen.
+  OnSaleDate`. **Sold live (2026-11-23, Pete's own account, start day
+  Dec 1, first payment Dec 1):** the contract starts 2026-12-01, its
+  payments fall on the 1st of each month, and nothing was charged that
+  day. `prorate` and `today` are still unsold live.
 - **Mindbody does not enforce class capacity; the caller must.**
   `addclienttoclass`'s own description says so (class.yml:1077: "To
   prevent overbooking a class ... it is necessary to first check the

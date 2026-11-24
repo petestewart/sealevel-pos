@@ -6428,6 +6428,14 @@ textarea.reason-note-field:disabled::placeholder {
   font-weight: 600;
 }
 
+/* T302: the contract dialog's hold block carries two controls side by
+ * side, Check again and Understood, each the 64px .pay-dismiss. */
+.contract-hold-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
 /* T300: a labelled pair of 64px choices under the start row (how a
  * later start is billed). Drawn with the same 1px --line as that row;
  * the chosen one takes --accent, which here means "selected". */

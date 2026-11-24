@@ -1003,6 +1003,13 @@ function handle(method, path, q, body, res) {
       console.error(`[fake] purchasecontract Test=${body.Test} StartDate=${body.StartDate ?? "-"} ProrateDate=${body.ProrateDate ?? "-"} FirstPaymentOccurs=${body.FirstPaymentOccurs} -> ${first}`);
       const totals = { SubTotal: first, Discount: 0, Tax: tax, Total: first };
       if (body.Test === true) return send(res, 200, { Totals: totals, ClientContractId: null });
+      /* T302: FAKE_MB_CONTRACT_FAIL=1 answers the first REAL membership
+       * purchase with a 500 and sells nothing, which is what leaves a
+       * T253 "may or may not have gone through" hold on the client. */
+      if (process.env.FAKE_MB_CONTRACT_FAIL === "1" && !globalThis.__contractFailed) {
+        globalThis.__contractFailed = true;
+        return send(res, 500, { Error: { Message: "Internal error (fake)", Code: "InternalError" } });
+      }
       contractsHeld[body.ClientId] = [{ Id: 7100, ContractName: c.Name, StartDate: (body.StartDate ?? day(0)) + "T00:00:00", EndDate: day(365) + "T00:00:00" }];
       const cl = byId(body.ClientId);
       if (cl) cl.MembershipIcon = 1;

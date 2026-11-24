@@ -1358,6 +1358,12 @@ which needs nothing afterwards.
   (`/client/clientcontracts` `UpcomingAutopayEvents`): the four contracts
   on site 471 all bill `OnSaleDate`, and whether a `today` start then
   bills on the 1st or on the sale's day of the month is unseen.
+  **Sold live 2026-11-23 evening (Pete, his own account 100041622,
+  contract 110, Starts Dec 1, Membership starts Dec 1, First payment Dec
+  1):** client contract 2033, StartDate 2026-12-01, EndDate 2027-06-01,
+  autopay Active, upcoming $145.00 on 2026-12-01, 2027-01-01 and so on
+  (the start day's day of the month), and NO sale that day: nothing was
+  charged. Still unseen live: `prorate` and `today` sold for real.
 - [x] **T301 The card fee is ONE line on the receipt.** Built 2026-11-24
   (Pete, on sale 430178, a $2.00 LMNT with five "Credit card fee $0.01"
   rows: "their receipt is going to look very unprofessional", and "we
@@ -1390,6 +1396,22 @@ which needs nothing afterwards.
   $0.01 product refused with nothing sent. **Owed: Pete sets product 589
   to $0.26 (tax exempt, category unchanged); one live card sale under
   $10; how Mindbody's receipt prints a line with a discount on it.**
+- [x] **T302 The contract dialog clears its own charge hold.** Built
+  2026-11-24 (Pete's membership sale at 7:32 PM answered during a
+  deploy, T253 held him as "may or may not have gone through", and the
+  contract dialog said "tap Understood" with no Understood to tap). The
+  dialog now reads `GET /api/charge-holds` for its client when it opens,
+  and on a 409 `held` from `/api/purchase-contract` shows the holds in
+  place of the charge (time, kind, sale id), FIRST in the dialog, with
+  64px Check again and Understood (`POST /api/charge-holds/acknowledge`;
+  a pending hold only Check again), and reads them again after every
+  purchase answer. While one stands, the charge and "Sign on the
+  customer screen" are off. Driven against the fake in a browser
+  (`FAKE_MB_CONTRACT_FAIL=1` answers the first real membership purchase
+  500): the failed sale showed the hold at once; a reopened dialog showed
+  it with the charge off; Understood cleared it and the next sale sold;
+  and a second iPad's dialog, open before the hold was made, was refused
+  409 with nothing sent to Mindbody and showed the hold in place.
 - [ ] **T237 Hardware day.** Buy and pair the Terminal, the production
   token, `POS_READER_LIVE=true`. **Never `POS_WRITE_CLIENT_IDS` while the
   studio is open**: it suppresses every write for every other client,
