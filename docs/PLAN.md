@@ -1387,9 +1387,39 @@ which needs nothing afterwards.
   fake Mindbody priced like the live probes (22 checks: the payload, the
   totals with and without BLACK26, the charge and its basket, a 26 cent
   fee, a 27 cent fee refused, a ticket with no fee unchanged), and the
-  $0.01 product refused with nothing sent. **Owed: Pete sets product 589
-  to $0.26 (tax exempt, category unchanged); one live card sale under
-  $10; how Mindbody's receipt prints a line with a discount on it.**
+  $0.01 product refused with nothing sent. **Sold live and superseded by
+  T302**: sale 430291 (Pete, 2026-11-24) printed "1 Credit card fee
+  $0.26, Discount (80.77%): -$0.21" on the receipt.
+- [x] **T302 The card fee is one PLAIN line: a product per amount.**
+  Built 2026-11-24 (Pete, on sale 430291's receipt: "reciept sucks";
+  setting a price per sale with `updateproductprice` was weighed and
+  turned down: a lock on every fee sale, a price write per cart change,
+  and two unknowns found only live). Pete made one product per fee
+  amount, "Credit card fee (2.6%: 0.01)" to "(2.6%: 0.26)", in a new
+  "Fees" category (100002); `POS_CARD_FEE_PRODUCT_ID` stays 589's
+  barcode, now the $0.01 one. Mindbody's product editor offers only
+  active categories, so the old inactive "Fees" (25) could not hide them
+  from Mindbody's retail screen. `cardFeeFamily` in `src/lib/sale.ts`
+  reads that product's category live (two-minute cache): untaxed
+  products (TaxRate 0) from 1 cent to the rule's largest fee, one per
+  price, an ambiguous price dropped, each skipped one logged.
+  `withCardFeeShape` swaps the browser's cents line for the product of
+  that amount, quantity 1, no discount; T301's discount and its
+  subtotal/discount adjustments are gone. `/api/catalog` serves
+  `availableCents`, and the Cart screen adds a fee only of an amount on
+  it, so a sale whose fee has no product carries NO fee;
+  `/api/checkout` refuses a fee line the family cannot sell, before any
+  charge. T103's basket and T274's daily check take any fee product as
+  the fee line, sold once. **Read live (Test pricing, dummy client,
+  2026-11-24): 25 of the 26 priced untaxed; the $0.07 product
+  (9800359340) is taxed (TaxRate 0.1055, $0.07 + $0.01), so a sale
+  whose fee is 7 cents carries none until it is fixed**; LMNT plus the
+  5 cent product priced $2.05 with no discount, and Towel Rental with
+  BLACK26 beside a fee took the code's 15% off the towel only. Driven
+  against a fake shaped like the site (29 checks). Also restores one
+  comment in the contract code that T301's merge relabelled from T299.
+  **Owed: Pete fixes the $0.07 product's tax; one live card sale under
+  $10 and its receipt.**
 - [ ] **T237 Hardware day.** Buy and pair the Terminal, the production
   token, `POS_READER_LIVE=true`. **Never `POS_WRITE_CLIENT_IDS` while the
   studio is open**: it suppresses every write for every other client,
