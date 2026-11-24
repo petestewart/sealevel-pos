@@ -10,7 +10,7 @@ import {
 } from "@/lib/catalog";
 import { enabledDbBundles } from "@/lib/db";
 import { applyShelfConfig } from "@/lib/shelfconfig";
-import { cardFeeEnv } from "@/lib/cardfee";
+import { CARD_FEE_UNIT_PRICE, cardFeeEnv, maxCardFeeCents } from "@/lib/cardfee";
 import type { CatalogItem } from "@/lib/sale";
 
 export const dynamic = "force-dynamic";
@@ -49,23 +49,31 @@ async function currentBundles(): Promise<{
 /**
  * T297: the card fee as the Cart screen needs it: the product to put on
  * the ticket and the rule. Off (null) unless POS_CARD_FEE_PRODUCT_ID is
- * set AND the product reads as $0.01 and tax exempt, because the fee is
- * sold as cents of that product and anything else would charge a
- * different figure from the one on the sign. /api/checkout applies the
- * same test before it sells a fee line.
+ * set AND the product is tax exempt AND (T301) priced at least the
+ * largest fee the rule can make, because Mindbody is sent ONE unit of it
+ * discounted down to the fee (src/lib/sale.ts withCardFeeShape), and a
+ * discount cannot raise a price. A product still at T297's $0.01 is
+ * therefore OFF, never sold the old way: no fee, rather than a receipt
+ * with a row per cent.
+ *
+ * The item is served as a ONE-CENT unit whatever the product costs: the
+ * browser counts the fee as a quantity of cents (src/lib/cardfee.ts),
+ * and only the server knows the product's real price.
  */
 function cardFeeOffer(item: CatalogItem | null) {
   const rule = cardFeeEnv();
   if (rule === null || item === null) return null;
-  if (Math.round(item.price * 100) !== 1 || !item.taxExempt) {
+  const most = maxCardFeeCents(rule);
+  if (Math.round(item.price * 100) < most || !item.taxExempt) {
     console.warn(
       `[card-fee] product ${rule.productId} is $${item.price.toFixed(2)}` +
-        `${item.taxExempt ? "" : ", taxed"}; it must be $0.01 and tax exempt, so no fee is added`,
+        `${item.taxExempt ? "" : ", taxed"}; it must be tax exempt and at least ` +
+        `$${(most / 100).toFixed(2)}, so no fee is added`,
     );
     return null;
   }
   return {
-    item: { ...item, name: "Card processing fee" },
+    item: { ...item, name: "Card processing fee", price: CARD_FEE_UNIT_PRICE },
     rate: rule.rate,
     underCents: rule.underCents,
   };

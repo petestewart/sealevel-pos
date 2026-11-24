@@ -68,13 +68,25 @@ only. **T297 (2026-11-23): a 2.6% card processing fee on card sales under
 $10** (Pete: "we already have a sign at the front desk stating that will
 happen"), on the card on file, Manual card entry and the reader alike,
 and NOT on a reader card Square reads as DEBIT. Mindbody takes no price
-on a cart line, so the fee is a retail product the studio creates at
-$0.01, tax exempt, sold at a quantity of cents (`POS_CARD_FEE_PRODUCT_ID`;
+on a cart line (31 shapes tried by T301, none honoured), so the fee is a
+retail product the studio creates, tax exempt (`POS_CARD_FEE_PRODUCT_ID`;
 unset, there is no fee; `src/lib/cardfee.ts`). The Cart screen adds and
 removes the line with the tender; `/api/checkout` refuses it anywhere
 else or at the wrong quantity; on reader debit it lowers the Square hold
 by the fee before the sale. Not on discounted, override, gift card,
-credit or T90 tickets. Driven against the fakes only.
+credit or T90 tickets. **T301 (2026-11-24): ONE line on the receipt**
+(Pete, on sale 430178's five "$0.01" fee rows: "their receipt is going
+to look very unprofessional"). T297 sold the fee as a quantity of a
+$0.01 product, which Mindbody prints one row per cent. The product is
+now priced at or above the largest fee ($0.26) and Mindbody is sent ONE
+unit with `DiscountAmount` down to the fee (`withCardFeeShape` in
+`src/lib/sale.ts`, inside `priceCart` and `checkoutCart`; probed live
+with `Test: true`, BLACK26 included). Everything above that call still
+counts the fee in cents at $0.01, and `priceCart` takes the fee's own
+discount back out of the subtotal and discount it reports. A product
+still at $0.01 turns the fee OFF rather than selling it the old way.
+Driven against a fake; owed: product 589 at $0.26, one live sale, and
+how the receipt prints the discounted line.
 
 **T298 (2026-11-23): a promotion code on every sale for a run of days**
 (Pete: "starting today i want BLACK26 promo code to be entered for all

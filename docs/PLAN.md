@@ -1277,7 +1277,8 @@ which needs nothing afterwards.
   exempt" (100000) as its PRIMARY category, so it is on no counter shelf
   and the app now reads a primary 100000 as tax exempt too. Read live:
   14 units price $0.14, tax $0.00, and BLACK26 takes nothing off it.
-  Owed: the Railway variable; one live sale.
+  **Superseded by T301**: the receipt printed one $0.01 row per cent,
+  so the fee is now one discounted unit of a product priced $0.26.
 - [x] **T298 A promotion code on every sale, for a run of days.** Built
   2026-11-23 (Pete: "add a new feature where we can have a promo code
   automatically applied to all carts. starting today i want BLACK26 promo
@@ -1357,6 +1358,38 @@ which needs nothing afterwards.
   (`/client/clientcontracts` `UpcomingAutopayEvents`): the four contracts
   on site 471 all bill `OnSaleDate`, and whether a `today` start then
   bills on the 1st or on the sale's day of the month is unseen.
+- [x] **T301 The card fee is ONE line on the receipt.** Built 2026-11-24
+  (Pete, on sale 430178, a $2.00 LMNT with five "Credit card fee $0.01"
+  rows: "their receipt is going to look very unprofessional", and "we
+  can change the price of an item in the mindbody app, you're telling me
+  you can't do that?"). **No way was found to set a price through the
+  API**: 25 more `Test: true` shapes on product 589 (twelve Metadata
+  keys, six CheckoutItemWrapper keys, string Metadata, a negative
+  DiscountAmount) all priced the catalog's $0.01 or were refused, on top
+  of T297's three and T256's three. **A line discount does it**: LMNT
+  $1.81 with `DiscountAmount` $1.76 priced $0.05, and Towel Rental beside
+  it with BLACK26 took the code's 15% AND the line discount ($2.59, the
+  same as the towel with five $0.01 units). So the fee product is now
+  priced at or above the rule's largest fee ($0.26 for 2.6% under $10)
+  and sold as ONE unit discounted to the fee (`withCardFeeShape` in
+  `src/lib/sale.ts`, called by `priceCart` and `checkoutCart`, the only
+  two senders of a cart). The browser, the routes and the sale log go
+  on counting the fee in cents at $0.01 (`/api/catalog` serves it as a
+  one-cent unit whatever the product costs); the screens did not
+  change. `priceCart` takes the fee's own discount back out of the
+  subtotal and discount it reports, so a promotion code's discount is
+  the code's alone; T75 compares the product's own price against
+  Mindbody's pre-discount SubTotal, so a product price this read did not
+  see is a refusal, never a wrong charge. T103's basket and T274's daily
+  check count the fee as one unit. A product still at $0.01, taxed, or
+  below the largest fee turns the fee OFF (`/api/catalog`) and is
+  refused at pricing; it is never sold the old way. Driven against a
+  fake Mindbody priced like the live probes (22 checks: the payload, the
+  totals with and without BLACK26, the charge and its basket, a 26 cent
+  fee, a 27 cent fee refused, a ticket with no fee unchanged), and the
+  $0.01 product refused with nothing sent. **Owed: Pete sets product 589
+  to $0.26 (tax exempt, category unchanged); one live card sale under
+  $10; how Mindbody's receipt prints a line with a discount on it.**
 - [ ] **T237 Hardware day.** Buy and pair the Terminal, the production
   token, `POS_READER_LIVE=true`. **Never `POS_WRITE_CLIENT_IDS` while the
   studio is open**: it suppresses every write for every other client,
