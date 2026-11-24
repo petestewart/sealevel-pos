@@ -9528,7 +9528,7 @@ function ContractDialog(props: {
   const [waitingForScreen, setWaitingForScreen] = useState(false);
 
   const clientId = client?.id ?? null;
-  /* T301: the server's charge holds for this client (T253). The route
+  /* T302: the server's charge holds for this client (T253). The route
    * refuses a membership for a held client from any iPad, and its
    * sentence says "tap Understood", so the dialog reads them when it
    * opens, shows them in place of the charge, and acknowledges them
@@ -9702,7 +9702,7 @@ function ContractDialog(props: {
     !noProratedFigure &&
     standingHolds.length === 0;
 
-  /** T301: Understood on every hold standing for this client, then a
+  /** T302: Understood on every hold standing for this client, then a
    *  fresh read. A hold the server could not record stays, said so. */
   const acknowledgeHolds = async () => {
     if (holdBusy || standingHolds.length === 0) return;
@@ -9820,7 +9820,7 @@ function ContractDialog(props: {
           setRehearseNonce((n) => n + 1);
         }
         if (body?.reason === "held") {
-          /* T301: refused before anything reached Mindbody. The hold
+          /* T302: refused before anything reached Mindbody. The hold
            * block below says why and carries its own Understood. */
           const named = serverHoldsFrom(body?.holds).filter(
             (h) => h.kind !== "walkin",
@@ -9842,7 +9842,7 @@ function ContractDialog(props: {
       inFlight.current = false;
       setPurchasing(false);
       onBusyChange(false);
-      /* T301: whatever the answer, read the holds again, so one this
+      /* T302: whatever the answer, read the holds again, so one this
        * purchase left (an answer that may have moved money) is on screen
        * with its Understood before anyone taps the charge again. */
       void loadHolds();
@@ -10035,7 +10035,7 @@ function ContractDialog(props: {
       >
         <p className="modal-title">{contract.name}</p>
 
-        {/* T301: a charge for this client that may have moved money and
+        {/* T302: a charge for this client that may have moved money and
             nobody has acknowledged (T253). FIRST in the dialog, where it
             cannot be scrolled past, and in place of the charge: the
             route refuses it from every iPad until this Understood. A
@@ -10543,7 +10543,7 @@ function ContractDialog(props: {
   );
 }
 
-/** T301: one charge hold in the contract dialog's words. The time is the
+/** T302: one charge hold in the contract dialog's words. The time is the
  *  studio's, as the route's own sentence writes it. */
 function contractHoldLine(h: ServerHold): string {
   const when = new Date(h.createdAt).toLocaleTimeString("en-US", {

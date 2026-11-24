@@ -6428,7 +6428,7 @@ textarea.reason-note-field:disabled::placeholder {
   font-weight: 600;
 }
 
-/* T301: the contract dialog's hold block carries two controls side by
+/* T302: the contract dialog's hold block carries two controls side by
  * side, Check again and Understood, each the 64px .pay-dismiss. */
 .contract-hold-actions {
   display: flex;
