@@ -1310,6 +1310,19 @@ which needs nothing afterwards.
   retail alone (the quiet line), a pass added ($210 less $31.50),
   Remove, a new ticket, a card-on-file charge carrying the code, and the
   roster dialog filling it. Owed: Pete saves BLACK26 on prod.
+- [x] **T299 A membership started on a later day is no longer refused.**
+  Fixed 2026-11-24 (Pete, the contract dialog with Starts set to Tue
+  Dec 1: "Mindbody refused the rehearsal: The following parameter is
+  invalid: ProrateDate. Cannot be on or after StartDate."). T99 sent the
+  chosen day as both `StartDate` and `ProrateDate`, so every deferred
+  start was refused on the rehearsal and never reached a charge.
+  `ProrateDate` is now TODAY (the studio's day), the start of the
+  prorated stretch, with `StartDate` the chosen day and
+  `FirstPaymentOccurs: "StartDate"`: the client pays the prorated stretch
+  now and the monthly payments run from the chosen day, which is what
+  the dialog already says. The fake refuses the old shape in Mindbody's
+  words. Owed: the rehearsal's prorated Total read live for one chosen
+  day, and one real deferred sale.
 - [ ] **T237 Hardware day.** Buy and pair the Terminal, the production
   token, `POS_READER_LIVE=true`. **Never `POS_WRITE_CLIENT_IDS` while the
   studio is open**: it suppresses every write for every other client,

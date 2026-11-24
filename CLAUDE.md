@@ -1724,7 +1724,10 @@ while `git clone` works, so clone the repo rather than fetching files.
   sends `StartDate`, `ProrateDate` and `FirstPaymentOccurs` together, as
   studio wall-clock strings, and shows the rehearsal's own Total: no
   proration is ever computed here. Starting today sends none of the
-  three.
+  three. **`ProrateDate` must be BEFORE `StartDate`** (T299, Pete's
+  counter, 2026-11-24: "ProrateDate. Cannot be on or after StartDate."):
+  it is the day the prorated stretch BEGINS, so it is sent as today and
+  `StartDate` as the chosen day.
 - **Mindbody does not enforce class capacity; the caller must.**
   `addclienttoclass`'s own description says so (class.yml:1077: "To
   prevent overbooking a class ... it is necessary to first check the

@@ -983,6 +983,10 @@ function handle(method, path, q, body, res) {
       return send(res, 200, { ...page(list), Sales: list.slice().reverse() });
     }
     case "/sale/purchasecontract": {
+      /* T299: live Mindbody's own sentence (Pete's counter, 2026-11-24). */
+      if (body.ProrateDate && body.StartDate && String(body.ProrateDate).slice(0, 10) >= String(body.StartDate).slice(0, 10)) {
+        return send(res, 400, { Error: { Message: "The following parameter is invalid: ProrateDate. Cannot be on or after StartDate.", Code: "InvalidParameter" } });
+      }
       const c = contracts.find((x) => x.Id === Number(body.ContractId)) ?? contracts[0];
       const tax = 0;
       const totals = { SubTotal: c.FirstPaymentAmountTotal, Discount: 0, Tax: tax, Total: c.FirstPaymentAmountTotal };
