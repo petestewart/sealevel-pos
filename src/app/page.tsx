@@ -444,7 +444,8 @@ type PayOutcome =
 
 /**
  * Roster order. "signin" is the order Mindbody returned the visits, i.e.
- * the array as fetched, which is the default. The other two sort locally:
+ * the array as fetched. The default is "first" (T248). The two name sorts
+ * run locally:
  * a roster is at most a room's worth of rows, so there is nothing to ask
  * a server for.
  */
@@ -458,7 +459,13 @@ const ROSTER_SORTS: { value: RosterSort; label: string }[] = [
   { value: "last", label: "Last name" },
 ];
 
-const ROSTER_SORT_KEY = "pos.rosterSort";
+/* T248 follow-up (Pete: "i asked you to make sort default to alphabetical
+ * but it doesn't seem to be doing that"): picks saved under the old key
+ * date from when Sign-in order was the default, and they kept overriding
+ * First name on every device that had one. A new key drops them once;
+ * picks made from now on are remembered as before. */
+const ROSTER_SORT_KEY = "pos.rosterSort.v2";
+const OLD_ROSTER_SORT_KEY = "pos.rosterSort";
 
 /** How many history fetches the background sweep keeps in flight at once.
  *  Modest on purpose: the sweep is a nicety and must never crowd out the
@@ -2354,6 +2361,7 @@ function FrontDesk({
     /* localStorage can throw (private mode, storage disabled); the sort
      * is a convenience and falls back to the default silently. */
     try {
+      localStorage.removeItem(OLD_ROSTER_SORT_KEY);
       const stored = localStorage.getItem(ROSTER_SORT_KEY);
       if (stored === "signin" || stored === "last" || stored === "first") {
         setRosterSort(stored);
@@ -5182,7 +5190,8 @@ function FrontDesk({
   /**
    * The roster as displayed. Sorting is client-side, stable (Array.sort is
    * stable), case-insensitive, and never mutates `entries`, which stays in
-   * Mindbody's sign-in order -- that IS the default option. Last-name sort
+   * Mindbody's sign-in order (the "signin" option; the default is First
+   * name, T248). Last-name sort
    * splits on the final space of the display name; a one-word name sorts
    * by that word. The counter modals deliberately keep sign-in order.
    */
