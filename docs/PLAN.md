@@ -1314,7 +1314,14 @@ which needs nothing afterwards.
   **2026-11-24**: the studio made a retail "Rentals" category (100001)
   so BLACK26 can leave towel and mat rentals alone; it joins the Rentals
   shelf (`src/lib/categories.ts`), so the towel, mat and combo products
-  can move out of Accessories (32) with no gap at the counter.
+  can move out of Accessories (32) with no gap at the counter. Moved
+  the same day (read live: BLACK26 takes nothing off Mat Rental, Towel
+  Rental or the combo, and still 15% off Accessories and Clothing).
+  **2026-11-25** (Pete: "yes"): a retail product is no longer routed to
+  Rentals by its NAME, which had put "Yogitoes Mat Towel - Assorted"
+  ($72, Accessories) on the Rentals shelf; a product sits on its own
+  Mindbody category's shelf. Pricing options still route by revenue
+  category or name.
 - [x] **T299 A membership started on a later day is no longer refused.**
   Fixed 2026-11-24 (Pete, the contract dialog with Starts set to Tue
   Dec 1: "Mindbody refused the rehearsal: The following parameter is
