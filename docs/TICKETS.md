@@ -23181,6 +23181,14 @@ the menu keeps T52's order (Sign-in order, First name, Last name).
 Verified: a fresh browser profile, with nothing stored, opened the roster
 in first-name order.
 
+**Follow-up (2026-11-25).** Pete: "i asked you to make sort default to
+alphabetical but it doesn't seem to be doing that". The default was right,
+but any device that had ever picked a sort kept it under `pos.rosterSort`,
+and those picks dated from when Sign-in order was the default, so they
+overrode First name. The choice is now stored under `pos.rosterSort.v2`
+and the old key is removed on load: every device starts on First name
+once, and a teacher's pick from then on is remembered as before.
+
 
 ## T245. The roster's trash can offers "Late cancel" (Pete, 2026-11-17)
 
