@@ -72,6 +72,8 @@ export interface CounterCategory {
    * 2026-08-31) are "Mat Rental", "Towel Rental" and "Mat & Towel
    * COMBO", so the names are a handle that does not depend on how the
    * revenue category was spelled in Mindbody. Either match routes.
+   * PRICING OPTIONS only since 2026-11-25: a retail product sits on the
+   * shelf of its own Mindbody category (the Rentals category, 100001).
    */
   nameMatches?: string[];
 }

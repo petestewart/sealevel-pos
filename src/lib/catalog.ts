@@ -111,29 +111,14 @@ function routeServices(passes: CatalogItem[]): CatalogItem[] {
   });
 }
 
-/**
- * Pete, on the live rail (T76 follow-up): "Rentals was supposed to be a
- * main category as well." A retail PRODUCT whose name matches a
- * `nameMatches` handle (a "Mat Rental" filed under Accessories, say)
- * moves to that category too, so a rental lands on the Rentals cell
- * whichever kind of item Mindbody makes it. Products carry no revenue
- * category, so the name is the only handle.
- */
-function routeProducts(products: CatalogItem[]): CatalogItem[] {
-  const byPattern: { re: RegExp; id: number }[] = [];
-  for (const c of counterCategories) {
-    const id = c.categoryIds[0];
-    if (id === undefined) continue;
-    for (const source of c.nameMatches ?? []) {
-      byPattern.push({ re: new RegExp(source, "i"), id });
-    }
-  }
-  if (byPattern.length === 0) return products;
-  return products.map((p) => {
-    const routed = byPattern.find(({ re }) => re.test(p.name))?.id;
-    return routed === undefined ? p : { ...p, categoryId: routed };
-  });
-}
+/* T76's name routing for retail PRODUCTS is retired (Pete, 2026-11-25):
+ * the studio's rentals now live in their own retail category (100001,
+ * on the Rentals shelf by id), and routing by name also put
+ * "Yogitoes Mat Towel - Assorted" ($72, Accessories) on the Rentals
+ * shelf because its name holds "towel". A product now sits on the shelf
+ * its own Mindbody category names. Pricing options are still routed by
+ * revenue category or name (routeServices above): a service carries no
+ * category id. */
 
 /**
  * The raw catalog, from the cache when it is fresh for the current target,
@@ -187,7 +172,7 @@ export async function rawCatalog(
   const data: RawCatalog = {
     categories: counterCategories,
     cardFeeFamily: cardFeeFamilyRead,
-    products: routeProducts(products.filter((p) => !feeIds.has(String(p.id)))),
+    products: products.filter((p) => !feeIds.has(String(p.id))),
     passes: routeServices(passes),
     packages,
     contracts,
