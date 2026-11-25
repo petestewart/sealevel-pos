@@ -28,6 +28,11 @@ import {
   teacherLogTag,
   verifyCompToken,
 } from "@/lib/auth";
+import {
+  DEFAULT_CONTRACT_BILLING,
+  readContractBilling,
+  type ContractBilling,
+} from "@/lib/contractbilling";
 import { termsSha256 } from "@/lib/contractscene";
 import { insertContractReceipt } from "@/lib/db";
 import {
@@ -272,6 +277,17 @@ async function purchaseContractPost(request: Request) {
       { status: 400 },
     );
   }
+  /* T300: how a later start is billed. Read only when there IS a later
+   * start: a membership starting today sends exactly what T30 sent,
+   * whatever the browser put here. */
+  let billing: ContractBilling | null = null;
+  if (startDate !== null) {
+    const read = readContractBilling(payload?.billing);
+    if (!read.ok) {
+      return NextResponse.json({ error: read.error }, { status: 400 });
+    }
+    billing = read.billing;
+  }
   /* The first-payment figure the dialog's confirm button displayed, when
    * the browser had one. Compared against the fresh rehearsal below: a
    * tap agrees to the words on the button, so a price that has moved
@@ -429,6 +445,20 @@ async function purchaseContractPost(request: Request) {
           "That signature was for a different start date. Ask them again.",
         );
       }
+      /* T300: the billing the customer read. A request stored before
+       * T300 carries none and was shown the prorated wording. */
+      const signedBilling =
+        signedStart === null
+          ? null
+          : typeof held.private.billing === "string"
+            ? held.private.billing
+            : DEFAULT_CONTRACT_BILLING;
+      if (signedBilling !== billing) {
+        return refuse(
+          "That signature was for a different way of billing the start. " +
+            "Ask them again.",
+        );
+      }
       /* The wording, as it reads NOW. The studio edits these terms in
        * Mindbody's rich text editor, so a membership must never be sold
        * against a signature taken on words that have since changed. */
@@ -520,7 +550,8 @@ async function purchaseContractPost(request: Request) {
     });
     console.log(
       `[contract-signature] ${saleOutcome} client=${clientId} ` +
-        `contract=${contractId} start=${startDate ?? "today"} ` +
+        `contract=${contractId} start=${startDate ?? "today"}` +
+        `${billing === null ? "" : ` billing=${billing}`} ` +
         `signature=${signature === null ? "none" : signature.sha256.slice(0, 12)} ` +
         `${teacherLogTag(overrideTeacher)} receipt=${landed ? "row" : "log-only"}`,
     );
@@ -616,6 +647,7 @@ async function purchaseContractPost(request: Request) {
         lastFour: card.lastFour,
         test: true,
         startDate,
+        billing,
       });
     } catch (err) {
       await fileReceipt(`refused: rehearsal ${errMessage(err)}`);
@@ -678,6 +710,7 @@ async function purchaseContractPost(request: Request) {
           lastFour: card.lastFour,
           test: false,
           startDate,
+          billing,
           /* T205: the signature, base64 from the server's own store and
            * never from the browser, on the REAL call only. Mindbody files
            * it under the client's documents (sale.yml:6246). */

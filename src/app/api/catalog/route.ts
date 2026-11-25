@@ -10,8 +10,8 @@ import {
 } from "@/lib/catalog";
 import { enabledDbBundles } from "@/lib/db";
 import { applyShelfConfig } from "@/lib/shelfconfig";
-import { cardFeeEnv } from "@/lib/cardfee";
-import type { CatalogItem } from "@/lib/sale";
+import { CARD_FEE_UNIT_PRICE, cardFeeEnv } from "@/lib/cardfee";
+import type { CardFeeFamily } from "@/lib/sale";
 
 export const dynamic = "force-dynamic";
 
@@ -47,27 +47,32 @@ async function currentBundles(): Promise<{
 }
 
 /**
- * T297: the card fee as the Cart screen needs it: the product to put on
- * the ticket and the rule. Off (null) unless POS_CARD_FEE_PRODUCT_ID is
- * set AND the product reads as $0.01 and tax exempt, because the fee is
- * sold as cents of that product and anything else would charge a
- * different figure from the one on the sign. /api/checkout applies the
- * same test before it sells a fee line.
+ * T297: the card fee as the Cart screen needs it: the item to put on the
+ * ticket, the rule and (T302) `availableCents`, the fee amounts the
+ * studio has an untaxed product for (src/lib/sale.ts cardFeeFamily). Off
+ * (null) unless POS_CARD_FEE_PRODUCT_ID is set and the family has at
+ * least one amount. The Cart screen adds a fee only of an amount on that
+ * list; any other sale carries none, never a substitute.
+ *
+ * The item is the product POS_CARD_FEE_PRODUCT_ID names, served as a
+ * ONE-CENT, untaxed unit whatever it costs: the browser counts the fee
+ * as a quantity of cents (src/lib/cardfee.ts), and the server swaps in
+ * the product of that amount on the way to Mindbody.
  */
-function cardFeeOffer(item: CatalogItem | null) {
+function cardFeeOffer(family: CardFeeFamily | null) {
   const rule = cardFeeEnv();
-  if (rule === null || item === null) return null;
-  if (Math.round(item.price * 100) !== 1 || !item.taxExempt) {
-    console.warn(
-      `[card-fee] product ${rule.productId} is $${item.price.toFixed(2)}` +
-        `${item.taxExempt ? "" : ", taxed"}; it must be $0.01 and tax exempt, so no fee is added`,
-    );
-    return null;
-  }
+  if (rule === null || family === null || family.byCents.size === 0) return null;
   return {
-    item: { ...item, name: "Card processing fee" },
+    item: {
+      ...family.anchor,
+      name: "Card processing fee",
+      price: CARD_FEE_UNIT_PRICE,
+      taxExempt: true,
+      taxRate: 0,
+    },
     rate: rule.rate,
     underCents: rule.underCents,
+    availableCents: [...family.byCents.keys()].sort((a, b) => a - b),
   };
 }
 
@@ -104,7 +109,7 @@ export async function GET(request: Request) {
     const shelf = applyShelfConfig(data, config);
     return NextResponse.json({
       categories: data.categories,
-      cardFee: cardFeeOffer(data.cardFeeItem),
+      cardFee: cardFeeOffer(data.cardFeeFamily),
       ...shelf,
       ...bundles,
       ...favorites,

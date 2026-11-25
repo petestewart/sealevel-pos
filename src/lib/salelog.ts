@@ -166,6 +166,7 @@ export function summarizeContractRequest(payload: any): Record<string, unknown> 
     clientId: str(payload?.clientId, 40),
     contractId: str(payload?.contractId, 40),
     startDate: str(payload?.startDate, 40),
+    billing: str(payload?.billing, 20),
     expectedFirstTotal: num(payload?.expectedFirstTotal),
     signed: payload?.displayRequestId !== undefined,
     signatureOverride: payload?.signatureOverride !== undefined,

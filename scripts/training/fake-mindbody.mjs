@@ -135,6 +135,15 @@ const products = [
   /* The studio's own Rentals category (100001, 2026-11-24). */
   { Id: "p950", ProductId: 2950, Name: "Mat & Towel COMBO", Price: 4.52, OnlinePrice: 4.52, TaxRate: TAX, CategoryId: 100001 },
 ];
+/* T302: the rest of the fee family, as on 471: one untaxed product per
+ * amount, $0.02 to $0.26, in the fee product's own category. */
+for (let c = 2; c <= 26; c++) {
+  products.push({
+    Id: `p9${String(c).padStart(2, "0")}x`, ProductId: 2900 + c,
+    Name: `Credit card fee (2.6%: 0.${String(c).padStart(2, "0")})`,
+    Price: c / 100, OnlinePrice: c / 100, TaxRate: 0, CategoryId: 100002, SecondaryCategoryId: 0,
+  });
+}
 const contracts = [
   {
     Id: 347,
@@ -985,9 +994,25 @@ function handle(method, path, q, body, res) {
       return send(res, 200, { ...page(list), Sales: list.slice().reverse() });
     }
     case "/sale/purchasecontract": {
+      /* T299: live Mindbody's own sentence (Pete's counter, 2026-11-24). */
+      if (body.ProrateDate && body.StartDate && String(body.ProrateDate).slice(0, 10) >= String(body.StartDate).slice(0, 10)) {
+        return send(res, 400, { Error: { Message: "The following parameter is invalid: ProrateDate. Cannot be on or after StartDate.", Code: "InvalidParameter" } });
+      }
       const c = contracts.find((x) => x.Id === Number(body.ContractId)) ?? contracts[0];
       const tax = 0;
-      const totals = { SubTotal: c.FirstPaymentAmountTotal, Discount: 0, Tax: tax, Total: c.FirstPaymentAmountTotal };
+      /* T300: a later start's first figure follows its shape. The
+       * amounts are INVENTED (live Mindbody has not been seen answering
+       * the unprorated shapes): prorated, a part of a payment; on the
+       * start day, nothing today; taken today, the first payment. */
+      const first = body.StartDate
+        ? body.ProrateDate
+          ? Math.round(c.FirstPaymentAmountTotal * 40) / 100
+          : body.FirstPaymentOccurs === "StartDate"
+            ? 0
+            : c.FirstPaymentAmountTotal
+        : c.FirstPaymentAmountTotal;
+      console.error(`[fake] purchasecontract Test=${body.Test} StartDate=${body.StartDate ?? "-"} ProrateDate=${body.ProrateDate ?? "-"} FirstPaymentOccurs=${body.FirstPaymentOccurs} -> ${first}`);
+      const totals = { SubTotal: first, Discount: 0, Tax: tax, Total: first };
       if (body.Test === true) return send(res, 200, { Totals: totals, ClientContractId: null });
       contractsHeld[body.ClientId] = [{ Id: 7100, ContractName: c.Name, StartDate: (body.StartDate ?? day(0)) + "T00:00:00", EndDate: day(365) + "T00:00:00" }];
       const cl = byId(body.ClientId);

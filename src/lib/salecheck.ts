@@ -1,7 +1,8 @@
+import { isCardFeeProduct } from "./cardfee";
 import { listSaleLog, setSaleLogCheck, type SaleLogRow } from "./db";
 import { mindbody } from "./mindbody";
 import { studioWall } from "./roster";
-import { houseClientId } from "./sale";
+import { cardFeeBarcodes, cardFeeFamily, houseClientId } from "./sale";
 
 /**
  * T274's check: every sale the log says STOOD is read back from Mindbody
@@ -193,9 +194,28 @@ export async function checkRow(
     !items.some((l) => l?.type === "Package");
   if (plainCart) {
     const sold = reads.flatMap((r) => r.items);
+    const isFee = (want: any): boolean =>
+      typeof want?.type === "string" &&
+      (typeof want?.id === "string" || typeof want?.id === "number") &&
+      isCardFeeProduct(want.type, want.id);
+    /* T302: the card fee is logged in cents of one product and sold as
+     * ONE unit of the product priced at that amount, so any fee product
+     * answers to it. A read that fails leaves the ones already known. */
+    if (items.some(isFee)) await cardFeeFamily().catch(() => null);
+    const feeIds = cardFeeBarcodes();
     for (const want of items) {
-      const matches = sold.filter((g) => lineMatches(want, g));
-      const wantQty = typeof want?.quantity === "number" ? want.quantity : 1;
+      const matches = isFee(want)
+        ? sold.filter(
+            (g) =>
+              lineMatches(want, g) ||
+              (g.barcodeId !== null && feeIds.has(g.barcodeId.trim().toLowerCase())),
+          )
+        : sold.filter((g) => lineMatches(want, g));
+      const wantQty = isFee(want)
+        ? 1
+        : typeof want?.quantity === "number"
+          ? want.quantity
+          : 1;
       const label = want?.name ? `${want.name} (${want.type} ${want.id})` : `${want?.type} ${want?.id}`;
       if (matches.length === 0) {
         problems.push(`${label} was asked for and is not on the sale.`);

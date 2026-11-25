@@ -1277,13 +1277,8 @@ which needs nothing afterwards.
   exempt" (100000) as its PRIMARY category, so it is on no counter shelf
   and the app now reads a primary 100000 as tax exempt too. Read live:
   14 units price $0.14, tax $0.00, and BLACK26 takes nothing off it.
-  **Moved 2026-11-24** to a new "Fees" category (100002, renamed
-  "Credit card fee (2.6%: 0.01)", beside $0.02 to $0.26 siblings the app
-  does not use), TaxRate 0 and still priced with no tax, so the app now
-  also reads Mindbody's own 0% rate as untaxed. Same day: a retail
-  "Rentals" category (100001) joins the Rentals shelf, so the towel, mat
-  and combo products can leave Accessories and BLACK26.
-  Owed: one live sale.
+  **Superseded by T301**: the receipt printed one $0.01 row per cent,
+  so the fee is now one discounted unit of a product priced $0.26.
 - [x] **T298 A promotion code on every sale, for a run of days.** Built
   2026-11-23 (Pete: "add a new feature where we can have a promo code
   automatically applied to all carts. starting today i want BLACK26 promo
@@ -1316,6 +1311,119 @@ which needs nothing afterwards.
   retail alone (the quiet line), a pass added ($210 less $31.50),
   Remove, a new ticket, a card-on-file charge carrying the code, and the
   roster dialog filling it. Owed: Pete saves BLACK26 on prod.
+  **2026-11-24**: the studio made a retail "Rentals" category (100001)
+  so BLACK26 can leave towel and mat rentals alone; it joins the Rentals
+  shelf (`src/lib/categories.ts`), so the towel, mat and combo products
+  can move out of Accessories (32) with no gap at the counter.
+- [x] **T299 A membership started on a later day is no longer refused.**
+  Fixed 2026-11-24 (Pete, the contract dialog with Starts set to Tue
+  Dec 1: "Mindbody refused the rehearsal: The following parameter is
+  invalid: ProrateDate. Cannot be on or after StartDate."). T99 sent the
+  chosen day as both `StartDate` and `ProrateDate`, so every deferred
+  start was refused on the rehearsal and never reached a charge.
+  `ProrateDate` is now TODAY (the studio's day), the start of the
+  prorated stretch, with `StartDate` the chosen day and
+  `FirstPaymentOccurs: "StartDate"`: the client pays the prorated stretch
+  now and the monthly payments run from the chosen day, which is what
+  the dialog already says. The fake refuses the old shape in Mindbody's
+  words. Owed: the rehearsal's prorated Total read live for one chosen
+  day, and one real deferred sale.
+- [x] **T300 A later start can be billed three ways.** Built 2026-11-24
+  (Pete: "start date defaults to today but can be set in the future. if
+  set to the future, defaults to pro-rate from today (membership starts
+  now even tho contract date begins at the start date) but that can be
+  turned off (membership starts on contract date)", and the first
+  payment of an unprorated start as "a choice in the dialog"). With a
+  later day chosen, the contract dialog shows "Membership starts" (Today,
+  prorated | the day) and, when that is the day, "First payment" (the
+  day | Today), each a pair of 64px choices. `billing` on
+  `/api/purchase-contract` and `/api/display/present` is `prorate`
+  (default: StartDate, ProrateDate today, FirstPaymentOccurs StartDate),
+  `startday` (StartDate, FirstPaymentOccurs StartDate) or `today`
+  (StartDate, FirstPaymentOccurs Instant); `src/lib/contractbilling.ts`.
+  Ignored for a start today, which sends what T30 sent. It rides the
+  rehearsal and the purchase alike, is kept on a customer-screen
+  signature's private half and checked at the purchase like the start
+  day, and is in the `[contract-signature]` line and the sale log. The
+  customer screen words each shape ("Today, billing from ...", "Nothing
+  today"). Every figure is still the rehearsal's; "Nothing charged today"
+  only when Mindbody prices the start-day shape at zero. Driven against
+  the fake (which invents the three figures) in a browser: each choice
+  re-rehearses with the right fields, and a PIN-overridden purchase sent
+  the shape it was priced with, and a paired customer screen showed
+  each shape's words. **Rehearsed live on prod (2026-11-24, `Test:
+  true` only, dummy client 100042041 paying by account, contracts 110,
+  105 and 109, start 2026-12-01):** T99's old shape refused in the very
+  sentence Pete saw; `prorate` priced 38.64 / 44.00 / 46.64; `startday`
+  priced 0.00 for all three; `today` priced the full first payment (145 /
+  165 / 175). So all three shapes are accepted and "Nothing charged
+  today" is what the start-day shape will say. **Owed, on the dummy
+  client:** one real sale of each and the next payment date of each
+  (`/client/clientcontracts` `UpcomingAutopayEvents`): the four contracts
+  on site 471 all bill `OnSaleDate`, and whether a `today` start then
+  bills on the 1st or on the sale's day of the month is unseen.
+- [x] **T301 The card fee is ONE line on the receipt.** Built 2026-11-24
+  (Pete, on sale 430178, a $2.00 LMNT with five "Credit card fee $0.01"
+  rows: "their receipt is going to look very unprofessional", and "we
+  can change the price of an item in the mindbody app, you're telling me
+  you can't do that?"). **No way was found to set a price through the
+  API**: 25 more `Test: true` shapes on product 589 (twelve Metadata
+  keys, six CheckoutItemWrapper keys, string Metadata, a negative
+  DiscountAmount) all priced the catalog's $0.01 or were refused, on top
+  of T297's three and T256's three. **A line discount does it**: LMNT
+  $1.81 with `DiscountAmount` $1.76 priced $0.05, and Towel Rental beside
+  it with BLACK26 took the code's 15% AND the line discount ($2.59, the
+  same as the towel with five $0.01 units). So the fee product is now
+  priced at or above the rule's largest fee ($0.26 for 2.6% under $10)
+  and sold as ONE unit discounted to the fee (`withCardFeeShape` in
+  `src/lib/sale.ts`, called by `priceCart` and `checkoutCart`, the only
+  two senders of a cart). The browser, the routes and the sale log go
+  on counting the fee in cents at $0.01 (`/api/catalog` serves it as a
+  one-cent unit whatever the product costs); the screens did not
+  change. `priceCart` takes the fee's own discount back out of the
+  subtotal and discount it reports, so a promotion code's discount is
+  the code's alone; T75 compares the product's own price against
+  Mindbody's pre-discount SubTotal, so a product price this read did not
+  see is a refusal, never a wrong charge. T103's basket and T274's daily
+  check count the fee as one unit. A product still at $0.01, taxed, or
+  below the largest fee turns the fee OFF (`/api/catalog`) and is
+  refused at pricing; it is never sold the old way. Driven against a
+  fake Mindbody priced like the live probes (22 checks: the payload, the
+  totals with and without BLACK26, the charge and its basket, a 26 cent
+  fee, a 27 cent fee refused, a ticket with no fee unchanged), and the
+  $0.01 product refused with nothing sent. **Sold live and superseded by
+  T302**: sale 430291 (Pete, 2026-11-24) printed "1 Credit card fee
+  $0.26, Discount (80.77%): -$0.21" on the receipt.
+- [x] **T302 The card fee is one PLAIN line: a product per amount.**
+  Built 2026-11-24 (Pete, on sale 430291's receipt: "reciept sucks";
+  setting a price per sale with `updateproductprice` was weighed and
+  turned down: a lock on every fee sale, a price write per cart change,
+  and two unknowns found only live). Pete made one product per fee
+  amount, "Credit card fee (2.6%: 0.01)" to "(2.6%: 0.26)", in a new
+  "Fees" category (100002); `POS_CARD_FEE_PRODUCT_ID` stays 589's
+  barcode, now the $0.01 one. Mindbody's product editor offers only
+  active categories, so the old inactive "Fees" (25) could not hide them
+  from Mindbody's retail screen. `cardFeeFamily` in `src/lib/sale.ts`
+  reads that product's category live (two-minute cache): untaxed
+  products (TaxRate 0) from 1 cent to the rule's largest fee, one per
+  price, an ambiguous price dropped, each skipped one logged.
+  `withCardFeeShape` swaps the browser's cents line for the product of
+  that amount, quantity 1, no discount; T301's discount and its
+  subtotal/discount adjustments are gone. `/api/catalog` serves
+  `availableCents`, and the Cart screen adds a fee only of an amount on
+  it, so a sale whose fee has no product carries NO fee;
+  `/api/checkout` refuses a fee line the family cannot sell, before any
+  charge. T103's basket and T274's daily check take any fee product as
+  the fee line, sold once. **Read live (Test pricing, dummy client,
+  2026-11-24): 25 of the 26 priced untaxed; the $0.07 product
+  (9800359340) is taxed (TaxRate 0.1055, $0.07 + $0.01), so a sale
+  whose fee is 7 cents carries none until it is fixed**; LMNT plus the
+  5 cent product priced $2.05 with no discount, and Towel Rental with
+  BLACK26 beside a fee took the code's 15% off the towel only. Driven
+  against a fake shaped like the site (29 checks). Also restores one
+  comment in the contract code that T301's merge relabelled from T299.
+  **Owed: Pete fixes the $0.07 product's tax; one live card sale under
+  $10 and its receipt.**
 - [ ] **T237 Hardware day.** Buy and pair the Terminal, the production
   token, `POS_READER_LIVE=true`. **Never `POS_WRITE_CLIENT_IDS` while the
   studio is open**: it suppresses every write for every other client,

@@ -1,5 +1,9 @@
 import { createHash } from "node:crypto";
 
+import {
+  DEFAULT_CONTRACT_BILLING,
+  type ContractBilling,
+} from "./contractbilling";
 import { plainText } from "./richtext";
 import {
   clientPaymentProfile,
@@ -97,6 +101,8 @@ export interface ContractSceneBuild {
     /** The normalized start day: a studio `YYYY-MM-DD`, or null for
      *  today, exactly as /api/purchase-contract normalizes it. */
     startDate: string | null;
+    /** T300: how the later start is billed; null for a start today. */
+    billing: ContractBilling | null;
     termsSha256: string;
     /** The rehearsed first payment in whole cents, or null when the
      *  rehearsal was suppressed or priced no total. */
@@ -114,6 +120,8 @@ export async function buildContractScene(input: {
   clientId: string;
   contractId: number;
   startDate: string | null;
+  /** T300: ignored for a start today; absent means prorate. */
+  billing?: ContractBilling | null;
   clientFirstName: string | null;
 }): Promise<
   | { ok: true; value: ContractSceneBuild }
@@ -140,6 +148,8 @@ export async function buildContractScene(input: {
     if (problem) return { ok: false, status: 400, error: problem };
     startDate = input.startDate === studioDayKey() ? null : input.startDate;
   }
+  const billing: ContractBilling | null =
+    startDate === null ? null : (input.billing ?? DEFAULT_CONTRACT_BILLING);
 
   let found;
   try {
@@ -221,6 +231,7 @@ export async function buildContractScene(input: {
       lastFour,
       test: true,
       startDate,
+      billing,
     });
     if (!rehearsed.suppressed && rehearsed.totals?.total !== null) {
       const total = rehearsed.totals?.total;
@@ -246,17 +257,27 @@ export async function buildContractScene(input: {
       ? c.recurringPaymentTotal
       : null;
   const cadence = recurring === null ? null : frequencyWords(c);
+  const when = startsOnWords(startDate);
+  /* T300: the words follow how the later start is billed. Every figure
+   * is still the rehearsal's; these only say WHEN, in the student's
+   * words. A prorated start has the student in from today, with the
+   * contract's own payments from the chosen day. */
   const autopay =
     recurring !== null && cadence !== null
-      ? `Then ${usd(recurring)} ${cadence}.`
+      ? billing === "prorate" || billing === "startday"
+        ? `Then ${usd(recurring)} ${cadence} from ${when}.`
+        : `Then ${usd(recurring)} ${cadence}.`
       : null;
-  const when = startsOnWords(startDate);
+  const startsOn =
+    billing === "prorate" ? `Today, billing from ${when}` : when;
   const firstPayment =
     firstTotalCents === null
       ? null
-      : `${usd(firstTotalCents / 100)} ${
-          startDate === null ? "today" : `today, and it starts ${when}`
-        }`;
+      : billing === "prorate"
+        ? `${usd(firstTotalCents / 100)} today, covering today to ${when}`
+        : billing === "startday" && firstTotalCents === 0
+          ? "Nothing today"
+          : `${usd(firstTotalCents / 100)} today`;
 
   return {
     ok: true,
@@ -264,7 +285,7 @@ export async function buildContractScene(input: {
       payload: {
         contractName: plainText(c.name).slice(0, 120) || "Membership",
         terms,
-        startsOn: when,
+        startsOn,
         firstPayment,
         autopay,
         clientFirstName: input.clientFirstName,
@@ -273,6 +294,7 @@ export async function buildContractScene(input: {
         clientId,
         contractId,
         startDate,
+        billing,
         termsSha256: createHash("sha256").update(found.rawTerms).digest("hex"),
         firstTotalCents,
       },

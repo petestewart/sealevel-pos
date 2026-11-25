@@ -8,13 +8,35 @@
  *
  * Mindbody has no surcharge field and ignores a price sent on a cart
  * line (probed on 471, 2026-11-23: Metadata Price, Amount and SalePrice
- * all priced at the catalog's $1.81). So the fee is an ordinary retail
- * product the studio creates, priced $0.01 and tax exempt, sold at a
- * QUANTITY of cents: a 23 cent fee is 23 x $0.01. Mindbody prices it,
- * T75 and T103 check it like any line, and the sale report shows it as
- * its own item. Tax exempt matters twice: a fee is not taxed, and
- * Mindbody rounds tax per UNIT upward, so a taxed $0.01 would cost 2
- * cents a unit.
+ * all priced at the catalog's $1.81; and T301, 2026-11-24: 25 more
+ * shapes on the fee product, twelve Metadata keys, six wrapper keys,
+ * string Metadata and a negative DiscountAmount, every one priced at the
+ * catalog's $0.01 or refused). T297 first sold the fee as a QUANTITY of
+ * a $0.01 product, which Mindbody's sale page and receipt print as one
+ * "$0.01" row per cent (Pete, sale 430178: five rows for a 5 cent fee:
+ * "their receipt is going to look very unprofessional").
+ *
+ * T301 then sold ONE $0.26 product discounted down to the fee, which
+ * Mindbody's receipt printed as "Credit card fee $0.26, Discount
+ * (80.77%) -$0.21" (Pete, sale 430291: "reciept sucks").
+ *
+ * T302: the studio keeps one product per fee amount, $0.01 to $0.26, in
+ * one category ("Fees"), and the fee is ONE unit of the product priced
+ * at exactly the fee: one plain line on the receipt. The family is read
+ * live (`cardFeeFamily` in src/lib/sale.ts: the category of the product
+ * POS_CARD_FEE_PRODUCT_ID names, untaxed products only, one per price),
+ * and an amount with no product carries no fee. Test-priced on 471
+ * (2026-11-24): 25 of the 26 untaxed, and Towel Rental with BLACK26
+ * beside the $0.05 one took the code's 15% off the towel only ($2.59).
+ *
+ * The browser does not know any of this: its fee line is still a
+ * quantity of CENTS at $0.01 (/api/catalog serves the fee as a one-cent
+ * unit, with the amounts that have a product), the screens show "Card
+ * processing fee $0.05", and the routes check the fee in cents.
+ * `src/lib/sale.ts` swaps in the product of that amount at the one place
+ * every cart leaves for Mindbody (`withCardFeeShape`), and reads it back
+ * the same way (the basket and the daily check take any fee product as
+ * the fee line, sold once).
  *
  * Shared by the browser (to put the line on the ticket) and
  * /api/checkout (to refuse a fee line that does not belong). Pure: no
@@ -30,7 +52,8 @@ export interface CardFeeRule {
   underCents: number;
 }
 
-/** The unit price the fee product must have, in dollars. */
+/** The unit the BROWSER's fee line is counted in, in dollars: its
+ *  quantity is the fee in cents (T302: the product of that price is swapped in for Mindbody). */
 export const CARD_FEE_UNIT_PRICE = 0.01;
 
 /** The tenders that carry the fee. The reader's debit exemption is
@@ -58,6 +81,23 @@ export function cardFeeCents(preFeeCents: number, rule: CardFeeRule): number {
   if (!Number.isFinite(preFeeCents) || preFeeCents <= 0) return 0;
   if (preFeeCents >= rule.underCents) return 0;
   return Math.max(1, Math.round(preFeeCents * rule.rate));
+}
+
+/** T301/T302: the largest fee this rule can make, in cents: the fee on a
+ *  sale one cent under the floor: the top of the fee product family
+ *  (src/lib/sale.ts cardFeeFamily reads products from 1 cent to this). */
+export function maxCardFeeCents(rule: CardFeeRule): number {
+  return cardFeeCents(rule.underCents - 1, rule);
+}
+
+/** T301/T302: is this cart line the card fee? Only a Product line whose id is
+ *  the rule's product. With the rule off, nothing is. */
+export function isCardFeeProduct(
+  type: string,
+  id: string | number,
+  rule: CardFeeRule | null = cardFeeEnv(),
+): boolean {
+  return rule !== null && type === "Product" && String(id) === rule.productId;
 }
 
 /** The words for the rule, for the ticket and the drawer. */
