@@ -17,7 +17,7 @@
  * leaf. Everything not listed here does not reach the counter at all
  * (Skin/Body 27, Books 29, Jewelry 28, Music 31, Videos/Instructional 30
  * and whatever the studio adds later; Other Products 49 joined the list
- * for the parking pass); the T39.2 "more"
+ * for the parking pass, sales tax exempt 100000 for the donations); the T39.2 "more"
  * fold that once promised them a home was retired with T76.
  *
  * Consumed by: GET /api/catalog (T22), which filters /sale/products by the
@@ -79,7 +79,7 @@ export interface CounterCategory {
 }
 
 /**
- * The five entries a teacher actually reaches for, in rail order (T76).
+ * The entries a teacher actually reaches for, in rail order (T76).
  * The ids and the routing facts are exactly what T41 established; only
  * the labels, the order and the section changed.
  *
@@ -99,6 +99,12 @@ export const counterCategories: readonly CounterCategory[] = [
    * (Pete, live: "i don't see 'parking pass' for some reason. it is an
    * item in the store" / "it's in the 'Other Products' category"). */
   { label: "Other", section: "Retail", categoryIds: [49] },
+  /* Mindbody's "sales tax exempt" (100000): the studio's Scholarship
+   * Fund donations, "$5 DONATION - Sealevel Scholarship Fund" to "$25
+   * ..." (Pete, 2026-11-25: "we need to add the donation items to the
+   * store so that a student can make a donation"). Read live that day,
+   * the category holds those five products and nothing else. */
+  { label: "Donations", section: "Retail", categoryIds: [100000] },
   {
     /* Mindbody's "Towel and Mat" (-14), relabelled at Pete's word (T76).
      * The revenue-category and name handles are T41's, unchanged. */
