@@ -54,7 +54,7 @@ export interface ShelfProductOverride {
    *  the hide list uses, so one row can be both moved and hidden. */
   key: string;
   /** A Retail child's or Rentals' category id from categories.ts
-   *  `counterCategories` (36, 26, 32, 49, -14). Any other id is refused:
+   *  `counterCategories` (36, 26, 32, 49, 100000, -14, 100001). Any other id is refused:
    *  a product filed under a category the rail does not draw would
    *  simply vanish. */
   categoryId: number;

@@ -2745,6 +2745,7 @@ const PRODUCT_CATEGORIES: { label: string; categoryId: number }[] = [
   { label: "Clothing", categoryId: 26 },
   { label: "Accessories", categoryId: 32 },
   { label: "Other", categoryId: 49 },
+  { label: "Donations", categoryId: 100000 },
   { label: "Rentals", categoryId: -14 },
 ];
 
