@@ -1311,6 +1311,10 @@ which needs nothing afterwards.
   retail alone (the quiet line), a pass added ($210 less $31.50),
   Remove, a new ticket, a card-on-file charge carrying the code, and the
   roster dialog filling it. Owed: Pete saves BLACK26 on prod.
+  **2026-11-24**: the studio made a retail "Rentals" category (100001)
+  so BLACK26 can leave towel and mat rentals alone; it joins the Rentals
+  shelf (`src/lib/categories.ts`), so the towel, mat and combo products
+  can move out of Accessories (32) with no gap at the counter.
 - [x] **T299 A membership started on a later day is no longer refused.**
   Fixed 2026-11-24 (Pete, the contract dialog with Starts set to Tue
   Dec 1: "Mindbody refused the rehearsal: The following parameter is

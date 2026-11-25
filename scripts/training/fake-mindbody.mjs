@@ -130,9 +130,20 @@ const products = [
   { Id: "p300", ProductId: 2201, Name: "Yoga Mat Towel", Price: 45, OnlinePrice: 45, TaxRate: TAX, CategoryId: 32 },
   { Id: "p301", ProductId: 2202, Name: "Studio Yoga Mat", Price: 68, OnlinePrice: 68, TaxRate: TAX, CategoryId: 32 },
   /* T297: the card processing fee, $0.01 a unit, tax exempt, in no
-   * counter category, filed as live 589 is (primary category "sales tax exempt"): POS_CARD_FEE_PRODUCT_ID=p900. */
-  { Id: "p900", ProductId: 2900, Name: "Credit card fee", Price: 0.01, OnlinePrice: 0.01, TaxRate: 0, CategoryId: 100000, SecondaryCategoryId: 0 },
+   * counter category, filed as live 589 is since 2026-11-24 ("Fees" 100002, TaxRate 0): POS_CARD_FEE_PRODUCT_ID=p900. */
+  { Id: "p900", ProductId: 2900, Name: "Credit card fee (2.6%: 0.01)", Price: 0.01, OnlinePrice: 0.01, TaxRate: 0, CategoryId: 100002, SecondaryCategoryId: 0 },
+  /* The studio's own Rentals category (100001, 2026-11-24). */
+  { Id: "p950", ProductId: 2950, Name: "Mat & Towel COMBO", Price: 4.52, OnlinePrice: 4.52, TaxRate: TAX, CategoryId: 100001 },
 ];
+/* T302: the rest of the fee family, as on 471: one untaxed product per
+ * amount, $0.02 to $0.26, in the fee product's own category. */
+for (let c = 2; c <= 26; c++) {
+  products.push({
+    Id: `p9${String(c).padStart(2, "0")}x`, ProductId: 2900 + c,
+    Name: `Credit card fee (2.6%: 0.${String(c).padStart(2, "0")})`,
+    Price: c / 100, OnlinePrice: c / 100, TaxRate: 0, CategoryId: 100002, SecondaryCategoryId: 0,
+  });
+}
 const contracts = [
   {
     Id: 347,
