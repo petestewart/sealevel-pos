@@ -3174,6 +3174,15 @@ function PaymentPanel(props: {
 
   const totalCents = total === null ? null : Math.round(total * 100);
   const balanceCents = balance === null ? null : Math.round(balance * 100);
+  /** T304: what the account can PAY without a PIN. A balance already
+   *  below zero covers nothing, exactly like an empty one: every
+   *  "min(due, balance)" below used to go negative on it, so the Account
+   *  tile made no line and did nothing at all (Pete, 2026-11-26: "Trying
+   *  to have someone pay with their account who has a negative balance.
+   *  Doesn't even do anything when I tap account."). `balanceCents` stays
+   *  the real figure for the overdraft's "balance after". */
+  const spendableCents =
+    balanceCents === null ? null : Math.max(0, balanceCents);
 
   const clientId = client?.id ?? null;
 
@@ -3756,14 +3765,14 @@ function PaymentPanel(props: {
       const only = cur.length === 1 ? cur[0] : undefined;
       if (only === undefined || only.whole !== true) return cur;
       let target = totalCents;
-      if (only.source === "credit") target = Math.min(target, balanceCents ?? 0);
+      if (only.source === "credit") target = Math.min(target, spendableCents ?? 0);
       if (only.source === "giftcard") {
         target = Math.min(target, giftCard?.balanceCents ?? 0);
       }
       if (target <= 0 || target === only.cents) return cur;
       return [{ ...only, cents: target }];
     });
-  }, [totalCents, balanceCents, giftCard, wholeFrozen]);
+  }, [totalCents, spendableCents, giftCard, wholeFrozen]);
 
   /* T297: one card line is what carries the card fee. Frozen exactly
    * when the whole line is, since that tender is the one being charged. */
@@ -3908,7 +3917,7 @@ function PaymentPanel(props: {
        * caps at the total like the card does and the balance stops
        * deciding. Without one the balance is still the ceiling. */
       if (overdraft !== null) return room;
-      return balanceCents === null ? 0 : Math.min(room, balanceCents);
+      return spendableCents === null ? 0 : Math.min(room, spendableCents);
     }
     /* T83: a gift card caps at what Mindbody says is on it, exactly as
      * credit caps at the account balance. The server re-reads the
@@ -6026,7 +6035,7 @@ function PaymentPanel(props: {
     const cents = takeFrom
       ? 0
       : source === "credit"
-        ? Math.min(due, balanceCents ?? 0)
+        ? Math.min(due, spendableCents ?? 0)
         : due;
     /* T94: an account with nothing on it still takes a line, at $0.00,
      * and the keypad opens on it straight away: that modal is where the
@@ -6427,7 +6436,7 @@ function PaymentPanel(props: {
     padPartner === undefined || padRest === null || padRest <= 0
       ? null
       : padPartner.source === "credit"
-        ? Math.min(padRest, balanceCents ?? 0)
+        ? Math.min(padRest, spendableCents ?? 0)
         : padPartner.source === "giftcard"
           ? Math.min(padRest, giftCard?.balanceCents ?? 0)
           : padRest;
@@ -6530,7 +6539,7 @@ function PaymentPanel(props: {
           if (target === undefined || l.id !== target.id) return l;
           if (rest === null || rest <= 0) return l;
           let other = rest;
-          if (l.source === "credit") other = Math.min(rest, balanceCents ?? 0);
+          if (l.source === "credit") other = Math.min(rest, spendableCents ?? 0);
           if (l.source === "giftcard") {
             other = Math.min(rest, giftCard?.balanceCents ?? 0);
           }
