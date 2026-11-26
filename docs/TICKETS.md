@@ -999,6 +999,10 @@ Seams for the first sandbox run:
 
 ## T26. Last-class renewal (PLAN 2.5)
 
+**Narrowed by T303 (2026-11-26): class packs only.** The rule below
+fired for every pass down to `Remaining: 1`, Drop Ins and guest passes
+included; see T303 at the end of this file.
+
 - [x] The "1 remaining" pill's row offers selling the next pack in the
       same gesture as check-in, via the same T24/T25 machinery. Quiet
       when no card on file.
@@ -24435,3 +24439,32 @@ ran against Square's real sandbox with Pete's sandbox token.
 - **T230 (half)** the customer screen: "Paying by Card reader" and "Tap,
   insert or hold your phone to the card reader." P8 still open.
 - **T231** the Sales log's Square match (`readerMismatches`).
+
+## T303. The renewal dialog is for class packs only (2026-11-26)
+
+Pete: "The sell the next pack modal is opening way too often. That should
+only come up when someone is at the end of their class pack. No other
+passes."
+
+T26's gate was `paid && passRemaining === 1 && !fakeUnlimited`. Since
+passRemaining counts before this visit, a Drop In (Count 1) reads 1 on
+every visit it pays for, so every drop-in check-in with a card on file
+raised "Sell the next pack?", and guest passes, intro specials and
+workshop passes did the same on their last use.
+
+`src/lib/classpack.ts`, pure:
+
+- `mayBeLastClassOfPack(entry)`, before the check-in, from the row alone:
+  paid, Remaining 1, Count 2 to 99 or unknown, and a name that is not a
+  guest/buddy, workshop, training, event or intro pass.
+- `isClassPack(entry, option)`, in `maybeOfferRenewal` after the check-in
+  stood, with the pass's own catalog option (matched by ProductId) when
+  the shelf has it: the count (the row's, else the catalog's) must be 2
+  to 99, the option not `IsIntroOffer`, its Type "Series" (or absent).
+  Not on the shelf, the row decides and an unknown count is not a pack.
+
+The catalog read now comes FIRST in `maybeOfferRenewal` (session cached),
+so a pass that is not a pack gets nothing, no dialog and no quiet "Last
+session used." line, and costs no `/api/stored-card` read. A pack keeps
+T26 exactly: card on file or covering credit opens the dialog, else the
+quiet line. The check-in itself is unchanged and never waits on any of it.
