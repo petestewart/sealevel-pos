@@ -64,6 +64,7 @@ import GuestModal, {
   type GuestPick,
 } from "./GuestModal";
 import { isGuestPass, usableGuestPass } from "@/lib/guestpass";
+import { isClassPack, mayBeLastClassOfPack } from "@/lib/classpack";
 import { actorFallbackLine } from "./actornote";
 import ApprovalDialog, { type ApprovalArmed } from "./ApprovalDialog";
 import {
@@ -381,6 +382,11 @@ interface PayOption {
   /** Initial usage count of the option; 1 is a drop-in. */
   count: number | null;
   type: "Product" | "Service";
+  /** T76, passes only: Mindbody's `Type` (DropIn | Series | Unlimited)
+   *  and `IsIntroOffer`, as /api/catalog serves them. T303 reads them to
+   *  offer the renewal dialog on class packs only. */
+  serviceType?: string | null;
+  isIntroOffer?: boolean | null;
 }
 
 /** The stored card + live balance, as /api/stored-card serves them. */
@@ -4410,7 +4416,9 @@ function FrontDesk({
   }, [payStage, dropPassScene, payPassOutcome, payOwn]);
 
   /**
-   * T26: after a REAL check-in that used a pass's last session, decide
+   * T26: after a REAL check-in that used a CLASS PACK's last session
+   * (T303: only a class pack, never a Drop In, guest pass, intro special
+   * or workshop pass; src/lib/classpack.ts), decide
    * between the renewal dialog and the quiet row line. Never blocking:
    * the check-in already happened and stands whatever this does. The
    * dialog opens only when there is something to charge with -- an
@@ -4431,6 +4439,33 @@ function FrontDesk({
         if (activeIdRef.current !== classId) return;
         setLastUsed((m) => ({ ...m, [entry.clientId]: true }));
       };
+      /* The catalog: T303's class-pack check, the covering-credit
+       * yardstick and the dialog itself. Reuse the session cache, fetch
+       * it once if this offer gets there first. Best-effort: no catalog
+       * leaves the row's own facts to decide whether this is a pack, the
+       * yardstick cannot pass, and a card-on-file dialog shows the
+       * catalog error with its Retry. */
+      let passes = payCatalog.passes;
+      if (passes === null) {
+        try {
+          const r = await fetch("/api/catalog");
+          const body = await r.json();
+          if (!r.ok) throw new Error(body?.error ?? `HTTP ${r.status}`);
+          passes = ((body?.passes ?? []) as PayOption[]).filter(
+            (p) => p?.type === "Service",
+          );
+          setPayCatalog({ passes, error: null, loading: false });
+        } catch {
+          passes = null;
+        }
+      }
+      /* T303: the dialog is for a class pack only. Anything else gets
+       * nothing at all, not even the quiet line, and costs no read. */
+      const ownOption =
+        passes && entry.passProductId !== null
+          ? (passes.find((p) => p.productId === entry.passProductId) ?? null)
+          : null;
+      if (!isClassPack(entry, ownOption)) return;
       /* The live profile: the same read the dialog would make, done up
        * front because it IS the decision. A failed read cannot decide,
        * so it goes quiet rather than opening a dialog with nothing
@@ -4454,25 +4489,6 @@ function FrontDesk({
         return;
       }
       const card = profile.card && !profile.card.expired ? profile.card : null;
-      /* The catalog, for the covering-credit yardstick (and the dialog
-       * itself); reuse the session cache, fetch it once if this offer
-       * gets there first. Best-effort: no catalog means the yardstick
-       * cannot pass, and a card-on-file dialog shows the catalog error
-       * with its Retry. */
-      let passes = payCatalog.passes;
-      if (passes === null && card === null) {
-        try {
-          const r = await fetch("/api/catalog");
-          const body = await r.json();
-          if (!r.ok) throw new Error(body?.error ?? `HTTP ${r.status}`);
-          passes = ((body?.passes ?? []) as PayOption[]).filter(
-            (p) => p?.type === "Service",
-          );
-          setPayCatalog({ passes, error: null, loading: false });
-        } catch {
-          passes = null;
-        }
-      }
       /* The pack the dialog would default to: same ProductId when still
        * sellable, else the usual single-visit default. Its LIST price is
        * the covering-credit yardstick; tax can push the real total past
@@ -4780,17 +4796,16 @@ function FrontDesk({
         openPayDialog(entry);
         return;
       }
-      /* T26: a real pass down to its last session. The check-in itself
+      /* T26: a class pack down to its last session (T303: class packs
+       * only; the catalog half of the rule runs after the check-in, in
+       * maybeOfferRenewal). The check-in itself
        * runs exactly as normal -- they still have the session, and the
        * tap must not get slower -- and only a SUCCESSFUL write chains
        * the renewal offer, which never blocks or undoes anything. Since
        * 2026-09-14 passRemaining counts BEFORE this visit (roster.ts
        * beforeThisVisit), so 1 means this class is the last one on the
        * pass: the renewal conversation that happens now or never. */
-      const lastSession =
-        entry.paid &&
-        entry.passRemaining === 1 &&
-        !fakeUnlimited(entry.passCount, entry.passRemaining);
+      const lastSession = mayBeLastClassOfPack(entry);
       const classId = activeIdRef.current;
       if (lastSession && classId !== null) {
         void (async () => {

@@ -1431,6 +1431,18 @@ which needs nothing afterwards.
   comment in the contract code that T301's merge relabelled from T299.
   **Owed: Pete fixes the $0.07 product's tax; one live card sale under
   $10 and its receipt.**
+- [x] **T303 The renewal dialog is for class packs only.** Built
+  2026-11-26 (Pete: "The sell the next pack modal is opening way too
+  often. That should only come up when someone is at the end of their
+  class pack. No other passes."). T26 opened it on the last session of
+  ANY counted pass, so every Drop In (Count 1) and guest pass checked in
+  raised it. `src/lib/classpack.ts` now decides: Count 2 to 99, not a
+  guest/buddy, workshop, training, event or intro pass by name, and when
+  the catalog knows the option by ProductId, Type "Series" and not
+  `IsIntroOffer`. Anything else gets no dialog and no "Last session
+  used." line, and costs no profile read. Typechecked; rule exercised on
+  eleven pass shapes. **Owed: seen on an iPad with a real last-class
+  pack and a Drop In.**
 - [ ] **T237 Hardware day.** Buy and pair the Terminal, the production
   token, `POS_READER_LIVE=true`. **Never `POS_WRITE_CLIENT_IDS` while the
   studio is open**: it suppresses every write for every other client,
