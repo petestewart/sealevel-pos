@@ -1443,6 +1443,20 @@ which needs nothing afterwards.
   used." line, and costs no profile read. Typechecked; rule exercised on
   eleven pass shapes. **Owed: seen on an iPad with a real last-class
   pack and a Drop In.**
+- [x] **T304 Account pays from a NEGATIVE balance.** Built 2026-11-26
+  (Pete: "Trying to have someone pay with their account who has a
+  negative balance. Doesn't even do anything when I tap account."). The
+  Cart screen took `min(due, balance)` for an account line, which goes
+  negative below zero, so the tile made no line, opened no keypad and
+  never reached T94's "Charge full amount". `spendableCents` in
+  `SaleScreen.tsx` (the balance floored at zero) now feeds every "what
+  the account covers" figure: the tap, the whole-sale follow, the keypad
+  cap and a split's partner. `balanceCents` stays the real figure for
+  the overdraft's "balance after"; the server already handled a negative
+  balance. Driven in a browser against the fake (Dana, -$12.50, Coconut
+  Water $4.97): on main the tap did nothing; with the fix it opened the
+  keypad, the PIN authorized it, "balance after -$17.47, by Maya Chen",
+  and the sale stood with the fake's balance at -$17.47.
 - [ ] **T237 Hardware day.** Buy and pair the Terminal, the production
   token, `POS_READER_LIVE=true`. **Never `POS_WRITE_CLIENT_IDS` while the
   studio is open**: it suppresses every write for every other client,

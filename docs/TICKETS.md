@@ -24468,3 +24468,25 @@ so a pass that is not a pack gets nothing, no dialog and no quiet "Last
 session used." line, and costs no `/api/stored-card` read. A pack keeps
 T26 exactly: card on file or covering credit opens the dialog, else the
 quiet line. The check-in itself is unchanged and never waits on any of it.
+
+## T304. Account pays from a negative balance (2026-11-26)
+
+Pete: "Trying to have someone pay with their account who has a negative
+balance. Doesn't even do anything when I tap account."
+
+T94 made Account always tappable with a client attached: an empty account
+puts a $0.00 line on the ticket and opens the keypad, where "Charge full
+amount" and the teacher's PIN authorize the overdraft. The line's amount
+was `Math.min(due, balanceCents ?? 0)`, and below zero that is negative:
+not 0, so not the empty-account case, and `<= 0`, so `addLine` returned
+with nothing. The same `min` capped the keypad below zero and set the
+whole-sale and split-partner amounts.
+
+`spendableCents` (the balance floored at zero) now stands in for the
+balance wherever the question is what the account can pay without a PIN.
+`balanceCents` keeps the real figure: T94's overdraft records it, so
+"balance after" reads -$17.47 for $4.97 on -$12.50, and the overdraft
+button's own test (balance below the due) was already right. No server
+change: `/api/checkout` computes the shortfall from its own read and its
+note already formats a negative starting balance.
+
